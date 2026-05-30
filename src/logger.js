@@ -2,6 +2,7 @@ import { appendFileSync, mkdirSync } from "node:fs";
 
 const LOG_DIR = new URL("../logs/", import.meta.url);
 const LOG_FILE = new URL("../logs/bot.log", import.meta.url);
+const ERROR_LOG_FILE = new URL("../logs/error.log", import.meta.url);
 
 mkdirSync(LOG_DIR, { recursive: true });
 
@@ -29,12 +30,16 @@ export function logError(step, guildId, error, details = {}) {
     ...details,
   };
 
-  writeLogFile(record);
+  errorLogFile(record);
   writeConsoleError(record);
 }
 
 function writeLogFile(record) {
   appendFileSync(LOG_FILE, `${JSON.stringify(record)}\n`, "utf8");
+}
+
+function errorLogFile(record) {
+  appendFileSync(ERROR_LOG_FILE, `${JSON.stringify(record)}\n`, "utf8");
 }
 
 function writeConsoleInfo(record) {

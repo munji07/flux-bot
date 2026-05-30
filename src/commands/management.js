@@ -11,6 +11,7 @@ import { UserFacingError } from "../errors.js";
 import { logError, logInfo } from "../logger.js";
 import { extractDiscordId, normalizeCommand, splitArgs } from "../utils/command.js";
 import { getDisplayName } from "../utils/message.js";
+import { matchServerMember } from "../services/ai.js";
 
 const CONFIRMATION_TIMEOUT_MS = 30_000;
 const DANGEROUS_COMMANDS = new Set([
@@ -388,6 +389,13 @@ export function parseManagementCommand(input) {
     return { command, args: tokens.slice(1) };
   }
 
+  if (tokens.length > 1) {
+    const secondCommand = COMMAND_ALIASES[second];
+    if (secondCommand) {
+      return { command: secondCommand, args: [tokens[0], ...tokens.slice(2)] };
+    }
+  }
+
   const naturalCommand = parseNaturalManagementCommand(tokens);
   if (naturalCommand) return naturalCommand;
 
@@ -519,7 +527,7 @@ async function timeoutCommand(message, args) {
   }
 
   await target.timeout(durationMs, reason);
-  await message.reply(`${target.displayName}님을 ${formatDurationMs(durationMs)} 동안 타임아웃했어요.`);
+  await message.reply(`${target}님을 ${formatDurationMs(durationMs)} 동안 타임아웃했어요.`);
 }
 
 async function kickCommand(message, args) {
@@ -533,18 +541,21 @@ async function kickCommand(message, args) {
   }
 
   await target.kick(reason);
-  await message.reply(`${target.displayName}님을 서버에서 추방했어요.`);
+  await message.reply(`${target}님을 서버에서 추방했어요.`);
 }
 
 async function banCommand(message, args, isIpBanRequest) {
   await assertGuildPermissions(message, PermissionFlagsBits.BanMembers);
 
+  let targetMember = null;
   const userId = extractDiscordId(args[0]);
-  if (!userId) {
-    throw new UserFacingError("차단할 유저를 멘션하거나 ID로 입력해주세요.");
+
+  if (userId) {
+    targetMember = await message.guild.members.fetch(userId).catch(() => null);
+  } else {
+    targetMember = await resolveMember(message, args[0], "차단할 유저를 멘션하거나 ID로 입력해주세요.");
   }
 
-  const targetMember = await message.guild.members.fetch(userId).catch(() => null);
   if (targetMember && !targetMember.bannable) {
     throw new UserFacingError("먼지가 해당 멤버를 차단할 수 없어요. 역할 순서를 확인해주세요.");
   }
@@ -552,16 +563,24 @@ async function banCommand(message, args, isIpBanRequest) {
   const reasonPrefix = isIpBanRequest ? "IP ban requested; Discord API supports account ban only. " : "";
   const reason = `${reasonPrefix}${args.slice(1).join(" ") || createReason(message, "ban")}`;
 
-  await message.guild.members.ban(userId, {
+  await message.guild.members.ban(targetMember?.id ?? userId, {
     deleteMessageSeconds: 0,
     reason,
   });
 
-  await message.reply(
-    isIpBanRequest
-      ? "유저를 차단했어요. 다만 Discord API는 봇에게 별도의 IP 차단 옵션을 제공하지 않아서 계정 차단으로 처리했어요."
-      : "유저를 차단했어요.",
-  );
+  if (targetMember) {
+    await message.reply(
+      isIpBanRequest
+        ? `${targetMember}님을 차단했어요. 다만 Discord API는 봇에게 별도의 IP 차단 옵션을 제공하지 않아서 계정 차단으로 처리했어요.`
+        : `${targetMember}님을 차단했어요.`,
+    );
+  } else {
+    await message.reply(
+      isIpBanRequest
+        ? "유저를 차단했어요. 다만 Discord API는 봇에게 별도의 IP 차단 옵션을 제공하지 않아서 계정 차단으로 처리했어요."
+        : "유저를 차단했어요.",
+    );
+  }
 }
 
 async function voiceMuteCommand(message, args) {
@@ -575,7 +594,7 @@ async function voiceMuteCommand(message, args) {
   }
 
   await target.voice.setMute(enabled, createReason(message, "server mute"));
-  await message.reply(`${target.displayName}님의 서버 뮤트를 ${enabled ? "적용" : "해제"}했어요.`);
+  await message.reply(`${target}님의 서버 뮤트를 ${enabled ? "적용" : "해제"}했어요.`);
 }
 
 async function voiceDeafenCommand(message, args) {
@@ -589,7 +608,7 @@ async function voiceDeafenCommand(message, args) {
   }
 
   await target.voice.setDeaf(enabled, createReason(message, "server deafen"));
-  await message.reply(`${target.displayName}님의 서버 청각 차단을 ${enabled ? "적용" : "해제"}했어요.`);
+  await message.reply(`${target}님의 서버 청각 차단을 ${enabled ? "적용" : "해제"}했어요.`);
 }
 
 async function moveMemberCommand(message, args) {
@@ -603,7 +622,7 @@ async function moveMemberCommand(message, args) {
   }
 
   await target.voice.setChannel(channel, createReason(message, "move member"));
-  await message.reply(`${target.displayName}님을 ${channel.name} 채널로 이동했어요.`);
+  await message.reply(`${target}님을 ${channel.name} 채널로 이동했어요.`);
 }
 
 async function disconnectMemberCommand(message, args) {
@@ -616,7 +635,7 @@ async function disconnectMemberCommand(message, args) {
   }
 
   await target.voice.disconnect(createReason(message, "disconnect member"));
-  await message.reply(`${target.displayName}님의 음성 연결을 끊었어요.`);
+  await message.reply(`${target}님의 음성 연결을 끊었어요.`);
 }
 
 async function changeNicknameCommand(message, args) {
@@ -634,7 +653,7 @@ async function changeNicknameCommand(message, args) {
   }
 
   await target.setNickname(["초기화", "reset", "none"].includes(nickname.toLowerCase()) ? null : nickname, createReason(message, "change nickname"));
-  await message.reply(`${target.displayName}님의 닉네임을 변경했어요.`);
+  await message.reply(`${target}님의 닉네임을 변경했어요.`);
 }
 
 async function autoModCommand(message, args) {
@@ -720,12 +739,12 @@ async function roleMemberCommand(message, args, action) {
 
   if (action === "add") {
     await target.roles.add(role, createReason(message, "add role"));
-    await message.reply(`${target.displayName}님에게 ${role.name} 역할을 부여했어요.`);
+    await message.reply(`${target}님에게 ${role.name} 역할을 부여했어요.`);
     return;
   }
 
   await target.roles.remove(role, createReason(message, "remove role"));
-  await message.reply(`${target.displayName}님에게서 ${role.name} 역할을 제거했어요.`);
+  await message.reply(`${target}님에게서 ${role.name} 역할을 제거했어요.`);
 }
 
 async function rolePermissionCommand(message, args, action) {
@@ -747,12 +766,162 @@ async function rolePermissionCommand(message, args, action) {
 
 async function resolveMember(message, token, missingMessage) {
   const id = extractDiscordId(token);
-  if (!id) throw new UserFacingError(missingMessage);
+  if (id) {
+    const member = await message.guild.members.fetch(id).catch(() => null);
+    if (!member) throw new UserFacingError("해당 멤버를 서버에서 찾지 못했어요.");
+    return member;
+  }
 
-  const member = await message.guild.members.fetch(id).catch(() => null);
-  if (!member) throw new UserFacingError("해당 멤버를 서버에서 찾지 못했어요.");
+  if (!token) throw new UserFacingError(missingMessage);
 
-  return member;
+  const normalizedToken = normalizeName(token);
+  const exactMember = findExactMember(message, normalizedToken);
+  if (exactMember) return exactMember;
+
+  const fuzzyMember = await findBestMemberMatch(message, normalizedToken);
+  if (fuzzyMember) return fuzzyMember;
+
+  if (message.author.id === ADMIN_USER_ID) {
+    const aiMember = await findAiMemberMatch(message, token, normalizedToken);
+    if (aiMember) return aiMember;
+  }
+
+  throw new UserFacingError("해당 멤버를 서버에서 찾지 못했어요.");
+}
+
+function normalizeName(value) {
+  return value
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/[^\p{L}\p{N} ]+/gu, "")
+    .trim();
+}
+
+function findExactMember(message, normalizedToken) {
+  return message.guild.members.cache.find((member) => {
+    const username = normalizeName(member.user.username);
+    const displayName = normalizeName(member.displayName);
+    const tag = normalizeName(member.user.tag);
+    return username === normalizedToken || displayName === normalizedToken || tag === normalizedToken;
+  });
+}
+
+async function findBestMemberMatch(message, normalizedToken) {
+  const candidates = [];
+  const cachedMatches = [...message.guild.members.cache.values()].map((member) => ({
+    member,
+    score: getNameSimilarity(normalizedToken, normalizeName(member.displayName)) || getNameSimilarity(normalizedToken, normalizeName(member.user.username)) || getNameSimilarity(normalizedToken, normalizeName(member.user.tag)),
+  }));
+
+  candidates.push(...cachedMatches.filter((item) => item.score > 0));
+
+  if (candidates.length < 5) {
+    const fetchedMembers = await message.guild.members
+      .fetch({ query: normalizedToken, limit: 10 })
+      .catch(() => new Map());
+
+    for (const member of fetchedMembers.values()) {
+      if (message.guild.members.cache.has(member.id)) continue;
+      const score =
+        getNameSimilarity(normalizedToken, normalizeName(member.displayName)) ||
+        getNameSimilarity(normalizedToken, normalizeName(member.user.username)) ||
+        getNameSimilarity(normalizedToken, normalizeName(member.user.tag));
+      if (score > 0) {
+        candidates.push({ member, score });
+      }
+    }
+  }
+
+  const best = candidates
+    .sort((a, b) => b.score - a.score)
+    .find((item) => item.score >= 0.4);
+
+  return best?.member ?? null;
+}
+
+async function findAiMemberMatch(message, token, normalizedToken) {
+  const candidates = await gatherAIMemberCandidates(message, token, normalizedToken);
+  if (candidates.length === 0) return null;
+
+  const match = await matchServerMember({
+    guildName: message.guild.name,
+    targetText: token,
+    candidates,
+    logContext: {
+      guildId: message.guildId,
+      userId: message.author.id,
+      userName: getDisplayName(message),
+    },
+  });
+
+  if (!match?.memberId) return null;
+
+  return (
+    message.guild.members.cache.get(match.memberId) ??
+    (await message.guild.members.fetch(match.memberId).catch(() => null))
+  );
+}
+
+async function gatherAIMemberCandidates(message, token, normalizedToken) {
+  const candidateById = new Map();
+
+  const scoredCandidates = [...message.guild.members.cache.values()]
+    .map((member) => ({
+      member,
+      score:
+        getNameSimilarity(normalizedToken, normalizeName(member.displayName)) ||
+        getNameSimilarity(normalizedToken, normalizeName(member.user.username)) ||
+        getNameSimilarity(normalizedToken, normalizeName(member.user.tag)),
+    }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 12);
+
+  for (const item of scoredCandidates) {
+    candidateById.set(item.member.id, item.member);
+  }
+
+  const fetchedMembers = await message.guild.members
+    .fetch({ query: token, limit: 15 })
+    .catch(() => new Map());
+
+  for (const member of fetchedMembers.values()) {
+    if (!candidateById.has(member.id)) {
+      candidateById.set(member.id, member);
+    }
+  }
+
+  return [...candidateById.values()].slice(0, 20);
+}
+
+function getNameSimilarity(a, b) {
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+
+  if (a.includes(b) || b.includes(a)) return 0.85;
+
+  const distance = levenshteinDistance(a, b);
+  const maxLen = Math.max(a.length, b.length);
+  return maxLen === 0 ? 0 : Math.max(0, 1 - distance / maxLen);
+}
+
+function levenshteinDistance(a, b) {
+  const matrix = Array.from({ length: b.length + 1 }, (_, i) => Array(a.length + 1).fill(0));
+
+  for (let i = 0; i <= b.length; i += 1) matrix[i][0] = i;
+  for (let j = 0; j <= a.length; j += 1) matrix[0][j] = j;
+
+  for (let i = 1; i <= b.length; i += 1) {
+    for (let j = 1; j <= a.length; j += 1) {
+      matrix[i][j] = Math.min(
+        matrix[i - 1][j] + 1,
+        matrix[i][j - 1] + 1,
+        matrix[i - 1][j - 1] + (a[j - 1] === b[i - 1] ? 0 : 1),
+      );
+    }
+  }
+
+  return matrix[b.length][a.length];
 }
 
 async function resolveVoiceChannel(message, input) {

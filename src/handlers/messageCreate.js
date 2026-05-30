@@ -17,6 +17,7 @@ import {
   getImageAttachmentUrls,
   sendChunkedAnswer,
 } from "../utils/message.js";
+import { getPronunciationReply, isPronunciationRequest } from "../utils/phonetics.js";
 
 export async function handleMessageCreate(client, message) {
   if (message.author.bot || !message.inGuild()) return;
@@ -31,6 +32,17 @@ export async function handleMessageCreate(client, message) {
 
   const managementHandled = await handleManagementCommand(message, userPrompt);
   if (managementHandled) return;
+
+  if (isPronunciationRequest(userPrompt)) {
+    try {
+      const replyText = getPronunciationReply(userPrompt);
+      await message.reply(replyText);
+    } catch (error) {
+      const errorMessage = error instanceof UserFacingError ? error.message : "발음 변환 중 문제가 발생했어요.";
+      await message.reply(errorMessage);
+    }
+    return;
+  }
 
   let loadingMessage = await message.reply("-# <a:loading:1495336917326368829> DUST봇이 요청을 확인하고 있어요...");
   const attachedImageUrls = getImageAttachmentUrls(message);

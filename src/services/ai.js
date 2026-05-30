@@ -64,6 +64,10 @@ export async function classifyRequestIntent({ userPrompt, hasImageAttachment, lo
     messages: [
       {
         role: "system",
+        content: SYSTEM_PROMPT,
+      },
+      {
+        role: "system",
         content: [
           "너는 디스코드 봇 요청 라우터야.",
           "상황을 묘사하는 말을 사용하지 말고 이모지를 필요할때만 사용해. 사람과 대화할때는 존뎃말을 사용해.",
@@ -172,6 +176,63 @@ function normalizeIntentResult(content, userPrompt) {
     imagePrompt: imagePrompt || userPrompt.trim(),
     raw: content,
   };
+}
+
+export async function matchServerMember({ guildName, targetText, candidates, logContext = {} }) {
+  logInfo("ai_call", {
+    ...logContext,
+    task: "member_matching",
+    model: CHAT_MODEL,
+    targetText,
+    candidateCount: candidates.length,
+  });
+
+  const candidateData = candidates.map((member) => ({
+    id: member.id,
+    username: member.user.username,
+    displayName: member.displayName,
+    tag: member.user.tag,
+  }));
+
+  const completion = await aiClient.chat.completions.create({
+    model: CHAT_MODEL,
+    messages: [
+      {
+        role: "system",
+        content: SYSTEM_PROMPT,
+      },
+      {
+        role: "system",
+        content: [
+          "너는 디스코드 서버에서 대상 멤버를 찾는 관리자 보조 도구야.",
+          "사용자가 입력한 대상 텍스트를 보고, 후보 목록에서 가장 적합한 멤버를 선택해.",
+          "후보 중에서 잘 맞는 멤버가 없으면 memberId를 null로 반환해.",
+          "항상 JSON만 출력해야 해. 마크다운, 코드블록, 추가 설명은 쓰지 마.",
+          "출력 형식: {\"memberId\":\"123456789012345678\"} 또는 {\"memberId\":null}",
+        ].join("\n"),
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          guildName,
+          targetText,
+          candidates: candidateData,
+        }),
+      },
+    ],
+  });
+
+  const content = completion.choices?.[0]?.message?.content?.trim() ?? "";
+  return parseMemberMatchResult(content);
+}
+
+function parseMemberMatchResult(content) {
+  const parsed = parseJsonObject(content);
+  if (!parsed || typeof parsed.memberId !== "string") {
+    return { memberId: null };
+  }
+
+  return { memberId: parsed.memberId };
 }
 
 function parseJsonObject(content) {
