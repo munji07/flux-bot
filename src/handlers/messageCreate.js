@@ -1,8 +1,15 @@
-import { PREFIX } from "../config.js";
+import { PREFIX, SAFE_MESSAGE_LIMIT } from "../config.js";
 import { UserFacingError } from "../errors.js";
 import { handleManagementCommand } from "../commands/management.js";
 import { handleImageGenerationRequest } from "./imageGeneration.js";
-import { classifyRequestIntent, createApiUserMessage, createChatCompletion } from "../services/ai.js";
+import {
+  classifyRequestIntent,
+  createApiUserMessage,
+  createChatCompletion,
+  createChatCompletionStream,
+  createWebSearchCompletionStream,
+  shouldUseWebSearch,
+} from "../services/ai.js";
 import {
   appendConversationHistory,
   getConversationHistory,
@@ -71,12 +78,27 @@ export async function handleMessageCreate(client, message) {
       userTag: message.author.tag,
     });
 
-    if (loadingMessage) {
-      await loadingMessage.edit("요청 의도를 확인하는 중 문제가 발생했어요. 잠시 뒤 다시 시도해주세요.");
+    if (attachedImageUrls.length === 0) {
+      intent = {
+        type: "chat",
+        imagePrompt: "",
+        raw: "",
+      };
+      logInfo("intent_classification_fallback", {
+        guildId: message.guildId,
+        guildName: message.guild.name,
+        channelId: message.channelId,
+        userId: message.author.id,
+        userName,
+      });
     } else {
-      await message.reply("요청 의도를 확인하는 중 문제가 발생했어요. 잠시 뒤 다시 시도해주세요.");
+      if (loadingMessage) {
+        await loadingMessage.edit("요청 의도를 확인하는 중 문제가 발생했어요. 잠시 뒤 다시 시도해주세요.");
+      } else {
+        await message.reply("요청 의도를 확인하는 중 문제가 발생했어요. 잠시 뒤 다시 시도해주세요.");
+      }
+      return;
     }
-    return;
   }
 
   if (intent.type === "image_generation") {
@@ -140,25 +162,96 @@ export async function handleMessageCreate(client, message) {
     }, 8000);
 
     currentStep = "request_ai_completion";
-    const chatCompletion = await createChatCompletion({
+    const logContext = {
+      guildId: message.guildId,
+      guildName: message.guild.name,
+      channelId: message.channelId,
+      userId: message.author.id,
       userName,
-      historyMessages,
-      currentApiUserMessage,
-      imageUrls,
-      logContext: {
-        guildId: message.guildId,
-        guildName: message.guild.name,
-        channelId: message.channelId,
-        userId: message.author.id,
-        userName,
-        userTag: message.author.tag,
-        commandText: userPrompt,
-        historyNeeded,
-      },
-    });
+      userTag: message.author.tag,
+      commandText: userPrompt,
+      historyNeeded,
+    };
+    let answer;
+    let answerAlreadySent = false;
 
-    currentStep = "parse_ai_answer";
-    const answer = chatCompletion.choices?.[0]?.message?.content?.trim();
+    const webSearchNeeded =
+      imageUrls.length === 0
+        ? await shouldUseWebSearch({
+            userPrompt,
+            logContext,
+          })
+        : false;
+
+    if (webSearchNeeded) {
+      currentStep = "request_groq_web_search_stream";
+      await loadingMessage.edit("-# <a:loading:1495336917326368829> DUST봇이 웹에서 최신 정보를 확인하고 있어요...");
+
+      const chatCompletion = await createWebSearchCompletionStream({
+        userName,
+        historyMessages,
+        currentApiUserMessage,
+        imageUrls,
+        logContext,
+      });
+
+      currentStep = "stream_groq_web_search_answer";
+      answer = await sendStreamingAnswer(message, loadingMessage, chatCompletion);
+      answerAlreadySent = true;
+    } else if (imageUrls.length === 0) {
+      try {
+        const chatCompletion = await createChatCompletion({
+          userName,
+          historyMessages,
+          currentApiUserMessage,
+          imageUrls,
+          logContext,
+        });
+
+        currentStep = "parse_ai_answer";
+        answer = chatCompletion.choices?.[0]?.message?.content?.trim();
+
+        if (!answer) {
+          throw new Error("Primary AI returned an empty answer.");
+        }
+      } catch (primaryError) {
+        logError("primary_ai_completion_failed", message.guildId, primaryError, {
+          guildName: message.guild.name,
+          channelId: message.channelId,
+          userId: message.author.id,
+          userTag: message.author.tag,
+        });
+
+        currentStep = "request_groq_fallback_stream";
+        await loadingMessage.edit("-# <a:loading:1495336917326368829> DUST봇이 다른 모델로 답변을 이어서 준비하고 있어요...");
+
+        const chatCompletion = await createChatCompletionStream({
+          userName,
+          historyMessages,
+          currentApiUserMessage,
+          imageUrls,
+          logContext: {
+            ...logContext,
+            fallbackFrom: "deepseek",
+          },
+        });
+
+        currentStep = "stream_groq_fallback_answer";
+        answer = await sendStreamingAnswer(message, loadingMessage, chatCompletion);
+        answerAlreadySent = true;
+      }
+    } else {
+      const chatCompletion = await createChatCompletion({
+        userName,
+        historyMessages,
+        currentApiUserMessage,
+        imageUrls,
+        logContext,
+      });
+
+      currentStep = "parse_ai_answer";
+      answer = chatCompletion.choices?.[0]?.message?.content?.trim();
+    }
 
     if (!answer) {
       logInfo("empty_ai_answer", {
@@ -173,7 +266,10 @@ export async function handleMessageCreate(client, message) {
     }
 
     currentStep = "send_ai_answer";
-    await sendChunkedAnswer(message, loadingMessage, answer);
+    if (!answerAlreadySent) {
+      await sendChunkedAnswer(message, loadingMessage, answer);
+    }
+
     appendConversationHistory(historyKey, currentUserMessage, {
       role: "assistant",
       content: answer,
@@ -232,4 +328,52 @@ export async function handleMessageCreate(client, message) {
   } finally {
     if (typingInterval) clearInterval(typingInterval);
   }
+}
+
+async function sendStreamingAnswer(message, loadingMessage, stream) {
+  let answer = "";
+  let currentText = "";
+  let currentMessage = loadingMessage;
+  let lastEditAt = 0;
+
+  async function editOrSend(text) {
+    if (!text.trim()) return;
+
+    if (currentMessage) {
+      await currentMessage.edit(text).catch(async () => {
+        currentMessage = await message.channel.send(text);
+      });
+    } else {
+      currentMessage = await message.channel.send(text);
+    }
+
+    lastEditAt = Date.now();
+  }
+
+  async function rotateChunk() {
+    const chunk = currentText.slice(0, SAFE_MESSAGE_LIMIT).trimEnd();
+    await editOrSend(chunk);
+    currentText = currentText.slice(SAFE_MESSAGE_LIMIT).trimStart();
+    currentMessage = null;
+    lastEditAt = Date.now();
+  }
+
+  for await (const chunk of stream) {
+    const delta = chunk.choices?.[0]?.delta?.content ?? "";
+    if (!delta) continue;
+
+    answer += delta;
+    currentText += delta;
+
+    while (currentText.length > SAFE_MESSAGE_LIMIT) {
+      await rotateChunk();
+    }
+
+    if (Date.now() - lastEditAt >= 1200) {
+      await editOrSend(currentText);
+    }
+  }
+
+  await editOrSend(currentText.trimEnd());
+  return answer.trim();
 }

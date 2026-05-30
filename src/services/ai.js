@@ -1,6 +1,9 @@
+import { Groq } from "groq-sdk";
 import { OpenAI } from "openai";
 import {
   CHAT_MODEL,
+  GROQ_CHAT_MODEL,
+  GROQ_WEB_SEARCH_MODEL,
   HF_BASE_URL,
   IMAGE_GENERATION_MODEL,
   IMAGE_MODEL,
@@ -9,7 +12,11 @@ import {
 import { logInfo } from "../logger.js";
 import { createUserMessageContent } from "../utils/message.js";
 import { InferenceClient } from "@huggingface/inference";
+
 const hfClient = new InferenceClient(process.env.HF_TOKEN);
+const groqClient = new Groq({
+  apiKey: process.env.GROQ_API_KEY,
+});
 
 export const aiClient = new OpenAI({
   baseURL: HF_BASE_URL,
@@ -131,6 +138,144 @@ export async function createChatCompletion({
       },
     ],
   });
+}
+
+export async function createChatCompletionStream({
+  userName,
+  historyMessages,
+  currentApiUserMessage,
+  imageUrls,
+  logContext = {},
+}) {
+  if (imageUrls.length > 0) {
+    throw new Error("Groq streaming chat only supports text messages.");
+  }
+
+  logInfo("ai_call", {
+    ...logContext,
+    task: "chat_stream",
+    model: GROQ_CHAT_MODEL,
+    imageCount: 0,
+    historyMessageCount: historyMessages.length,
+  });
+
+  return groqClient.chat.completions.create({
+    model: GROQ_CHAT_MODEL,
+    messages: createTextChatMessages(userName, historyMessages, currentApiUserMessage),
+    temperature: 0.6,
+    max_completion_tokens: 4096,
+    top_p: 0.95,
+    stream: true,
+    reasoning_effort: "default",
+    stop: null,
+  });
+}
+
+export async function createWebSearchCompletionStream({
+  userName,
+  historyMessages,
+  currentApiUserMessage,
+  imageUrls,
+  logContext = {},
+}) {
+  if (imageUrls.length > 0) {
+    throw new Error("Groq web search chat only supports text messages.");
+  }
+
+  logInfo("ai_call", {
+    ...logContext,
+    task: "web_search_chat_stream",
+    model: GROQ_WEB_SEARCH_MODEL,
+    imageCount: 0,
+    historyMessageCount: historyMessages.length,
+  });
+
+  return groqClient.chat.completions.create({
+    model: GROQ_WEB_SEARCH_MODEL,
+    messages: [
+      {
+        role: "system",
+        content: "Use web search for current facts, cite sources naturally, and answer in Korean unless the user asks otherwise.",
+      },
+      ...createTextChatMessages(userName, historyMessages, currentApiUserMessage),
+    ],
+    citation_options: "enabled",
+    compound_custom: {
+      tools: {
+        enabled_tools: ["web_search"],
+      },
+    },
+    stream: true,
+  });
+}
+
+export async function shouldUseWebSearch({ userPrompt, logContext = {} }) {
+  logInfo("ai_call", {
+    ...logContext,
+    task: "web_search_need_classification",
+    model: GROQ_CHAT_MODEL,
+    promptLength: userPrompt.length,
+  });
+
+  try {
+    const completion = await groqClient.chat.completions.create({
+      model: GROQ_CHAT_MODEL,
+      messages: [
+        {
+          role: "system",
+          content: [
+            "Decide whether answering the user's message requires web search.",
+            "Return JSON only: {\"webSearch\":true} or {\"webSearch\":false}.",
+            "Use true for latest/current/recent facts, news, prices, schedules, weather, laws, versions, releases, live status, or explicit search requests.",
+            "Use false for timeless conversation, reasoning, translation, writing, coding help, or questions answerable from conversation context.",
+          ].join("\n"),
+        },
+        {
+          role: "user",
+          content: userPrompt,
+        },
+      ],
+      temperature: 0,
+      max_completion_tokens: 64,
+      response_format: { type: "json_object" },
+      reasoning_effort: "none",
+    });
+
+    const content = completion.choices?.[0]?.message?.content?.trim() ?? "";
+    const parsed = parseJsonObject(content);
+    if (typeof parsed?.webSearch === "boolean") {
+      return parsed.webSearch;
+    }
+  } catch {
+    return looksLikeWebSearchRequest(userPrompt);
+  }
+
+  return looksLikeWebSearchRequest(userPrompt);
+}
+
+function createTextChatMessages(userName, historyMessages, currentApiUserMessage) {
+  return [
+    {
+      role: "system",
+      content: SYSTEM_PROMPT,
+    },
+    {
+      role: "system",
+      content: `The current user's display name is "${userName}". Address the user by that name in your answer.`,
+    },
+    ...historyMessages,
+    {
+      role: currentApiUserMessage.role,
+      content:
+        typeof currentApiUserMessage.content === "string"
+          ? currentApiUserMessage.content
+          : JSON.stringify(currentApiUserMessage.content),
+    },
+  ];
+}
+
+function looksLikeWebSearchRequest(userPrompt) {
+  return /(?:검색|찾아봐|찾아줘|알아봐|알려줘.*(?:최신|최근|현재|오늘|지금)|최신|최근|현재|오늘|내일|어제|실시간|뉴스|날씨|주가|환율|가격|일정|버전|릴리즈|업데이트|근황|발표|web|search|latest|recent|current|today|news|weather|price|schedule|release|update)/i.test(userPrompt);
 }
 
 export async function generateImage(prompt, logContext = {}) {
