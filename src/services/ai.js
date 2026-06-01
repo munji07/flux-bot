@@ -1,15 +1,14 @@
 import { Groq } from "groq-sdk";
 import { OpenAI } from "openai";
 import {
-  CHAT_MODEL,
+  HF_CHAT_MODEL,
   GROQ_CHAT_MODEL,
-  GROQ_WEB_SEARCH_MODEL,
   HF_BASE_URL,
   IMAGE_GENERATION_MODEL,
   IMAGE_MODEL,
   SYSTEM_PROMPT,
 } from "../config.js";
-import { logInfo } from "../logger.js";
+import { logError, logInfo } from "../logger.js";
 import { createUserMessageContent } from "../utils/message.js";
 import { InferenceClient } from "@huggingface/inference";
 
@@ -24,7 +23,7 @@ export const aiClient = new OpenAI({
 });
 
 export function getChatModel(imageUrls) {
-  return imageUrls.length > 0 ? IMAGE_MODEL : CHAT_MODEL;
+  return imageUrls.length > 0 ? IMAGE_MODEL : GROQ_CHAT_MODEL;
 }
 
 export function getChatTask(imageUrls) {
@@ -62,12 +61,12 @@ export async function classifyRequestIntent({ userPrompt, hasImageAttachment, lo
   logInfo("ai_call", {
     ...logContext,
     task: "intent_classification",
-    model: CHAT_MODEL,
+    model: HF_CHAT_MODEL,
     hasImageAttachment,
     promptLength: userPrompt.length,
   });
   const completion = await aiClient.chat.completions.create({
-    model: CHAT_MODEL,
+    model: HF_CHAT_MODEL,
     messages: [
       {
         role: "system",
@@ -120,6 +119,19 @@ export async function createChatCompletion({
     historyMessageCount: historyMessages.length,
   });
 
+  if (imageUrls.length === 0) {
+    return groqClient.chat.completions.create({
+      model,
+      messages: createTextChatMessages(userName, historyMessages, currentApiUserMessage),
+      temperature: 0.6,
+      max_completion_tokens: 4096,
+      top_p: 0.95,
+      stream: false,
+      reasoning_effort: "default",
+      stop: null,
+    });
+  }
+
   return aiClient.chat.completions.create({
     model,
     messages: [
@@ -171,50 +183,23 @@ export async function createChatCompletionStream({
   });
 }
 
-export async function createWebSearchCompletionStream({
-  userName,
-  historyMessages,
-  currentApiUserMessage,
-  imageUrls,
-  logContext = {},
-}) {
-  if (imageUrls.length > 0) {
-    throw new Error("Groq web search chat only supports text messages.");
+export async function shouldUseWebSearch({ userPrompt, logContext = {} }) {
+  const prompt = userPrompt.trim();
+  if (!prompt) return false;
+
+  if (hasWebSearchSignal(prompt)) {
+    logInfo("web_search_signal_detected", {
+      ...logContext,
+      promptLength: prompt.length,
+    });
+    return true;
   }
 
   logInfo("ai_call", {
     ...logContext,
-    task: "web_search_chat_stream",
-    model: GROQ_WEB_SEARCH_MODEL,
-    imageCount: 0,
-    historyMessageCount: historyMessages.length,
-  });
-
-  return groqClient.chat.completions.create({
-    model: GROQ_WEB_SEARCH_MODEL,
-    messages: [
-      {
-        role: "system",
-        content: "Use web search for current facts, cite sources naturally, and answer in Korean unless the user asks otherwise.",
-      },
-      ...createTextChatMessages(userName, historyMessages, currentApiUserMessage),
-    ],
-    citation_options: "enabled",
-    compound_custom: {
-      tools: {
-        enabled_tools: ["web_search"],
-      },
-    },
-    stream: true,
-  });
-}
-
-export async function shouldUseWebSearch({ userPrompt, logContext = {} }) {
-  logInfo("ai_call", {
-    ...logContext,
-    task: "web_search_need_classification",
+    task: "web_search_classification",
     model: GROQ_CHAT_MODEL,
-    promptLength: userPrompt.length,
+    promptLength: prompt.length,
   });
 
   try {
@@ -224,33 +209,114 @@ export async function shouldUseWebSearch({ userPrompt, logContext = {} }) {
         {
           role: "system",
           content: [
-            "Decide whether answering the user's message requires web search.",
-            "Return JSON only: {\"webSearch\":true} or {\"webSearch\":false}.",
-            "Use true for latest/current/recent facts, news, prices, schedules, weather, laws, versions, releases, live status, or explicit search requests.",
-            "Use false for timeless conversation, reasoning, translation, writing, coding help, or questions answerable from conversation context.",
+            "Decide whether answering this Discord message requires current web search.",
+            'Return only JSON: {"webSearch":true} or {"webSearch":false}.',
+            "Use true for recent news, today's data, prices, schedules, weather, live scores, laws, product availability, or current versions.",
+            "Use false for general knowledge, coding help, writing, translation, math, or stable facts.",
           ].join("\n"),
         },
         {
           role: "user",
-          content: userPrompt,
+          content: prompt,
         },
       ],
       temperature: 0,
-      max_completion_tokens: 64,
+      max_completion_tokens: 32,
       response_format: { type: "json_object" },
-      reasoning_effort: "none",
     });
 
     const content = completion.choices?.[0]?.message?.content?.trim() ?? "";
     const parsed = parseJsonObject(content);
-    if (typeof parsed?.webSearch === "boolean") {
-      return parsed.webSearch;
-    }
-  } catch {
-    return looksLikeWebSearchRequest(userPrompt);
+    return parsed?.webSearch === true;
+  } catch (error) {
+    logError("web_search_classification_failed", logContext.guildId, error, logContext);
+    return false;
+  }
+}
+
+export async function createWebSearchCompletionStream({
+  userName,
+  historyMessages,
+  currentApiUserMessage,
+  imageUrls,
+  logContext = {},
+}) {
+  if (imageUrls.length > 0) {
+    throw new Error("Groq web search streaming only supports text messages.");
   }
 
-  return looksLikeWebSearchRequest(userPrompt);
+  logInfo("ai_call", {
+    ...logContext,
+    task: "web_search_stream",
+    model: "compound-beta-mini",
+    imageCount: 0,
+    historyMessageCount: historyMessages.length,
+  });
+
+  return groqClient.chat.completions.create({
+    model: "compound-beta-mini",
+    messages: [
+      {
+        role: "system",
+        content: "Use web search for current facts and include concise source links when useful.",
+      },
+      ...createTextChatMessages(userName, historyMessages, currentApiUserMessage),
+    ],
+    citation_options: "enabled",
+    search_settings: {
+      country: "south korea",
+      include_images: false,
+    },
+    temperature: 0.4,
+    max_completion_tokens: 4096,
+    stream: true,
+  });
+}
+
+function hasWebSearchSignal(prompt) {
+  const lowerPrompt = prompt.toLowerCase();
+  const currentYear = new Date().getFullYear();
+  const timeSensitiveTerms = [
+    "latest",
+    "current",
+    "today",
+    "yesterday",
+    "tomorrow",
+    "now",
+    "recent",
+    "news",
+    "price",
+    "weather",
+    "schedule",
+    "score",
+    "stock",
+    "exchange rate",
+    "version",
+    "release",
+    "update",
+    "최신",
+    "현재",
+    "오늘",
+    "어제",
+    "내일",
+    "요즘",
+    "뉴스",
+    "가격",
+    "날씨",
+    "일정",
+    "점수",
+    "주가",
+    "환율",
+    "버전",
+    "출시",
+    "업데이트",
+  ];
+
+  return (
+    timeSensitiveTerms.some((term) => lowerPrompt.includes(term)) ||
+    lowerPrompt.includes(String(currentYear)) ||
+    lowerPrompt.includes(String(currentYear - 1))
+  );
 }
 
 function createTextChatMessages(userName, historyMessages, currentApiUserMessage) {
@@ -272,10 +338,6 @@ function createTextChatMessages(userName, historyMessages, currentApiUserMessage
           : JSON.stringify(currentApiUserMessage.content),
     },
   ];
-}
-
-function looksLikeWebSearchRequest(userPrompt) {
-  return /(?:검색|찾아봐|찾아줘|알아봐|알려줘.*(?:최신|최근|현재|오늘|지금)|최신|최근|현재|오늘|내일|어제|실시간|뉴스|날씨|주가|환율|가격|일정|버전|릴리즈|업데이트|근황|발표|web|search|latest|recent|current|today|news|weather|price|schedule|release|update)/i.test(userPrompt);
 }
 
 export async function generateImage(prompt, logContext = {}) {
@@ -327,7 +389,7 @@ export async function matchServerMember({ guildName, targetText, candidates, log
   logInfo("ai_call", {
     ...logContext,
     task: "member_matching",
-    model: CHAT_MODEL,
+    model: HF_CHAT_MODEL,
     targetText,
     candidateCount: candidates.length,
   });
@@ -340,7 +402,7 @@ export async function matchServerMember({ guildName, targetText, candidates, log
   }));
 
   const completion = await aiClient.chat.completions.create({
-    model: CHAT_MODEL,
+    model: HF_CHAT_MODEL,
     messages: [
       {
         role: "system",

@@ -3,9 +3,8 @@ import { GatewayIntentBits } from "discord.js";
 
 export const PREFIX = "!먼지야";
 export const ADMIN_USER_ID = "1269575955626725390";
-export const CHAT_MODEL = "deepseek-ai/DeepSeek-R1";
+export const HF_CHAT_MODEL = "deepseek-ai/DeepSeek-R1";
 export const GROQ_CHAT_MODEL = "qwen/qwen3-32b";
-export const GROQ_WEB_SEARCH_MODEL = "groq/compound-mini";
 export const IMAGE_MODEL = "Qwen/Qwen3.6-27B:featherless-ait";
 export const IMAGE_GENERATION_MODEL = "Tongyi-MAI/Z-Image-Turbo";
 export const HF_BASE_URL = "https://router.huggingface.co/v1";
