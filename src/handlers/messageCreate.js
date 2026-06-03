@@ -270,10 +270,21 @@ export async function handleMessageCreate(client, message) {
       await sendChunkedAnswer(message, loadingMessage, answer);
     }
 
-    appendConversationHistory(historyKey, currentUserMessage, {
-      role: "assistant",
-      content: answer,
-    });
+    appendConversationHistory(
+      historyKey,
+      {
+        guildId: message.guildId,
+        channelId: message.channelId,
+        userId: message.author.id,
+        userTag: message.author.tag,
+        userName,
+      },
+      currentUserMessage,
+      {
+        role: "assistant",
+        content: answer,
+      },
+    );
 
     logInfo("answer_sent", {
       guildId: message.guildId,

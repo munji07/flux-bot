@@ -3,38 +3,96 @@ import {
   MAX_HISTORY_CONTENT_LENGTH,
   MAX_STORED_HISTORY_MESSAGES,
 } from "../config.js";
+import { db } from "./database.js";
 
-const conversationHistories = new Map();
+const selectRecentHistory = db.prepare(`
+  SELECT role, content
+  FROM conversation_messages
+  WHERE history_key = ?
+  ORDER BY id DESC
+  LIMIT ?
+`);
 
-export function getHistoryKey(message) {
-  return `${message.guildId}:${message.channelId}`;
-}
+const countHistory = db.prepare(`
+  SELECT COUNT(*) AS count
+  FROM conversation_messages
+  WHERE history_key = ?
+`);
 
-export function getConversationHistory(historyKey, shouldUseHistory = false) {
-  if (!shouldUseHistory) return [];
+const insertMessage = db.prepare(`
+  INSERT INTO conversation_messages (
+    history_key,
+    guild_id,
+    channel_id,
+    user_id,
+    user_tag,
+    user_name,
+    role,
+    content
+  )
+  VALUES (
+    @historyKey,
+    @guildId,
+    @channelId,
+    @userId,
+    @userTag,
+    @userName,
+    @role,
+    @content
+  )
+`);
 
-  return (conversationHistories.get(historyKey) ?? []).slice(-HISTORY_BATCH_SIZE);
-}
+const trimOldHistory = db.prepare(`
+  DELETE FROM conversation_messages
+  WHERE history_key = ?
+    AND id NOT IN (
+      SELECT id
+      FROM conversation_messages
+      WHERE history_key = ?
+      ORDER BY id DESC
+      LIMIT ?
+    )
+`);
 
-export function getStoredHistoryLength(historyKey) {
-  return conversationHistories.get(historyKey)?.length ?? 0;
-}
-
-export function appendConversationHistory(historyKey, ...messages) {
-  const history = conversationHistories.get(historyKey) ?? [];
-
+const appendMessagesTransaction = db.transaction((historyKey, metadata, messages) => {
   for (const message of messages) {
-    history.push({
+    insertMessage.run({
+      historyKey,
+      guildId: metadata.guildId,
+      channelId: metadata.channelId ?? null,
+      userId: metadata.userId,
+      userTag: metadata.userTag ?? null,
+      userName: metadata.userName ?? null,
       role: message.role,
       content: trimHistoryContent(message.content),
     });
   }
 
-  while (history.length > MAX_STORED_HISTORY_MESSAGES) {
-    history.shift();
-  }
+  trimOldHistory.run(historyKey, historyKey, MAX_STORED_HISTORY_MESSAGES);
+});
 
-  conversationHistories.set(historyKey, history);
+export function getHistoryKey(message) {
+  return `${message.guildId}:${message.author.id}`;
+}
+
+export function getConversationHistory(historyKey, shouldUseHistory = false) {
+  if (!shouldUseHistory) return [];
+
+  return selectRecentHistory
+    .all(historyKey, HISTORY_BATCH_SIZE)
+    .reverse()
+    .map((message) => ({
+      role: message.role,
+      content: message.content,
+    }));
+}
+
+export function getStoredHistoryLength(historyKey) {
+  return countHistory.get(historyKey)?.count ?? 0;
+}
+
+export function appendConversationHistory(historyKey, metadata, ...messages) {
+  appendMessagesTransaction(historyKey, metadata, messages);
 }
 
 export function shouldUseConversationHistory(userPrompt) {
