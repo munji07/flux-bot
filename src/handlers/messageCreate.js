@@ -2,6 +2,7 @@ import { PREFIX, SAFE_MESSAGE_LIMIT } from "../config.js";
 import { UserFacingError } from "../errors.js";
 import { handleManagementCommand } from "../commands/management.js";
 import { handleImageGenerationRequest } from "./imageGeneration.js";
+import { handleLogSearchRequest } from "../services/logSearch.js";
 import {
   classifyRequestIntent,
   createApiUserMessage,
@@ -9,6 +10,7 @@ import {
   createChatCompletionStream,
   createWebSearchCompletionStream,
   shouldUseWebSearch,
+  stripReasoningTags,
 } from "../services/ai.js";
 import {
   appendConversationHistory,
@@ -99,6 +101,23 @@ export async function handleMessageCreate(client, message) {
       }
       return;
     }
+  }
+
+  if (intent.type === "log_search") {
+    try {
+      await handleLogSearchRequest(message, userPrompt, loadingMessage);
+    } catch (error) {
+      logError("log_search", message.guildId, error, {
+        guildName: message.guild.name,
+        channelId: message.channelId,
+        userId: message.author.id,
+        userTag: message.author.tag,
+        commandText: userPrompt,
+      });
+
+      await loadingMessage.edit("로그를 검색하는 중 문제가 생겼어요. 잠시 뒤 다시 시도해 주세요.");
+    }
+    return;
   }
 
   if (intent.type === "image_generation") {
@@ -209,7 +228,7 @@ export async function handleMessageCreate(client, message) {
         });
 
         currentStep = "parse_ai_answer";
-        answer = chatCompletion.choices?.[0]?.message?.content?.trim();
+        answer = stripReasoningTags(chatCompletion.choices?.[0]?.message?.content ?? "");
 
         if (!answer) {
           throw new Error("Primary AI returned an empty answer.");
@@ -250,7 +269,7 @@ export async function handleMessageCreate(client, message) {
       });
 
       currentStep = "parse_ai_answer";
-      answer = chatCompletion.choices?.[0]?.message?.content?.trim();
+      answer = stripReasoningTags(chatCompletion.choices?.[0]?.message?.content ?? "");
     }
 
     if (!answer) {
@@ -375,16 +394,17 @@ async function sendStreamingAnswer(message, loadingMessage, stream) {
 
     answer += delta;
     currentText += delta;
+    const visibleText = stripReasoningTags(currentText);
 
     while (currentText.length > SAFE_MESSAGE_LIMIT) {
       await rotateChunk();
     }
 
     if (Date.now() - lastEditAt >= 1200) {
-      await editOrSend(currentText);
+      await editOrSend(visibleText);
     }
   }
 
-  await editOrSend(currentText.trimEnd());
-  return answer.trim();
+  await editOrSend(stripReasoningTags(currentText).trimEnd());
+  return stripReasoningTags(answer);
 }

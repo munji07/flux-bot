@@ -527,6 +527,20 @@ async function timeoutCommand(message, args) {
   }
 
   await target.timeout(durationMs, reason);
+  logInfo("member_timed_out", {
+    guildId: message.guildId,
+    guildName: message.guild.name,
+    channelId: message.channelId,
+    userId: message.author.id,
+    userName: getDisplayName(message),
+    userTag: message.author.tag,
+    targetUserId: target.id,
+    targetUserName: target.displayName,
+    targetUserTag: target.user.tag,
+    durationMs,
+    reason,
+    commandText: args.join(" "),
+  });
   await message.reply(`${target}님을 ${formatDurationMs(durationMs)} 동안 타임아웃했어요.`);
 }
 
@@ -643,6 +657,7 @@ async function changeNicknameCommand(message, args) {
 
   const target = await resolveMember(message, args[0], "닉네임을 바꿀 유저를 멘션하거나 ID로 입력해주세요.");
   const nickname = args.slice(1).join(" ");
+  const oldNickname = target.nickname ?? target.displayName ?? target.user.username;
 
   if (!target.manageable) {
     throw new UserFacingError("먼지가 해당 멤버의 닉네임을 변경할 수 없어요. 역할 순서를 확인해주세요.");
@@ -652,7 +667,22 @@ async function changeNicknameCommand(message, args) {
     throw new UserFacingError(`새 닉네임을 입력해주세요. 예: \`${PREFIX} 닉네임 @유저 새닉네임\``);
   }
 
-  await target.setNickname(["초기화", "reset", "none"].includes(nickname.toLowerCase()) ? null : nickname, createReason(message, "change nickname"));
+  const newNickname = ["초기화", "reset", "none"].includes(nickname.toLowerCase()) ? null : nickname;
+  await target.setNickname(newNickname, createReason(message, "change nickname"));
+  logInfo("nickname_changed", {
+    guildId: message.guildId,
+    guildName: message.guild.name,
+    channelId: message.channelId,
+    userId: message.author.id,
+    userName: getDisplayName(message),
+    userTag: message.author.tag,
+    targetUserId: target.id,
+    targetUserName: target.displayName,
+    targetUserTag: target.user.tag,
+    oldNickname,
+    newNickname,
+    commandText: args.join(" "),
+  });
   await message.reply(`${target}님의 닉네임을 변경했어요.`);
 }
 
