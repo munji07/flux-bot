@@ -352,8 +352,9 @@ export async function generateImage(prompt, logContext = {}) {
     inputs: prompt,
     parameters: { num_inference_steps: 5 },
   });
-
-  // ?붿뒪肄붾뱶 ?몃뱾?ш? ?몄떇?????덈룄濡?Blob??Base64 臾몄옄?대줈 蹂??  const arrayBuffer = await imageBlob.arrayBuffer();
+  
+  // ?붿뒪肄붾뱶 ?몃뱾?ш? ?몄떇?????덈룄濡?Blob??Base64 臾몄옄?대줈 蹂??  
+  const arrayBuffer = await imageBlob.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
   const base64Json = buffer.toString("base64");
 
