@@ -4,6 +4,7 @@ import { GatewayIntentBits } from "discord.js";
 export const PREFIX = "!먼지야";
 export const ADMIN_USER_ID = "1269575955626725390";
 export const HF_CHAT_MODEL = "deepseek-ai/DeepSeek-R1";
+export const GROQ_CHAT_MODEL = "qwen/qwen3-32B";
 export const GEMINI_CHAT_MODEL = "gemini-3.1-flash-lite";
 export const GEMINI_WEB_SEARCH_MODEL = "gemini-3.5-flash";
 export const IMAGE_MODEL = "Qwen/Qwen3.6-27B:featherless-ait";
