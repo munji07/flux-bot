@@ -17,7 +17,6 @@ const CONFIRMATION_TIMEOUT_MS = 30_000;
 const DANGEROUS_COMMANDS = new Set([
   "kickMember",
   "banMember",
-  "ipBanMember",
   "addRolePermission",
   "removeRolePermission",
   "setVerificationLevel",
@@ -41,7 +40,6 @@ function getConfirmationPrompt(command, args) {
   const descriptions = {
     kickMember: "이 작업은 유저를 서버에서 추방하는 위험한 명령입니다.",
     banMember: "이 작업은 유저를 차단하는 위험한 명령입니다.",
-    ipBanMember: "이 작업은 유저를 차단하는 위험한 명령입니다.",
     addRolePermission: "이 작업은 역할 권한을 변경하는 위험한 명령입니다.",
     removeRolePermission: "이 작업은 역할 권한을 변경하는 위험한 명령입니다.",
     setVerificationLevel: "이 작업은 서버 인증 단계를 변경하는 위험한 명령입니다.",
@@ -85,7 +83,6 @@ const COMMANDS = {
   timeoutMember: "timeoutMember",
   kickMember: "kickMember",
   banMember: "banMember",
-  ipBanMember: "ipBanMember",
   muteMember: "muteMember",
   deafenMember: "deafenMember",
   moveMember: "moveMember",
@@ -131,10 +128,6 @@ const COMMAND_ALIASES = {
   영구추방: COMMANDS.banMember,
   ban: COMMANDS.banMember,
   banmember: COMMANDS.banMember,
-  ip차단: COMMANDS.ipBanMember,
-  아이피차단: COMMANDS.ipBanMember,
-  ipban: COMMANDS.ipBanMember,
-  ipbanmember: COMMANDS.ipBanMember,
   뮤트: COMMANDS.muteMember,
   서버뮤트: COMMANDS.muteMember,
   mute: COMMANDS.muteMember,
@@ -328,9 +321,6 @@ async function executeCommand(message, command, args, userPrompt) {
       break;
     case COMMANDS.banMember:
       await banCommand(message, args, false);
-      break;
-    case COMMANDS.ipBanMember:
-      await banCommand(message, args, true);
       break;
     case COMMANDS.muteMember:
       await voiceMuteCommand(message, args);

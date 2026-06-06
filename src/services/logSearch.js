@@ -203,7 +203,6 @@ function getActionFromCommand(command) {
     timeoutMember: "timeout_member",
     kickMember: "kick_member",
     banMember: "ban_member",
-    ipBanMember: "ban_member",
     changeNickname: "change_nickname",
     deleteMessage: "delete_message",
     purgeMessages: "purge_messages",
