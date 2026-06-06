@@ -75,18 +75,18 @@ export async function classifyRequestIntent({ userPrompt, hasImageAttachment, lo
       {
         role: "system",
         content: [
-          "?덈뒗 ?붿뒪肄붾뱶 遊??붿껌 ?쇱슦?곗빞.",
-          "?곹솴??臾섏궗?섎뒗 留먯쓣 ?ъ슜?섏? 留먭퀬 ?대え吏瑜??꾩슂?좊븣留??ъ슜?? ?щ엺怨???뷀븷?뚮뒗 議대럠留먯쓣 ?ъ슜??",
-          "?ъ슜??硫붿떆吏瑜?蹂닿퀬 ?꾨옒 ??以??섎굹濡쒕쭔 遺꾨쪟??",
-          "- chat: ?쇰컲 ??? 吏덈Ц, ?쒕쾭 愿由ш? ?꾨땶 ?띿뒪???붿껌",
-          "- image_read: ?ъ슜?먭? ?대?吏, ?ъ쭊, ?ㅽ겕由곗꺑, 泥⑤?臾쇱쓣 ?쎄굅???ㅻ챸?섍굅??遺꾩꽍???щ씪???붿껌",
-          "- image_generation: ?ъ슜?먭? ???대?吏, 洹몃┝, ?ъ쭊, ?쇰윭?ㅽ듃, ?꾩씠肄? 諛곕꼫, ?꾨줈???대?吏, ?몃꽕???깆쓣 留뚮뱾???щ씪???붿껌",
-          "?먯뿰?ㅻ윭???쒗쁽???섎룄濡??먮떒?? ?덈? ?ㅼ뼱 '紐쏀솚?곸씤 諛곕꼫 ?섎굹 留뚮뱾?댁쨪??, '?꾨줈?꾩뿉 ??洹몃┝ 遺?곹빐'??image_generation?댁빞.",
-          "諛섎뱶??JSON留?異쒕젰?? 留덊겕?ㅼ슫, ?ㅻ챸, 肄붾뱶釉붾줉? ?곗? 留?",
-          '?뺤떇: {"type":"chat|image_read|image_generation|log_search","imagePrompt":"?대?吏 ?앹꽦???꾨＼?꾪듃 ?먮뒗 鍮?臾몄옄??}',
+          "너는 디스코드 봇 요청 라우터야.",
+          "상황을 묘사하는 말을 사용하지 말고 이모지를 필요할 때만 사용해. 사람과 대화할 때는 존댓말을 사용해.",
+          "사용자 메시지를 보고 아래 네 가지 중 하나로만 분류해.",
+          "- chat: 일반 대화, 질문, 서버 관리가 아닌 텍스트 요청",
+          "- image_read: 사용자가 이미지, 사진, 스크린샷, 첨부물을 읽거나 설명하거나 분석해달라는 요청",
+          "- image_generation: 사용자가 새 이미지, 그림, 사진, 일러스트, 아이콘, 배너, 프로필 이미지, 썸네일 등을 만들어달라는 요청",
+          "자연스러운 표현이 되도록 판단해. 예를 들어 '몽환적인 배너 하나 만들어줄래?', '프로필에 쓸 그림 부탁해'는 image_generation이야.",
+          "반드시 JSON만 출력해. 마크다운, 설명, 코드블록은 쓰지 마.",
+          '형식: {"type":"chat|image_read|image_generation|log_search","imagePrompt":"이미지 생성을 위한 프롬프트 또는 빈 문자열"}',
           
           "Classifier extension: use type log_search when the user asks to search, inspect, summarize, or answer from bot/server logs, command history, errors, AI call logs, or who performed an admin action.",
-          "Examples that must be log_search: ?댁젣 ?됰꽕??蹂寃쏀븳 ?щ엺 李얠븘以?/ ?댁젣 AI 濡쒓렇 蹂댁뿬以?/ ?꾧? 李⑤떒?덉뼱?",
+          "Examples that must be log_search: 어제 닉네임 변경한 사람 찾아줘 / 어제 AI 로그 보여줘 / 누가 차단했어?",
           "Allowed JSON type values: chat, image_read, image_generation, log_search.",
         ].join("\n"),
       },
@@ -144,7 +144,7 @@ export async function createChatCompletion({
       },
       {
         role: "system",
-        content: `?꾩옱 ?묐떟?댁빞 ?섎뒗 ?좎? ?대쫫 蹂??userName? "${userName}"?낅땲?? ?듬??먯꽌 諛섎뱶??"${userName}???대씪怨?遺덈윭二쇱꽭??`,
+        content: `현재 응답해야 하는 유저 이름 변수 userName은 "${userName}"입니다. 답변에서 반드시 "${userName}"님이라고 불러주세요.`,
       },
       ...historyMessages,
       {
@@ -204,10 +204,10 @@ export async function shouldUseWebSearch({ userPrompt, logContext = {} }) {
         {
           role: "system",
           content: [
-            "Decide whether answering this Discord message requires current web search.",
-            'Return only JSON: {"webSearch":true} or {"webSearch":false}.',
-            "Use true for recent news, today's data, prices, schedules, weather, live scores, laws, product availability, or current versions.",
-            "Use false for general knowledge, coding help, writing, translation, math, or stable facts.",
+            "이 디스코드 메시지에 답변하기 위해 실시간 웹 검색이 필요한지 판단하세요.",
+            '반드시 JSON 형식으로만 응답하세요: {"webSearch":true} 또는 {"webSearch":false}.',
+            "최신 뉴스, 오늘의 데이터, 가격, 일정, 날씨, 스포츠 경기 결과, 법률, 제품 재고 상태 또는 최신 버전 정보와 같이 실시간 정보가 필요한 경우 true를 사용하세요.",
+            "일반적인 상식, 코딩 도움말, 작문, 번역, 수학 또는 변하지 않는 사실에 대해서는 false를 사용하세요.",
           ].join("\n"),
         },
         {
@@ -249,16 +249,16 @@ export async function createLogSearchAnswer({
       {
         role: "system",
         content: [
-          "You summarize Discord bot JSON logs for an admin.",
-          "Answer in Korean, briefly and naturally.",
-          "Use only the provided log records. Do not invent missing details.",
-          "Each record has a cls field with normalized actor/action/target/object. Prefer cls over raw text.",
-          "Decide which records are relevant to the user's query. Ignore unrelated records.",
-          "If no provided records are relevant, say that no matching log was found in the searched range.",
-          "When the query says '?닿?' or 'me', interpret it as the requester object.",
-          "If the target person is visible, include display name/tag/id when available.",
-          "If the evidence is only commandText, say it was inferred from the command text.",
-          "Include exact local timestamps from the records when useful.",
+          "당신은 관리자에게 Discord 봇 JSON 로그를 요약해 주는 도우미입니다.",
+          "한국어로 간결하고 자연스럽게 답변하세요.",
+          "반드시 제공된 로그 기록만 사용하세요. 없는 내용을 추측하거나 만들어내지 마세요.",
+          "각 기록에는 actor/action/target/object가 정규화된 cls 필드가 있습니다. 가능하면 원본 텍스트보다 cls 필드를 우선 사용하세요.",
+          "사용자 질문과 관련된 기록만 선택하고, 관련 없는 기록은 무시하세요.",
+          "제공된 기록 중 관련된 내용이 없다면 검색 범위 내에서 일치하는 로그를 찾지 못했다고 답변하세요.",
+          "질문에 '누가', '나', 'me'가 포함되어 있으면 requester 객체를 기준으로 해석하세요.",
+          "대상 사용자를 확인할 수 있다면 display name, tag, id를 함께 포함하세요.",
+          "근거가 commandText뿐이라면 명령어 텍스트를 바탕으로 추정한 내용임을 명시하세요.",
+          "필요한 경우 로그에 기록된 정확한 로컬 시간을 포함하세요."
         ].join("\n"),
       },
       {
@@ -353,7 +353,7 @@ export async function generateImage(prompt, logContext = {}) {
     parameters: { num_inference_steps: 5 },
   });
   
-  // ?붿뒪肄붾뱶 ?몃뱾?ш? ?몄떇?????덈룄濡?Blob??Base64 臾몄옄?대줈 蹂??  
+ // 업스케일 코드가 인식할 수 있도록 Blob을 Base64 문자열로 변환
   const arrayBuffer = await imageBlob.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
   const base64Json = buffer.toString("base64");
@@ -409,11 +409,11 @@ export async function matchServerMember({ guildName, targetText, candidates, log
       {
         role: "system",
         content: [
-          "?덈뒗 ?붿뒪肄붾뱶 ?쒕쾭?먯꽌 ???硫ㅻ쾭瑜?李얜뒗 愿由ъ옄 蹂댁“ ?꾧뎄??",
-          "?ъ슜?먭? ?낅젰??????띿뒪?몃? 蹂닿퀬, ?꾨낫 紐⑸줉?먯꽌 媛???곹빀??硫ㅻ쾭瑜??좏깮??",
-          "?꾨낫 以묒뿉????留욌뒗 硫ㅻ쾭媛 ?놁쑝硫?memberId瑜?null濡?諛섑솚??",
-          "??긽 JSON留?異쒕젰?댁빞 ?? 留덊겕?ㅼ슫, 肄붾뱶釉붾줉, 異붽? ?ㅻ챸? ?곗? 留?",
-          "異쒕젰 ?뺤떇: {\"memberId\":\"123456789012345678\"} ?먮뒗 {\"memberId\":null}",
+          "너는 디스코드 서버에서 대상 멤버를 찾는 관리자 보조 도구야.",
+          "사용자가 입력한 대상 텍스트를 보고, 후보 목록에서 가장 적합한 멤버를 선택해.",
+          "후보 중에서 딱 맞는 멤버가 없으면 memberId를 null로 반환해.",
+          "항상 JSON만 출력해야 해. 마크다운, 코드블록, 추가 설명은 쓰지 마.",
+          "출력 형식: {\"memberId\":\"123456789012345678\"} 또는 {\"memberId\":null}",
         ].join("\n"),
       },
       {
