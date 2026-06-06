@@ -3,6 +3,9 @@ import { OpenAI } from "openai";
 import {
   HF_CHAT_MODEL,
   GROQ_CHAT_MODEL,
+  GEMINI_CHAT_MODEL,
+  GEMINI_WEB_SEARCH_MODEL,
+  GEMINI_WEB_SEARCH_MODEL_LITE,
   HF_BASE_URL,
   IMAGE_GENERATION_MODEL,
   IMAGE_MODEL,
@@ -23,7 +26,7 @@ export const aiClient = new OpenAI({
 });
 
 export function getChatModel(imageUrls) {
-  return imageUrls.length > 0 ? IMAGE_MODEL : GROQ_CHAT_MODEL;
+  return imageUrls.length > 0 ? IMAGE_MODEL : HF_CHAT_MODEL;
 }
 
 export function getChatTask(imageUrls) {
@@ -122,10 +125,37 @@ export async function createChatCompletion({
     historyMessageCount: historyMessages.length,
   });
 
-  if (imageUrls.length === 0) {
-    return groqClient.chat.completions.create({
-      model,
-      messages: createTextChatMessages(userName, historyMessages, currentApiUserMessage),
+  const request = ({ model: requestModel }) => {
+    if (imageUrls.length === 0) {
+      return aiClient.chat.completions.create({
+        model: requestModel,
+        messages: createTextChatMessages(userName, historyMessages, currentApiUserMessage),
+        temperature: 0.6,
+        max_completion_tokens: 4096,
+        top_p: 0.95,
+        stream: false,
+        reasoning_effort: "default",
+        stop: null,
+      });
+    }
+
+    return aiClient.chat.completions.create({
+      model: requestModel,
+      messages: [
+        {
+          role: "system",
+          content: SYSTEM_PROMPT,
+        },
+        {
+          role: "system",
+          content: `현재 응답해야 하는 유저 이름 변수 userName은 "${userName}"입니다. 답변에서 반드시 "${userName}"님이라고 불러주세요.`,
+        },
+        ...historyMessages,
+        {
+          role: currentApiUserMessage.role,
+          content: currentApiUserMessage.content,
+        },
+      ],
       temperature: 0.6,
       max_completion_tokens: 4096,
       top_p: 0.95,
@@ -133,26 +163,22 @@ export async function createChatCompletion({
       reasoning_effort: "default",
       stop: null,
     });
-  }
+  };
 
-  return aiClient.chat.completions.create({
-    model,
-    messages: [
-      {
-        role: "system",
-        content: SYSTEM_PROMPT,
-      },
-      {
-        role: "system",
-        content: `현재 응답해야 하는 유저 이름 변수 userName은 "${userName}"입니다. 답변에서 반드시 "${userName}"님이라고 불러주세요.`,
-      },
-      ...historyMessages,
-      {
-        role: currentApiUserMessage.role,
-        content: currentApiUserMessage.content,
-      },
-    ],
-  });
+  try {
+    return await request({ model });
+  } catch (error) {
+    if (imageUrls.length === 0 && model === HF_CHAT_MODEL) {
+      logError("chat_completion_fallback", logContext.guildId, error, {
+        ...logContext,
+        fallbackModel: GEMINI_CHAT_MODEL,
+      });
+
+      return await request({ model: GEMINI_CHAT_MODEL });
+    }
+
+    throw error;
+  }
 }
 
 export async function createChatCompletionStream({
@@ -198,8 +224,8 @@ export async function shouldUseWebSearch({ userPrompt, logContext = {} }) {
   });
 
   try {
-    const completion = await groqClient.chat.completions.create({
-      model: GROQ_CHAT_MODEL,
+    const completion = await aiClient.chat.completions.create({
+      model: GEMINI_WEB_SEARCH_MODEL,
       messages: [
         {
           role: "system",
@@ -289,32 +315,42 @@ export async function createWebSearchCompletionStream({
     throw new Error("Groq web search streaming only supports text messages.");
   }
 
-  logInfo("ai_call", {
-    ...logContext,
-    task: "web_search_stream",
-    model: "compound-beta-mini",
-    imageCount: 0,
-    historyMessageCount: historyMessages.length,
-  });
+  const searchModels = [GEMINI_WEB_SEARCH_MODEL, GEMINI_WEB_SEARCH_MODEL_LITE];
+  let lastError;
 
-  return groqClient.chat.completions.create({
-    model: "compound-beta-mini",
-    messages: [
-      {
-        role: "system",
-        content: "Use web search for current facts and include concise source links when useful.",
-      },
-      ...createTextChatMessages(userName, historyMessages, currentApiUserMessage),
-    ],
-    citation_options: "enabled",
-    search_settings: {
-      country: "south korea",
-      include_images: false,
-    },
-    temperature: 0.4,
-    max_completion_tokens: 4096,
-    stream: true,
-  });
+  for (const model of searchModels) {
+    logInfo("ai_call", {
+      ...logContext,
+      task: "web_search_stream",
+      model,
+      imageCount: 0,
+      historyMessageCount: historyMessages.length,
+    });
+
+    try {
+      return await aiClient.chat.completions.create({
+        model,
+        messages: [
+          {
+            role: "system",
+            content: "You are a web search assistant. Use the latest available information and cite sources concisely when useful.",
+          },
+          ...createTextChatMessages(userName, historyMessages, currentApiUserMessage),
+        ],
+        temperature: 0.4,
+        max_completion_tokens: 4096,
+        stream: true,
+      });
+    } catch (error) {
+      lastError = error;
+      logError("web_search_model_attempt_failed", logContext.guildId, error, {
+        ...logContext,
+        model,
+      });
+    }
+  }
+
+  throw lastError;
 }
 
 function createTextChatMessages(userName, historyMessages, currentApiUserMessage) {
