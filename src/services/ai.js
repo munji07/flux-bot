@@ -5,7 +5,6 @@ import {
   GROQ_CHAT_MODEL,
   GEMINI_CHAT_MODEL,
   GEMINI_WEB_SEARCH_MODEL,
-  GEMINI_WEB_SEARCH_MODEL_LITE,
   HF_BASE_URL,
   IMAGE_GENERATION_MODEL,
   IMAGE_MODEL,
@@ -180,18 +179,12 @@ export async function createChatCompletion({
     throw error;
   }
 }
-
 export async function createChatCompletionStream({
   userName,
   historyMessages,
   currentApiUserMessage,
-  imageUrls,
   logContext = {},
 }) {
-  if (imageUrls.length > 0) {
-    throw new Error("Groq 스트리밍 채팅은 텍스트 메시지만 지원합니다.");
-  }
-
   logInfo("ai_call", {
     ...logContext,
     task: "chat_stream",
@@ -211,7 +204,6 @@ export async function createChatCompletionStream({
     stop: null,
   });
 }
-
 export async function shouldUseWebSearch({ userPrompt, logContext = {} }) {
   const prompt = userPrompt.trim();
   if (!prompt) return false;
@@ -219,7 +211,7 @@ export async function shouldUseWebSearch({ userPrompt, logContext = {} }) {
   logInfo("ai_call", {
     ...logContext,
     task: "web_search_classification",
-    model: GROQ_CHAT_MODEL,
+    model: GEMINI_WEB_SEARCH_MODEL,
     promptLength: prompt.length,
   });
 
@@ -264,13 +256,13 @@ export async function createLogSearchAnswer({
   logInfo("ai_call", {
     ...logContext,
     task: "log_search_summary",
-    model: GROQ_CHAT_MODEL,
+    model: "qwen/qwen3-32b",
     promptLength: userPrompt.length,
     logRecordCount: records.length,
   });
 
   const completion = await groqClient.chat.completions.create({
-    model: GROQ_CHAT_MODEL,
+    model: "qwen/qwen3-32b",
     messages: [
       {
         role: "system",
@@ -302,62 +294,6 @@ export async function createLogSearchAnswer({
   });
 
   return stripReasoningTags(completion.choices?.[0]?.message?.content ?? "");
-}
-
-export async function createWebSearchCompletionStream({
-  userName,
-  historyMessages,
-  currentApiUserMessage,
-  imageUrls,
-  logContext = {},
-}) {
-  if (imageUrls.length > 0) {
-    throw new Error("Groq 웹 검색 스트리밍은 텍스트 메시지만 지원합니다.");
-  }
-
-  const searchModels = [GEMINI_WEB_SEARCH_MODEL, GEMINI_WEB_SEARCH_MODEL_LITE];
-  let lastError;
-
-  for (const model of searchModels) {
-    logInfo("ai_call", {
-      ...logContext,
-      task: "web_search_stream",
-      model,
-      imageCount: 0,
-      historyMessageCount: historyMessages.length,
-    });
-
-    try {
-      return await aiClient.chat.completions.create({
-        model,
-        messages: [
-          {
-            role: "system",
-            content: [
-              "너는 웹 검색 보조원이야.",
-              "가급적 한국어로 답변해줘.",
-              "가장 최신의 정보를 사용해.",
-              "간결하게 답변하고 마지막에 작은 출처 블록을 포함해.",
-              "출처 블록은 '출처: [링크]' 또는 간략한 참조 목록과 같은 짧은 푸터 형식으로 작성해.",
-              "출처 블록이 답변의 주가 되지 않도록 주의하고, 본문과 명확히 구분하여 최소한으로 유지해.",
-            ].join(" "),
-          },
-          ...createTextChatMessages(userName, historyMessages, currentApiUserMessage),
-        ],
-        temperature: 0.4,
-        max_completion_tokens: 4096,
-        stream: true,
-      });
-    } catch (error) {
-      lastError = error;
-      logError("web_search_model_attempt_failed", logContext.guildId, error, {
-        ...logContext,
-        model,
-      });
-    }
-  }
-
-  throw lastError;
 }
 
 function createTextChatMessages(userName, historyMessages, currentApiUserMessage) {

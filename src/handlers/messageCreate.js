@@ -8,8 +8,6 @@ import {
   createApiUserMessage,
   createChatCompletion,
   createChatCompletionStream,
-  createWebSearchCompletionStream,
-  shouldUseWebSearch,
   stripReasoningTags,
 } from "../services/ai.js";
 import {
@@ -194,30 +192,7 @@ export async function handleMessageCreate(client, message) {
     let answer;
     let answerAlreadySent = false;
 
-    const webSearchNeeded =
-      imageUrls.length === 0
-        ? await shouldUseWebSearch({
-            userPrompt,
-            logContext,
-          })
-        : false;
-
-    if (webSearchNeeded) {
-      currentStep = "request_groq_web_search_stream";
-      await loadingMessage.edit("-# <a:loading:1495336917326368829> DUST봇이 웹에서 최신 정보를 확인하고 있어요...");
-
-      const chatCompletion = await createWebSearchCompletionStream({
-        userName,
-        historyMessages,
-        currentApiUserMessage,
-        imageUrls,
-        logContext,
-      });
-
-      currentStep = "stream_groq_web_search_answer";
-      answer = await sendStreamingAnswer(message, loadingMessage, chatCompletion);
-      answerAlreadySent = true;
-    } else if (imageUrls.length === 0) {
+    if (imageUrls.length === 0) {
       try {
         const chatCompletion = await createChatCompletion({
           userName,
@@ -229,10 +204,6 @@ export async function handleMessageCreate(client, message) {
 
         currentStep = "parse_ai_answer";
         answer = stripReasoningTags(chatCompletion.choices?.[0]?.message?.content ?? "");
-
-        if (!answer) {
-          throw new Error("Primary AI returned an empty answer.");
-        }
       } catch (primaryError) {
         logError("primary_ai_completion_failed", message.guildId, primaryError, {
           guildName: message.guild.name,
@@ -248,7 +219,6 @@ export async function handleMessageCreate(client, message) {
           userName,
           historyMessages,
           currentApiUserMessage,
-          imageUrls,
           logContext: {
             ...logContext,
             fallbackFrom: "deepseek",
