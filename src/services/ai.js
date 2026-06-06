@@ -88,9 +88,9 @@ export async function classifyRequestIntent({ userPrompt, hasImageAttachment, lo
           "반드시 JSON만 출력해. 마크다운, 설명, 코드블록은 쓰지 마.",
           '형식: {"type":"chat|image_read|image_generation|log_search","imagePrompt":"이미지 생성을 위한 프롬프트 또는 빈 문자열"}',
           
-          "Classifier extension: use type log_search when the user asks to search, inspect, summarize, or answer from bot/server logs, command history, errors, AI call logs, or who performed an admin action.",
-          "Examples that must be log_search: 어제 닉네임 변경한 사람 찾아줘 / 어제 AI 로그 보여줘 / 누가 차단했어?",
-          "Allowed JSON type values: chat, image_read, image_generation, log_search.",
+          "분류기 확장: 사용자가 봇/서버 로그, 명령어 기록, 오류, AI 호출 로그 검색, 또는 관리자 작업 수행자 확인을 요청할 때는 log_search 타입을 사용하세요.",
+          "log_search 필수 예시: 어제 닉네임 변경한 사람 찾아줘 / 어제 AI 로그 보여줘 / 누가 차단했어?",
+          "허용된 JSON type 값: chat, image_read, image_generation, log_search.",
         ].join("\n"),
       },
       {
@@ -189,7 +189,7 @@ export async function createChatCompletionStream({
   logContext = {},
 }) {
   if (imageUrls.length > 0) {
-    throw new Error("Groq streaming chat only supports text messages.");
+    throw new Error("Groq 스트리밍 채팅은 텍스트 메시지만 지원합니다.");
   }
 
   logInfo("ai_call", {
@@ -312,7 +312,7 @@ export async function createWebSearchCompletionStream({
   logContext = {},
 }) {
   if (imageUrls.length > 0) {
-    throw new Error("Groq web search streaming only supports text messages.");
+    throw new Error("Groq 웹 검색 스트리밍은 텍스트 메시지만 지원합니다.");
   }
 
   const searchModels = [GEMINI_WEB_SEARCH_MODEL, GEMINI_WEB_SEARCH_MODEL_LITE];
@@ -333,7 +333,14 @@ export async function createWebSearchCompletionStream({
         messages: [
           {
             role: "system",
-            content: "You are a web search assistant. Use the latest available information and cite sources concisely when useful.",
+            content: [
+              "너는 웹 검색 보조원이야.",
+              "가급적 한국어로 답변해줘.",
+              "가장 최신의 정보를 사용해.",
+              "간결하게 답변하고 마지막에 작은 출처 블록을 포함해.",
+              "출처 블록은 '출처: [링크]' 또는 간략한 참조 목록과 같은 짧은 푸터 형식으로 작성해.",
+              "출처 블록이 답변의 주가 되지 않도록 주의하고, 본문과 명확히 구분하여 최소한으로 유지해.",
+            ].join(" "),
           },
           ...createTextChatMessages(userName, historyMessages, currentApiUserMessage),
         ],
@@ -361,7 +368,7 @@ function createTextChatMessages(userName, historyMessages, currentApiUserMessage
     },
     {
       role: "system",
-      content: `The current user's display name is "${userName}". Address the user by that name in your answer.`,
+      content: `현재 사용자의 이름은 "${userName}"입니다. 답변할 때 유저를 이 이름으로 불러주세요.`,
     },
     ...historyMessages,
     {
