@@ -3,12 +3,14 @@ import { UserFacingError } from "../errors.js";
 import { handleManagementCommand } from "../commands/management.js";
 import { handleImageGenerationRequest } from "./imageGeneration.js";
 import { handleLogSearchRequest } from "../services/logSearch.js";
+import { handleGoogleSearch } from "./googleSearch.js";
 import {
   classifyRequestIntent,
   createApiUserMessage,
   createChatCompletion,
   createChatCompletionStream,
   stripReasoningTags,
+  shouldUseWebSearch,
 } from "../services/ai.js";
 import {
   appendConversationHistory,
@@ -146,6 +148,59 @@ export async function handleMessageCreate(client, message) {
     };
     const currentApiUserMessage = createApiUserMessage(userName, userPrompt, imageUrls);
 
+    const logContext = {
+      guildId: message.guildId,
+      guildName: message.guild.name,
+      channelId: message.channelId,
+      userId: message.author.id,
+      userName,
+      userTag: message.author.tag,
+      commandText: userPrompt,
+      historyNeeded,
+    };
+
+    if (intent.type === "chat" && imageUrls.length === 0) {
+      try {
+        currentStep = "web_search_classification";
+        const needWebSearch = await shouldUseWebSearch({ userPrompt, logContext });
+
+        if (needWebSearch) {
+          currentStep = "web_search";
+          const searchResult = await handleGoogleSearch(userPrompt);
+
+          if (searchResult) {
+            await sendChunkedAnswer(message, loadingMessage, searchResult);
+            appendConversationHistory(
+              historyKey,
+              {
+                guildId: message.guildId,
+                channelId: message.channelId,
+                userId: message.author.id,
+                userTag: message.author.tag,
+                userName,
+              },
+              currentUserMessage,
+              {
+                role: "assistant",
+                content: searchResult,
+              },
+            );
+
+            logInfo("web_search_answer_sent", {
+              ...logContext,
+              answerLength: searchResult.length,
+            });
+            return;
+          }
+        }
+      } catch (error) {
+        logError("web_search", message.guildId, error, {
+          ...logContext,
+          step: currentStep,
+        });
+      }
+    }
+
     logInfo("command_detected", {
       guildId: message.guildId,
       guildName: message.guild.name,
@@ -179,16 +234,6 @@ export async function handleMessageCreate(client, message) {
     }, 8000);
 
     currentStep = "request_ai_completion";
-    const logContext = {
-      guildId: message.guildId,
-      guildName: message.guild.name,
-      channelId: message.channelId,
-      userId: message.author.id,
-      userName,
-      userTag: message.author.tag,
-      commandText: userPrompt,
-      historyNeeded,
-    };
     let answer;
     let answerAlreadySent = false;
 

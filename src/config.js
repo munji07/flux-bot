@@ -7,6 +7,7 @@ export const HF_CHAT_MODEL = "deepseek-ai/DeepSeek-R1";
 export const GROQ_CHAT_MODEL = "qwen/qwen3-32B";
 export const GEMINI_CHAT_MODEL = "gemini-3.1-flash-lite";
 export const GEMINI_WEB_SEARCH_MODEL = "gemini-3.5-flash";
+export const GEMINI_SEARCH_MODEL = "gemini-1.5-flash";
 export const IMAGE_MODEL = "Qwen/Qwen3.6-27B:featherless-ait";
 export const IMAGE_GENERATION_MODEL = "Tongyi-MAI/Z-Image-Turbo";
 export const HF_BASE_URL = "https://router.huggingface.co/v1";
@@ -54,7 +55,7 @@ export const SYSTEM_PROMPT = `
 `.trim();
 
 export function validateEnv() {
-  const requiredEnv = ["DISCORD_TOKEN", "HF_TOKEN", "GROQ_API_KEY"];
+  const requiredEnv = ["DISCORD_TOKEN", "HF_TOKEN", "GROQ_API_KEY", "GEMINI_API_KEY"];
   const missingEnv = requiredEnv.filter((key) => !process.env[key]);
 
   if (missingEnv.length > 0) {

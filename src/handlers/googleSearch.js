@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GEMINI_SEARCH_MODEL } from "../config.js";
 import { logError } from "../logger.js";
 
 /**
@@ -7,13 +8,16 @@ import { logError } from "../logger.js";
  * @returns {Promise<string>} - 검색 결과가 반영된 생성 텍스트
  */
 export async function handleGoogleSearch(query) {
-  // 환경 변수에서 API 키를 가져옵니다.
-  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY가 설정되어 있지 않습니다.");
+  }
+
+  const genAI = new GoogleGenerativeAI(apiKey);
 
   try {
-    // googleSearchRetrieval 도구를 활성화하여 모델을 설정합니다.
     const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash", // 또는 'gemini-1.5-pro'
+      model: GEMINI_SEARCH_MODEL,
       tools: [
         {
           googleSearchRetrieval: {},
@@ -22,9 +26,14 @@ export async function handleGoogleSearch(query) {
     });
 
     const result = await model.generateContent(query);
-    const response = await result.response;
-    
-    return response.text();
+    const response = result?.response;
+    const text = response?.text?.();
+
+    if (!text) {
+      throw new Error("Google 검색에서 응답 텍스트를 받지 못했습니다.");
+    }
+
+    return text.trim();
   } catch (error) {
     logError("google_search_handler_error", null, error, { query });
     throw new Error("웹 검색 정보를 가져오는 중 오류가 발생했습니다.");
