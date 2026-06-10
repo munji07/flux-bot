@@ -1,12 +1,14 @@
-import { Client, Events, ActivityType } from "discord.js";
+import { Client, Events, ActivityType, Partials } from "discord.js";
 import { CLIENT_INTENTS, validateEnv } from "./config.js";
 import { handleMessageCreate } from "./handlers/messageCreate.js";
+import { handleInteractionCreate } from "./handlers/interactionCreate.js";
 import { logError, logInfo } from "./logger.js";
 
 validateEnv();
 
 const discordClient = new Client({
   intents: CLIENT_INTENTS,
+  partials: [Partials.Channel, Partials.Message],
 });
 
 discordClient.once(Events.ClientReady, (client) => {
@@ -34,6 +36,16 @@ discordClient.on(Events.MessageCreate, (message) => {
       channelId: message.channelId,
       userId: message.author?.id,
       userTag: message.author?.tag,
+    });
+  });
+});
+
+discordClient.on(Events.InteractionCreate, (interaction) => {
+  handleInteractionCreate(discordClient, interaction).catch((error) => {
+    logError("interaction_create_unhandled", null, error, {
+      userId: interaction.user?.id,
+      userTag: interaction.user?.tag,
+      customId: interaction.customId,
     });
   });
 });

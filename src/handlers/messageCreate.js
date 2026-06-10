@@ -1,8 +1,10 @@
 import { PREFIX, SAFE_MESSAGE_LIMIT } from "../config.js";
 import { UserFacingError } from "../errors.js";
 import { handleManagementCommand } from "../commands/management.js";
+import { handleSubscriptionCommand } from "../commands/subscription.js";
 import { handleImageGenerationRequest } from "./imageGeneration.js";
 import { handleLogSearchRequest } from "../services/logSearch.js";
+import { checkAndIncrementUsage, TIER_LIMITS } from "../services/subscription.js";
 import { handleGoogleSearch } from "./googleSearch.js";
 import {
   classifyRequestIntent,
@@ -41,6 +43,9 @@ export async function handleMessageCreate(client, message) {
 
   const managementHandled = await handleManagementCommand(message, userPrompt);
   if (managementHandled) return;
+
+  const subscriptionHandled = await handleSubscriptionCommand(message, userPrompt);
+  if (subscriptionHandled) return;
 
   if (isPronunciationRequest(userPrompt)) {
     try {
@@ -104,6 +109,16 @@ export async function handleMessageCreate(client, message) {
   }
 
   if (intent.type === "log_search") {
+    const usageCheck = checkAndIncrementUsage(message.author.id, "ai_calls");
+    if (!usageCheck.allowed) {
+      const limits = TIER_LIMITS[usageCheck.tier];
+      const limitExceededMessage = `❌ **AI 호출 한도 초과**\n` +
+        `현재 ${message.author.username}님의 등급은 \`${limits.name}\`이며, 하루 AI 호출 제한량은 **${limits.ai_calls === Infinity ? "무제한" : `${limits.ai_calls}회`}**입니다.\n` +
+        `오늘 제한량을 모두 소모하셨습니다. 내일 다시 시도하시거나, \`${PREFIX} 등급 구매\`를 통해 한도를 늘려보세요!`;
+      await loadingMessage.edit(limitExceededMessage);
+      return;
+    }
+
     try {
       await handleLogSearchRequest(message, userPrompt, loadingMessage);
     } catch (error) {
@@ -121,6 +136,16 @@ export async function handleMessageCreate(client, message) {
   }
 
   if (intent.type === "image_generation") {
+    const usageCheck = checkAndIncrementUsage(message.author.id, "image_generations");
+    if (!usageCheck.allowed) {
+      const limits = TIER_LIMITS[usageCheck.tier];
+      const limitExceededMessage = `❌ **이미지 생성 한도 초과**\n` +
+        `현재 ${message.author.username}님의 등급은 \`${limits.name}\`이며, 하루 이미지 생성 제한량은 **${limits.image_generations}회**입니다.\n` +
+        `오늘 제한량을 모두 소모하셨습니다. 내일 다시 시도하시거나, \`${PREFIX} 등급 구매\`를 통해 한도를 늘려보세요!`;
+      await loadingMessage.edit(limitExceededMessage);
+      return;
+    }
+
     await handleImageGenerationRequest(client, message, intent.imagePrompt, loadingMessage);
     return;
   }
@@ -130,6 +155,26 @@ export async function handleMessageCreate(client, message) {
       await loadingMessage.edit("이미지 판독을 원하시면 분석할 이미지를 함께 첨부해주세요.");
     } else {
       await message.reply("이미지 판독을 원하시면 분석할 이미지를 함께 첨부해주세요.");
+    }
+    return;
+  }
+
+  const isImageRead = intent.type === "image_read" || attachedImageUrls.length > 0;
+  const usageType = isImageRead ? "image_readings" : "ai_calls";
+  const usageTypeName = isImageRead ? "이미지 판독" : "AI 호출";
+
+  const usageCheck = checkAndIncrementUsage(message.author.id, usageType);
+  if (!usageCheck.allowed) {
+    const limits = TIER_LIMITS[usageCheck.tier];
+    const limitVal = limits[usageType] === Infinity ? "무제한" : `${limits[usageType]}회`;
+    const limitExceededMessage = `❌ **${usageTypeName} 한도 초과**\n` +
+      `현재 ${message.author.username}님의 등급은 \`${limits.name}\`이며, 하루 ${usageTypeName} 제한량은 **${limitVal}**입니다.\n` +
+      `오늘 제한량을 모두 소모하셨습니다. 내일 다시 시도하시거나, \`${PREFIX} 등급 구매\`를 통해 한도를 늘려보세요!`;
+    
+    if (loadingMessage) {
+      await loadingMessage.edit(limitExceededMessage);
+    } else {
+      await message.reply(limitExceededMessage);
     }
     return;
   }

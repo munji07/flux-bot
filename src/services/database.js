@@ -31,4 +31,24 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_conversation_messages_user_created
     ON conversation_messages (guild_id, user_id, created_at);
+
+  CREATE TABLE IF NOT EXISTS user_subscriptions (
+    user_id TEXT PRIMARY KEY,
+    tier TEXT NOT NULL DEFAULT 'free',
+    expires_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS user_daily_usage (
+    user_id TEXT NOT NULL,
+    usage_date TEXT NOT NULL DEFAULT (date('now', 'localtime')),
+    ai_calls INTEGER NOT NULL DEFAULT 0,
+    image_generations INTEGER NOT NULL DEFAULT 0,
+    image_readings INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, usage_date)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_user_daily_usage_user_date
+    ON user_daily_usage (user_id, usage_date);
 `);

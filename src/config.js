@@ -25,6 +25,7 @@ export const CLIENT_INTENTS = [
   GatewayIntentBits.MessageContent,
   GatewayIntentBits.GuildVoiceStates,
   GatewayIntentBits.AutoModerationConfiguration,
+  GatewayIntentBits.DirectMessages,
 ];
 
 export const SYSTEM_PROMPT = `
