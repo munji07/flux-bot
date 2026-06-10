@@ -162,12 +162,12 @@ export async function handleMessageCreate(client, message) {
     if (intent.type === "chat" && imageUrls.length === 0) {
       try {
         currentStep = "web_search_classification";
-        const needWebSearch = await shouldUseWebSearch({ userPrompt, logContext });
+        const needWebSearch = await shouldUseWebSearch({ userPrompt, logContext, loadingMessage });
 
         if (needWebSearch) {
           currentStep = "web_search";
           const searchResult = await handleGoogleSearch(userPrompt);
-
+          
           if (searchResult) {
             await sendChunkedAnswer(message, loadingMessage, searchResult);
             appendConversationHistory(
@@ -185,7 +185,7 @@ export async function handleMessageCreate(client, message) {
                 content: searchResult,
               },
             );
-
+            if (loadingMessage)
             logInfo("web_search_answer_sent", {
               ...logContext,
               answerLength: searchResult.length,
@@ -193,11 +193,23 @@ export async function handleMessageCreate(client, message) {
             return;
           }
         }
+
+        if (loadingMessage) {
+          await loadingMessage.edit(`-# <a:loading:1495336917326368829>DUST봇이 웹에서 답변을 준비하고 있어요...`);
+        } else {
+          loadingMessage = await message.reply(`-# <a:loading:1495336917326368829> DUST봇이 웹에서 답변을 준비하고 있어요...`);
+        }
       } catch (error) {
         logError("web_search", message.guildId, error, {
           ...logContext,
           step: currentStep,
-        });
+        })
+        if (loadingMessage) {
+          await loadingMessage.edit("이미지 판독을 원하시면 분석할 이미지를 함께 첨부해주세요.");
+        } else {
+          await message.reply("이미지 판독을 원하시면 분석할 이미지를 함께 첨부해주세요.");
+        } 
+
       }
     }
 
