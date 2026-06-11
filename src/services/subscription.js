@@ -161,3 +161,19 @@ export function checkAndIncrementUsage(userId, type) {
     tier: sub.tier,
   };
 }
+
+/**
+ * 사용량을 1 감소시킵니다. (오류 발생 시 롤백용)
+ * @param {string} userId 
+ * @param {'ai_calls' | 'image_generations' | 'image_readings'} type 
+ */
+export function decrementUsage(userId, type) {
+  const todayStr = getKstDateString();
+  
+  db.prepare(`
+    UPDATE user_daily_usage
+    SET ${type} = CASE WHEN ${type} > 0 THEN ${type} - 1 ELSE 0 END
+    WHERE user_id = ? AND usage_date = ?
+  `).run(userId, todayStr);
+}
+

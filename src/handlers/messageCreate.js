@@ -4,7 +4,7 @@ import { handleManagementCommand } from "../commands/management.js";
 import { handleSubscriptionCommand } from "../commands/subscription.js";
 import { handleImageGenerationRequest } from "./imageGeneration.js";
 import { handleLogSearchRequest } from "../services/logSearch.js";
-import { checkAndIncrementUsage, TIER_LIMITS } from "../services/subscription.js";
+import { checkAndIncrementUsage, decrementUsage, TIER_LIMITS } from "../services/subscription.js";
 import { handleGoogleSearch } from "./googleSearch.js";
 import {
   classifyRequestIntent,
@@ -29,6 +29,8 @@ import {
   sendChunkedAnswer,
 } from "../utils/message.js";
 import { getPronunciationReply, isPronunciationRequest } from "../utils/phonetics.js";
+
+const activeUsers = new Set();
 
 export async function handleMessageCreate(client, message) {
   if (message.author.bot || !message.inGuild()) return;
@@ -57,8 +59,15 @@ export async function handleMessageCreate(client, message) {
     }
     return;
   }
+  if (activeUsers.has(message.author.id)) {
+    await message.reply("먼지가 이미 답변을 작성하고 있어요. 답변이 완료된 후 다시 질문해주세요!");
+    return;
+  }
 
-  let loadingMessage = await message.reply("-# <a:loading:1495336917326368829> DUST봇이 요청을 확인하고 있어요...");
+  activeUsers.add(message.author.id);
+
+  try {
+    let loadingMessage = await message.reply("-# <a:loading:1495336917326368829> DUST봇이 요청을 확인하고 있어요...");
   const attachedImageUrls = getImageAttachmentUrls(message);
   const userName = getDisplayName(message);
   let intent;
@@ -131,6 +140,7 @@ export async function handleMessageCreate(client, message) {
       });
 
       await loadingMessage.edit("로그를 검색하는 중 문제가 생겼어요. 잠시 뒤 다시 시도해 주세요.");
+      decrementUsage(message.author.id, "ai_calls");
     }
     return;
   }
@@ -146,7 +156,10 @@ export async function handleMessageCreate(client, message) {
       return;
     }
 
-    await handleImageGenerationRequest(client, message, intent.imagePrompt, loadingMessage);
+    const success = await handleImageGenerationRequest(client, message, intent.imagePrompt, loadingMessage);
+    if (!success) {
+      decrementUsage(message.author.id, "image_generations");
+    }
     return;
   }
 
@@ -341,6 +354,7 @@ export async function handleMessageCreate(client, message) {
         userName,
       });
       await loadingMessage.edit("AI가 빈 답변을 반환했어요. 잠시 뒤 다시 시도해주세요.");
+      decrementUsage(message.author.id, usageType);
       return;
     }
 
@@ -375,6 +389,8 @@ export async function handleMessageCreate(client, message) {
       storedHistoryMessageCount: getStoredHistoryLength(historyKey),
     });
   } catch (error) {
+    decrementUsage(message.author.id, usageType);
+
     logError(currentStep, message.guildId, error, {
       guildName: message.guild.name,
       channelId: message.channelId,
@@ -417,6 +433,9 @@ export async function handleMessageCreate(client, message) {
     }
   } finally {
     if (typingInterval) clearInterval(typingInterval);
+  }
+  } finally {
+    activeUsers.delete(message.author.id);
   }
 }
 

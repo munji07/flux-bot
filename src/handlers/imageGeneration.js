@@ -93,6 +93,7 @@ export async function handleImageGenerationRequest(client, message, imagePrompt,
     } else {
       await message.reply(errorMessage);
     }
+    return false;
   } finally {
     if (typingInterval) clearInterval(typingInterval);
   }
