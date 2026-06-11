@@ -1,4 +1,4 @@
-﻿import { Groq } from "groq-sdk";
+import { Groq } from "groq-sdk";
 import { OpenAI } from "openai";
 import {
   HF_CHAT_MODEL,
@@ -23,6 +23,18 @@ export const aiClient = new OpenAI({
   baseURL: HF_BASE_URL,
   apiKey: process.env.HF_TOKEN,
 });
+
+export const geminiClient = new OpenAI({
+  baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
+  apiKey: process.env.GEMINI_API_KEY,
+});
+
+function getClientForModel(model) {
+  if (model && model.startsWith("gemini-")) {
+    return geminiClient;
+  }
+  return aiClient;
+}
 
 export function getChatModel(imageUrls) {
   return imageUrls.length > 0 ? IMAGE_MODEL : HF_CHAT_MODEL;
@@ -125,21 +137,29 @@ export async function createChatCompletion({
   });
 
   const request = ({ model: requestModel }) => {
+    const client = getClientForModel(requestModel);
+    const isGemini = requestModel.startsWith("gemini-");
+    const options = {
+      model: requestModel,
+      temperature: 0.6,
+      max_completion_tokens: 4096,
+      top_p: 0.95,
+      stream: false,
+      stop: null,
+    };
+    if (!isGemini) {
+      options.reasoning_effort = "default";
+    }
+
     if (imageUrls.length === 0) {
-      return aiClient.chat.completions.create({
-        model: requestModel,
+      return client.chat.completions.create({
+        ...options,
         messages: createTextChatMessages(userName, historyMessages, currentApiUserMessage),
-        temperature: 0.6,
-        max_completion_tokens: 4096,
-        top_p: 0.95,
-        stream: false,
-        reasoning_effort: "default",
-        stop: null,
       });
     }
 
-    return aiClient.chat.completions.create({
-      model: requestModel,
+    return client.chat.completions.create({
+      ...options,
       messages: [
         {
           role: "system",
@@ -155,12 +175,6 @@ export async function createChatCompletion({
           content: currentApiUserMessage.content,
         },
       ],
-      temperature: 0.6,
-      max_completion_tokens: 4096,
-      top_p: 0.95,
-      stream: false,
-      reasoning_effort: "default",
-      stop: null,
     });
   };
 
@@ -216,7 +230,8 @@ export async function shouldUseWebSearch({ userPrompt, logContext = {} }) {
   });
 
   try {
-    const completion = await aiClient.chat.completions.create({
+    const client = getClientForModel(GEMINI_WEB_SEARCH_MODEL);
+    const completion = await client.chat.completions.create({
       model: GEMINI_WEB_SEARCH_MODEL,
       messages: [
         {
@@ -325,15 +340,18 @@ export async function generateImage(prompt, logContext = {}) {
     promptLength: prompt.length,
   });
 
-  const imageBlob = await hfClient.textToImage({
-    provider: "auto",
-    model: IMAGE_GENERATION_MODEL,
-    inputs: prompt,
-    parameters: { num_inference_steps: 5 },
+  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?model=${encodeURIComponent(IMAGE_GENERATION_MODEL)}&nologo=true&private=true`;
+  const response = await fetch(url, {
+    headers: {
+      "Authorization": `Bearer ${process.env.POLLINATIONS_API_KEY}`
+    }
   });
-  
- // 업스케일 코드가 인식할 수 있도록 Blob을 Base64 문자열로 변환
-  const arrayBuffer = await imageBlob.arrayBuffer();
+
+  if (!response.ok) {
+    throw new Error(`Failed to generate image from pollinations.ai: ${response.status} ${response.statusText}`);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
   const base64Json = buffer.toString("base64");
 
@@ -343,7 +361,7 @@ export async function generateImage(prompt, logContext = {}) {
         b64_json: base64Json
       },
     ],
-  }
+  };
 }
 
 function normalizeIntentResult(content, userPrompt) {
