@@ -54,7 +54,7 @@ export async function handleSubscriptionCommand(message, userPrompt) {
     dmContent += `### 💳 입금 계좌 정보\n`;
     dmContent += `* **은행**: 토스뱅크\n`;
     dmContent += `* **계좌번호**: \`1908-8961-3017\`\n`;
-    dmContent += `* **예금주**: 민재 (개발자)\n\n`;
+    dmContent += `* **예금주**: 전민재 (개발자)\n\n`;
 
     dmContent += `### 🏷️ 등급별 요금 정보\n`;
     dmContent += `1. **Basic 등급 (3,000원 / 30일)**\n`;
