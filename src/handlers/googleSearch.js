@@ -51,7 +51,14 @@ export async function handleGoogleSearch(query) {
 
       if (uniqueLinks.size > 0) {
         const footer = Array.from(uniqueLinks.entries())
-          .map(([uri, title]) => `${title}`)
+          .map(([uri, title]) => {
+            try {
+              const domain = new URL(uri).hostname.replace(/^www\./, "");
+              return `${domain}`;
+            } catch {
+              return `${title}`;
+            }
+          })
           .join(" | ");
         text = `${text.trim()}\n\n-# 🔗 출처: ${footer}`;
       }
