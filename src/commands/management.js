@@ -17,10 +17,13 @@ const CONFIRMATION_TIMEOUT_MS = 30_000;
 const DANGEROUS_COMMANDS = new Set([
   "kickMember",
   "banMember",
+  "addRole",
+  "removeRole",
   "addRolePermission",
   "removeRolePermission",
   "setVerificationLevel",
   "autoMod",
+  "changeNickname",
 ]);
 const pendingConfirmations = new Map();
 
@@ -40,10 +43,13 @@ function getConfirmationPrompt(command, args) {
   const descriptions = {
     kickMember: "이 작업은 유저를 서버에서 추방하는 위험한 명령입니다.",
     banMember: "이 작업은 유저를 차단하는 위험한 명령입니다.",
+    addRole: "이 작업은 유저에게 역할을 부여하는 위험한 명령입니다.",
+    removeRole: "이 작업은 유저에게서 역할을 제거하는 위험한 명령입니다.",
     addRolePermission: "이 작업은 역할 권한을 변경하는 위험한 명령입니다.",
     removeRolePermission: "이 작업은 역할 권한을 변경하는 위험한 명령입니다.",
     setVerificationLevel: "이 작업은 서버 인증 단계를 변경하는 위험한 명령입니다.",
     autoMod: "이 작업은 서버 AutoMod 규칙을 변경하는 위험한 명령입니다.",
+    changeNickname: "이 작업은 유저의 닉네임을 변경하는 위험한 명령입니다.",
   };
 
   const description = descriptions[command] ?? "이 작업은 위험할 수 있는 명령입니다.";
@@ -299,6 +305,87 @@ export async function handleManagementCommand(message, userPrompt) {
   return true;
 }
 
+export async function handleManagementToolCall(message, intent, userPrompt) {
+  const pendingKey = getPendingConfirmationKey(message);
+  const pending = pendingConfirmations.get(pendingKey);
+  const tool = intent?.tool;
+
+  if (pending && tool === "confirm_management") {
+    clearPendingConfirmation(pendingKey);
+    await message.reply("확인했어요. 위험 작업을 실행할게요.");
+    await executeCommand(message, pending.command, pending.args, userPrompt);
+    logInfo("management_command_completed", {
+      guildId: message.guildId,
+      guildName: message.guild.name,
+      channelId: message.channelId,
+      userId: message.author.id,
+      userName: getDisplayName(message),
+      userTag: message.author.tag,
+      command: pending.command,
+      commandText: userPrompt,
+    });
+    return true;
+  }
+
+  if (pending && tool === "cancel_management") {
+    clearPendingConfirmation(pendingKey);
+    await message.reply("위험 작업을 취소했어요.");
+    return true;
+  }
+
+  if (tool !== "run_management") return false;
+
+  const argsObject = intent?.arguments ?? {};
+  const command = argsObject.command;
+  const args = Array.isArray(argsObject.args) ? argsObject.args.map((arg) => String(arg)) : [];
+
+  if (!Object.values(COMMANDS).includes(command)) {
+    await message.reply("관리 작업을 이해하지 못했어요. 조금 더 구체적으로 말해 주세요.");
+    return true;
+  }
+
+  logInfo("management_command_detected", {
+    guildId: message.guildId,
+    guildName: message.guild.name,
+    channelId: message.channelId,
+    userId: message.author.id,
+    userName: getDisplayName(message),
+    userTag: message.author.tag,
+    command,
+    commandText: userPrompt,
+  });
+
+  if (DANGEROUS_COMMANDS.has(command)) {
+    const confirmationText = getConfirmationPrompt(command, args);
+    createPendingConfirmation(message, command, args);
+    logInfo("management_confirmation_requested", {
+      guildId: message.guildId,
+      guildName: message.guild.name,
+      channelId: message.channelId,
+      userId: message.author.id,
+      userName: getDisplayName(message),
+      userTag: message.author.tag,
+      command,
+      commandText: userPrompt,
+    });
+    await message.reply(confirmationText);
+    return true;
+  }
+
+  await executeCommand(message, command, args, userPrompt);
+  logInfo("management_command_completed", {
+    guildId: message.guildId,
+    guildName: message.guild.name,
+    channelId: message.channelId,
+    userId: message.author.id,
+    userName: getDisplayName(message),
+    userTag: message.author.tag,
+    command,
+    commandText: userPrompt,
+  });
+  return true;
+}
+
 async function executeCommand(message, command, args, userPrompt) {
   switch (command) {
     case COMMANDS.help:
@@ -381,7 +468,11 @@ export function parseManagementCommand(input) {
 
   if (tokens.length > 1) {
     const secondCommand = COMMAND_ALIASES[second];
-    if (secondCommand) {
+    // 뒤에 '로그', '기록', '찾아', '검색' 등 조회성 단어가 붙으면 관리 명령이 아님
+    // 예: "최근 타임아웃 로그 찾아줘" → timeoutMember 로 잘못 라우팅되는 문제 방지
+    const trailingText = normalizeCommand(tokens.slice(2).join(""));
+    const isQueryContext = ["로그", "기록", "찾아", "검색", "조회", "보여", "알려"].some((kw) => trailingText.includes(kw));
+    if (secondCommand && !isQueryContext) {
       return { command: secondCommand, args: [tokens[0], ...tokens.slice(2)] };
     }
   }
@@ -801,10 +892,8 @@ async function resolveMember(message, token, missingMessage) {
   const fuzzyMember = await findBestMemberMatch(message, normalizedToken);
   if (fuzzyMember) return fuzzyMember;
 
-  if (message.author.id === ADMIN_USER_ID) {
-    const aiMember = await findAiMemberMatch(message, token, normalizedToken);
-    if (aiMember) return aiMember;
-  }
+  const aiMember = await findAiMemberMatch(message, token, normalizedToken);
+  if (aiMember) return aiMember;
 
   throw new UserFacingError("해당 멤버를 서버에서 찾지 못했어요.");
 }
@@ -885,7 +974,8 @@ async function findAiMemberMatch(message, token, normalizedToken) {
 async function gatherAIMemberCandidates(message, token, normalizedToken) {
   const candidateById = new Map();
 
-  const scoredCandidates = [...message.guild.members.cache.values()]
+  // 유사도 점수로 정렬된 후보 수집 (점수 0인 멤버도 포함해 AI가 약칭/별명을 판단할 수 있도록)
+  const allCached = [...message.guild.members.cache.values()]
     .map((member) => ({
       member,
       score:
@@ -893,14 +983,19 @@ async function gatherAIMemberCandidates(message, token, normalizedToken) {
         getNameSimilarity(normalizedToken, normalizeName(member.user.username)) ||
         getNameSimilarity(normalizedToken, normalizeName(member.user.tag)),
     }))
-    .filter((item) => item.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 12);
+    .sort((a, b) => b.score - a.score);
 
-  for (const item of scoredCandidates) {
+  // 유사도 있는 후보 우선, 없으면 전체에서 최대 30명
+  const topCandidates = allCached.filter((item) => item.score > 0).slice(0, 20);
+  const fallbackCandidates = topCandidates.length < 5
+    ? allCached.slice(0, 30)
+    : topCandidates;
+
+  for (const item of fallbackCandidates) {
     candidateById.set(item.member.id, item.member);
   }
 
+  // Discord API 검색으로 추가 후보 확보
   const fetchedMembers = await message.guild.members
     .fetch({ query: token, limit: 15 })
     .catch(() => new Map());
@@ -911,7 +1006,7 @@ async function gatherAIMemberCandidates(message, token, normalizedToken) {
     }
   }
 
-  return [...candidateById.values()].slice(0, 20);
+  return [...candidateById.values()].slice(0, 30);
 }
 
 function getNameSimilarity(a, b) {

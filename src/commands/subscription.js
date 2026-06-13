@@ -2,6 +2,103 @@ import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from "discord.js";
 import { ADMIN_USER_ID, PREFIX } from "../config.js";
 import { getUserSubscription, updateUserSubscription, getDailyUsage, TIER_LIMITS, getKstNow } from "../services/subscription.js";
 
+export async function handleSubscriptionToolCall(message, intent) {
+  if (intent?.tool !== "subscription") return false;
+
+  const args = intent.arguments ?? {};
+  const action = args.action || "status";
+
+  if (action === "status") {
+    const sub = getUserSubscription(message.author.id);
+    const usage = getDailyUsage(message.author.id);
+    const limits = TIER_LIMITS[sub.tier];
+    const aiCallLimit = limits.ai_calls === Infinity ? "무제한" : `${limits.ai_calls}회`;
+    const expiresAt = sub.expires_at ? `${sub.expires_at} (KST)` : "무제한";
+
+    await message.reply([
+      `### ${message.author.username}님의 등급 정보`,
+      `- 현재 등급: \`${limits.name}\``,
+      `- 만료 일자: \`${expiresAt}\``,
+      "",
+      "**오늘 사용 현황**",
+      `- AI 호출: ${usage.ai_calls} / ${aiCallLimit}`,
+      `- 이미지 생성: ${usage.image_generations} / ${limits.image_generations}회`,
+      `- 이미지 판독: ${usage.image_readings} / ${limits.image_readings}회`,
+      "",
+      `등급을 변경하려면 \`${PREFIX} 등급 구매\`라고 말해 주세요.`,
+    ].join("\n"));
+    return true;
+  }
+
+  if (action === "purchase") {
+    const now = getKstNow();
+    const hours = String(now.getHours()).padStart(2, "0");
+    const minutes = String(now.getMinutes()).padStart(2, "0");
+    const timeStr = `${hours}${minutes}`;
+    const depositName = `${timeStr}-${message.author.id}`;
+
+    const dmContent = [
+      "## DUST봇 등급 구매 안내",
+      `${message.author.username}님, 아래 계좌로 원하는 등급 금액을 입금한 뒤 버튼을 눌러 주세요.`,
+      "",
+      "**입금 계좌**",
+      "- 토스뱅크",
+      "- `1908-8961-3017`",
+      "- 예금주: 민재",
+      "",
+      "**등급**",
+      "- Basic: 3,000원 / 30일",
+      "- Premium: 5,000원 / 30일",
+      "",
+      `입금자명: \`${depositName}\``,
+    ].join("\n");
+
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`sub_complete:basic:${message.author.id}:${timeStr}`)
+        .setLabel("Basic 입금완료")
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId(`sub_complete:premium:${message.author.id}:${timeStr}`)
+        .setLabel("Premium 입금완료")
+        .setStyle(ButtonStyle.Success),
+    );
+
+    await message.author.send({ content: dmContent, components: [row] });
+    await message.reply(`${message.author.username}님, 등급 구매 안내를 DM으로 보냈어요.`);
+    return true;
+  }
+
+  if (action === "grant") {
+    if (message.author.id !== ADMIN_USER_ID) {
+      await message.reply("이 작업은 개발자만 사용할 수 있어요.");
+      return true;
+    }
+
+    const targetUserId = String(args.targetUserId || "").replace(/[<@!>]/g, "");
+    const targetTier = String(args.tier || "").toLowerCase();
+    const days = Number.parseInt(args.days ?? "30", 10);
+
+    if (!targetUserId || !["free", "basic", "premium"].includes(targetTier) || !Number.isInteger(days) || days <= 0) {
+      await message.reply(`사용법: \`${PREFIX} 등급부여 <유저ID> <free|basic|premium> [일수]\``);
+      return true;
+    }
+
+    const { tier, expiresAt } = updateUserSubscription(targetUserId, targetTier, days);
+    const displayExpiry = expiresAt ? `${expiresAt} (KST)` : "무제한";
+    await message.reply([
+      "등급을 변경했어요.",
+      `- 대상 유저 ID: ${targetUserId}`,
+      `- 부여 등급: \`${tier.toUpperCase()}\``,
+      `- 만료 일자: \`${displayExpiry}\``,
+    ].join("\n"));
+    return true;
+  }
+
+  await message.reply("등급 작업을 이해하지 못했어요. 등급 조회, 등급 구매, 등급 부여 중 하나로 말해 주세요.");
+  return true;
+}
+
 /**
  * 구독/등급 관련 채팅 명령어를 처리합니다.
  * @param {import("discord.js").Message} message 

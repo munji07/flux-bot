@@ -14,7 +14,7 @@ import { createUserMessageContent } from "../utils/message.js";
 import { InferenceClient } from "@huggingface/inference";
 
 const hfClient = new InferenceClient(process.env.HF_TOKEN);
-const groqClient = new Groq({
+export const groqClient = new Groq({
   apiKey: process.env.GROQ_API_KEY,
 });
 
@@ -124,6 +124,45 @@ export const AI_TOOLS = [
   }
 ];
 
+export const INTENT_TOOL_NAMES = new Set([
+  "chat",
+  "image_read",
+  "generate_image",
+  "search_logs",
+  "google_search",
+  "run_management",
+  "subscription",
+  "pronunciation",
+  "developer_diagnostics",
+  "confirm_management",
+  "cancel_management",
+]);
+
+const INTENT_ROUTER_PROMPT = [
+  "You are the first and only intent router for a Discord bot.",
+  "Do not use keyword rules. Infer the user's intent from meaning.",
+  "Return JSON only. No markdown, no prose, no code fences.",
+  'Schema: {"tool":"chat|image_read|generate_image|search_logs|google_search|run_management|subscription|pronunciation|developer_diagnostics|confirm_management|cancel_management","arguments":{...}}',
+  "",
+  "Tool meanings:",
+  "- chat: normal conversation or questions that do not require another tool.",
+  "- image_read: the user wants attached images/screenshots/photos analyzed.",
+  '- generate_image: create a new image/drawing/banner/icon/profile picture/thumbnail. arguments: {"prompt":"detailed image prompt, preferably English"}.',
+  '- search_logs: search this bot/guild logs, errors, command history, AI call history, or admin action records. arguments: {"query":"natural language log query"}.',
+  '- google_search: answer needs fresh external information such as current news, prices, schedules, versions, weather, laws, or live facts. arguments: {"query":"search query"}.',
+  '- run_management: perform Discord moderation/server-management. arguments: {"command":"help|deleteMessage|purgeMessages|setSlowMode|timeoutMember|kickMember|banMember|muteMember|deafenMember|moveMember|disconnectMember|changeNickname|autoMod|auditLog|setVerificationLevel|addRole|removeRole|addRolePermission|removeRolePermission","args":["..."]}. Put target/user/channel/role/duration/reason values in execution order.',
+  '- subscription: plan/tier/usage, purchase, or admin tier assignment. arguments: {"action":"status|purchase|grant","targetUserId":"","tier":"free|basic|premium|","days":30}.',
+  '- pronunciation: convert Korean pronunciation to romanization or English pronunciation to Hangul. arguments: {"text":"text to convert"}.',
+  '- developer_diagnostics: only when the requester is owner/developer user id 1269575955626725390 and asks to inspect internal source, console/bot logs, error logs, or recent failures. arguments: {"query":"what to investigate","files":["optional repo-relative source file paths"],"includeSource":true}.',
+  "- confirm_management: the user confirms a pending dangerous management action.",
+  "- cancel_management: the user cancels a pending dangerous management action.",
+  "",
+  "Important:",
+  "- Simple questions about users or server facts are chat unless the user explicitly asks to search logs/history.",
+  "- If an image is attached but the user asks to create a new image, use generate_image.",
+  "- For run_management, preserve raw IDs/mentions when present. For natural names, put the spoken target text as the first arg so member matching can resolve it.",
+].join("\n");
+
 export async function classifyRequestIntent({ userPrompt, hasImageAttachment, logContext = {} }) {
   logInfo("ai_call", {
     ...logContext,
@@ -154,15 +193,22 @@ export async function classifyRequestIntent({ userPrompt, hasImageAttachment, lo
             "자연스러운 표현이 되도록 판단해. 예를 들어 '몽환적인 배너 하나 만들어줄래?', '프로필에 쓸 그림 부탁해'는 image_generation이야.",
             "반드시 JSON만 출력해. 마크다운, 설명, 코드블록은 쓰지 마.",
             '형식: {"type":"chat|image_read|image_generation|log_search","imagePrompt":"이미지 생성을 위한 프롬프트 또는 빈 문자열"}',
-            
-            "분류기 확장: 사용자가 봇/서버 로그, 명령어 기록, 오류, AI 호출 로그 검색, 또는 관리자 작업 수행자 확인을 요청할 때는 log_search 타입을 사용하세요.",
-            "log_search 필수 예시: 어제 닉네임 변경한 사람 찾아줘 / 어제 AI 로그 보여줘 / 누가 차단했어?",
+
+            "분류기 확장: log_search는 봇이 기록한 서버 로그(명령어 기록, 오류, AI 호출 이력, 관리 작업 이력)를 명시적으로 검색·조회 요청할 때만 사용해.",
+            "log_search 예시 (명시적 로그 조회): '어제 닉네임 변경한 사람 찾아줘' / '어제 AI 로그 보여줘' / '누가 차단했어?' / '최근 타임아웃 로그 찾아줘'",
+            "chat으로 분류해야 하는 예시 (단순 질문): '베르스타펜이라는 유저 있어?' / 'OO 유저가 서버에 있나?' / '누가 관리자야?' / '서버에 몇 명이나 있어?'",
+            "단순히 특정 유저의 존재나 정보를 묻는 질문은 chat이야. 봇 로그/기록 데이터를 직접 뒤져야 하는 경우만 log_search야.",
             "허용된 JSON type 값: chat, image_read, image_generation, log_search.",
           ].join("\n"),
         },
         {
+          role: "system",
+          content: INTENT_ROUTER_PROMPT,
+        },
+        {
           role: "user",
           content: JSON.stringify({
+            routerInstructions: INTENT_ROUTER_PROMPT,
             userPrompt,
             hasImageAttachment,
           }),
@@ -450,15 +496,35 @@ export async function generateImage(prompt, logContext = {}) {
 
 function normalizeIntentResult(content, userPrompt) {
   const parsed = parseJsonObject(content);
-  const allowedTypes = new Set(["chat", "image_read", "image_generation", "log_search"]);
-  const type = allowedTypes.has(parsed?.type) ? parsed.type : "chat";
-  const imagePrompt =
-    type === "image_generation"
-      ? String(parsed?.imagePrompt || userPrompt).trim()
-      : "";
+  const legacyTool =
+    parsed?.type === "image_generation"
+      ? "generate_image"
+      : parsed?.type === "log_search"
+        ? "search_logs"
+        : parsed?.type;
+  const tool = INTENT_TOOL_NAMES.has(parsed?.tool)
+    ? parsed.tool
+    : INTENT_TOOL_NAMES.has(legacyTool)
+      ? legacyTool
+      : "chat";
+  const args = parsed?.arguments && typeof parsed.arguments === "object" ? parsed.arguments : {};
+  const imagePrompt = tool === "generate_image"
+    ? String(args.prompt || parsed?.imagePrompt || userPrompt).trim()
+    : "";
+  const type =
+    tool === "generate_image"
+      ? "image_generation"
+      : tool === "search_logs"
+        ? "log_search"
+        : tool;
 
   return {
     type,
+    tool,
+    arguments: {
+      ...args,
+      ...(tool === "generate_image" ? { prompt: imagePrompt || userPrompt.trim() } : {}),
+    },
     imagePrompt: type === "image_generation" ? imagePrompt || userPrompt.trim() : "",
     raw: content,
   };
@@ -491,10 +557,16 @@ export async function matchServerMember({ guildName, targetText, candidates, log
         role: "system",
         content: [
           "너는 디스코드 서버에서 대상 멤버를 찾는 관리자 보조 도구야.",
-          "사용자가 입력한 대상 텍스트를 보고, 후보 목록에서 가장 적합한 멤버를 선택해.",
-          "후보 중에서 딱 맞는 멤버가 없으면 memberId를 null로 반환해.",
+          "사용자가 입력한 대상 텍스트(targetText)를 보고, 후보 목록(candidates)에서 가장 적합한 멤버를 선택해.",
+          "",
+          "【매칭 규칙】",
+          "- 완전 일치뿐 아니라 약칭, 별명, 닉네임 줄임말, 발음 유사, 초성 등도 적극 고려해.",
+          "- 한국어 닉네임의 경우 첫 단어만 부르거나 특징적인 단어 하나만 말해도 매칭 가능.",
+          "- 발음이 비슷하거나, 특징 단어를 포함하면 매칭 가능.",
+          "- 후보 중 가장 가능성 높은 멤버 1명만 선택해. 확신할 수 없으면 memberId를 null로 반환해.",
+          "",
           "항상 JSON만 출력해야 해. 마크다운, 코드블록, 추가 설명은 쓰지 마.",
-          "출력 형식: {\"memberId\":\"123456789012345678\"} 또는 {\"memberId\":null}",
+          '출력 형식: {"memberId":"123456789012345678"} 또는 {"memberId":null}',
         ].join("\n"),
       },
       {

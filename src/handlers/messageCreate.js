@@ -1,8 +1,9 @@
 import { PREFIX, SAFE_MESSAGE_LIMIT } from "../config.js";
 import { UserFacingError } from "../errors.js";
-import { handleManagementCommand } from "../commands/management.js";
-import { handleSubscriptionCommand } from "../commands/subscription.js";
+import { handleManagementToolCall } from "../commands/management.js";
+import { handleSubscriptionToolCall } from "../commands/subscription.js";
 import { handleImageGenerationRequest } from "./imageGeneration.js";
+import { handleDeveloperDiagnosticsRequest } from "../services/developerDiagnostics.js";
 import { handleLogSearchRequest } from "../services/logSearch.js";
 import { checkAndIncrementUsage, decrementUsage, TIER_LIMITS } from "../services/subscription.js";
 import { handleGoogleSearch } from "./googleSearch.js";
@@ -12,7 +13,6 @@ import {
   createChatCompletion,
   createChatCompletionStream,
   stripReasoningTags,
-  shouldUseWebSearch,
 } from "../services/ai.js";
 import {
   appendConversationHistory,
@@ -28,7 +28,7 @@ import {
   getImageAttachmentUrls,
   sendChunkedAnswer,
 } from "../utils/message.js";
-import { getPronunciationReply, isPronunciationRequest } from "../utils/phonetics.js";
+import { getPronunciationReply } from "../utils/phonetics.js";
 
 const activeUsers = new Set();
 
@@ -43,22 +43,6 @@ export async function handleMessageCreate(client, message) {
     return;
   }
 
-  const managementHandled = await handleManagementCommand(message, userPrompt);
-  if (managementHandled) return;
-
-  const subscriptionHandled = await handleSubscriptionCommand(message, userPrompt);
-  if (subscriptionHandled) return;
-
-  if (isPronunciationRequest(userPrompt)) {
-    try {
-      const replyText = getPronunciationReply(userPrompt);
-      await message.reply(replyText);
-    } catch (error) {
-      const errorMessage = error instanceof UserFacingError ? error.message : "발음 변환 중 문제가 발생했어요.";
-      await message.reply(errorMessage);
-    }
-    return;
-  }
   if (activeUsers.has(message.author.id)) {
     await message.reply("먼지가 이미 답변을 작성하고 있어요. 답변이 완료된 후 다시 질문해주세요!");
     return;
@@ -115,6 +99,97 @@ export async function handleMessageCreate(client, message) {
       }
       return;
     }
+  }
+
+  if (["run_management", "confirm_management", "cancel_management"].includes(intent.tool)) {
+    try {
+      const handled = await handleManagementToolCall(message, intent, userPrompt);
+      if (handled) return;
+    } catch (error) {
+      logError("management_tool", message.guildId, error, {
+        guildName: message.guild.name,
+        channelId: message.channelId,
+        userId: message.author.id,
+        userTag: message.author.tag,
+        commandText: userPrompt,
+      });
+      const replyText =
+        error instanceof UserFacingError
+          ? error.message
+          : "관리 작업을 처리하는 중 문제가 생겼어요. 권한이나 대상 상태를 확인해 주세요.";
+      await loadingMessage.edit(replyText).catch(() => message.reply(replyText));
+      return;
+    }
+  }
+
+  if (intent.tool === "subscription") {
+    try {
+      const handled = await handleSubscriptionToolCall(message, intent);
+      if (handled) return;
+    } catch (error) {
+      logError("subscription_tool", message.guildId, error, {
+        guildName: message.guild.name,
+        channelId: message.channelId,
+        userId: message.author.id,
+        userTag: message.author.tag,
+        commandText: userPrompt,
+      });
+      await loadingMessage.edit("등급 작업을 처리하는 중 문제가 생겼어요. 잠시 뒤 다시 시도해 주세요.");
+      return;
+    }
+  }
+
+  if (intent.tool === "pronunciation") {
+    try {
+      const text = String(intent.arguments?.text || userPrompt).trim();
+      await loadingMessage.edit(getPronunciationReply(`발음 ${text}`));
+    } catch (error) {
+      const errorMessage = error instanceof UserFacingError ? error.message : "발음 변환 중 문제가 생겼어요.";
+      await loadingMessage.edit(errorMessage);
+    }
+    return;
+  }
+
+  if (intent.tool === "google_search") {
+    try {
+      const query = String(intent.arguments?.query || userPrompt).trim();
+      const searchResult = await handleGoogleSearch(query);
+      if (searchResult) {
+        await sendChunkedAnswer(message, loadingMessage, searchResult);
+      } else {
+        await loadingMessage.edit("검색 결과가 없어요.");
+      }
+    } catch (error) {
+      logError("google_search_tool", message.guildId, error, {
+        guildName: message.guild.name,
+        channelId: message.channelId,
+        userId: message.author.id,
+        userTag: message.author.tag,
+        commandText: userPrompt,
+      });
+      await loadingMessage.edit("검색 중 문제가 생겼어요.");
+    }
+    return;
+  }
+
+  if (intent.tool === "developer_diagnostics") {
+    try {
+      await handleDeveloperDiagnosticsRequest(message, intent, loadingMessage);
+    } catch (error) {
+      logError("developer_diagnostics", message.guildId, error, {
+        guildName: message.guild.name,
+        channelId: message.channelId,
+        userId: message.author.id,
+        userTag: message.author.tag,
+        commandText: userPrompt,
+      });
+      const replyText =
+        error instanceof UserFacingError
+          ? error.message
+          : "개발자 진단 중 문제가 생겼어요. 최근 error.log를 확인해 주세요.";
+      await loadingMessage.edit(replyText);
+    }
+    return;
   }
 
   if (intent.type === "log_search") {
@@ -216,48 +291,6 @@ export async function handleMessageCreate(client, message) {
       commandText: userPrompt,
       historyNeeded,
     };
-
-    if (intent.type === "chat" && imageUrls.length === 0) {
-      try {
-        currentStep = "web_search_classification";
-        const needWebSearch = await shouldUseWebSearch({ userPrompt, logContext });
-
-        if (needWebSearch) {
-          currentStep = "web_search";
-          const searchResult = await handleGoogleSearch(userPrompt);
-
-          if (searchResult) {
-            await sendChunkedAnswer(message, loadingMessage, searchResult);
-            appendConversationHistory(
-              historyKey,
-              {
-                guildId: message.guildId,
-                channelId: message.channelId,
-                userId: message.author.id,
-                userTag: message.author.tag,
-                userName,
-              },
-              currentUserMessage,
-              {
-                role: "assistant",
-                content: searchResult,
-              },
-            );
-
-            logInfo("web_search_answer_sent", {
-              ...logContext,
-              answerLength: searchResult.length,
-            });
-            return;
-          }
-        }
-      } catch (error) {
-        logError("web_search", message.guildId, error, {
-          ...logContext,
-          step: currentStep,
-        });
-      }
-    }
 
     logInfo("command_detected", {
       guildId: message.guildId,
