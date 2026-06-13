@@ -1,7 +1,7 @@
 import { ADMIN_USER_ID, PREFIX, SAFE_MESSAGE_LIMIT } from "../config.js";
 import { UserFacingError } from "../errors.js";
 import { handleManagementToolCall } from "../commands/management.js";
-import { handleServerImageTokenPurchaseCommand, handleSubscriptionToolCall } from "../commands/subscription.js";
+import { handleServerImageTokenPurchaseCommand, handleSubscriptionToolCall, handleSubscriptionCommand } from "../commands/subscription.js";
 import { handleImageGenerationRequest } from "./imageGeneration.js";
 import { handleBotFeatureInfoRequest, getGeneralHelpText } from "../services/botFeatureInfo.js";
 import { handleDeveloperDiagnosticsRequest } from "../services/developerDiagnostics.js";
@@ -52,10 +52,12 @@ export async function handleMessageCreate(client, message) {
   activeUsers.add(message.author.id);
 
   try {
+    let usageCheck = null;
+    let usageType = null;
     let loadingMessage = await message.reply("-# <a:loading:1495336917326368829> DUST봇이 요청을 확인하고 있어요...");
-  const attachedImageUrls = getImageAttachmentUrls(message);
-  const userName = getDisplayName(message);
-  let intent;
+    const attachedImageUrls = getImageAttachmentUrls(message);
+    const userName = getDisplayName(message);
+    let intent;
 
   if (await handleServerImageTokenPurchaseCommand(message, userPrompt, loadingMessage)) {
     return;
@@ -65,6 +67,15 @@ export async function handleMessageCreate(client, message) {
   if (userPrompt === "도움말") {
     await loadingMessage.edit(getGeneralHelpText(PREFIX));
     return;
+  }
+
+  // "등급" 관련 명령어도 즉시 반환
+  if (["등급", "나의 등급", "나의등급", "등급 구매", "구매"].includes(userPrompt)) {
+    const handled = await handleSubscriptionCommand(message, userPrompt);
+    if (handled) {
+      await loadingMessage.delete().catch(() => {});
+      return;
+    }
   }
 
   try {
@@ -133,6 +144,21 @@ export async function handleMessageCreate(client, message) {
     }
   }
 
+  // 사용량 타입 결정
+  const isImageRead = intent.type === "image_read" || attachedImageUrls.length > 0;
+  if (intent.type === "image_generation") {
+    usageType = "image_generations";
+  } else if (isImageRead) {
+    usageType = "image_readings";
+  } else if (
+    ["chat", "log_search"].includes(intent.type) || 
+    ["google_search", "bot_feature_info", "developer_diagnostics", "subscription"].includes(intent.tool)
+  ) {
+    usageType = "ai_calls";
+  }
+
+  // --- 도구 및 의도별 처리 시작 ---
+
   if (intent.tool === "subscription") {
     try {
       const handled = await handleSubscriptionToolCall(message, intent, loadingMessage);
@@ -164,6 +190,18 @@ export async function handleMessageCreate(client, message) {
   if (intent.tool === "google_search") {
     try {
       const query = String(intent.arguments?.query || userPrompt).trim();
+      
+      // 사용량 체크
+      usageCheck = checkAndIncrementUsage(message.author.id, "ai_calls", message.guildId);
+      if (!usageCheck.allowed) {
+        const limits = TIER_LIMITS[usageCheck.tier];
+        const limitExceededMessage = `❌ **AI 호출 한도 초과**\n` +
+          `현재 ${message.author.username}님의 등급은 \`${limits.name}\`이며, 하루 AI 호출 제한량은 **${limits.ai_calls === Infinity ? "무제한" : `${limits.ai_calls}회`}**입니다.\n` +
+          `오늘 제한량을 모두 소모하셨습니다. 내일 다시 시도하시거나, \`${PREFIX} 등급 구매\`를 통해 한도를 늘려보세요!`;
+        await loadingMessage.edit(limitExceededMessage);
+        return;
+      }
+
       const searchResult = await handleGoogleSearch(query);
       if (searchResult) {
         await sendChunkedAnswer(message, loadingMessage, searchResult);
@@ -185,6 +223,17 @@ export async function handleMessageCreate(client, message) {
 
   if (intent.tool === "bot_feature_info") {
     try {
+      // 사용량 체크
+      usageCheck = checkAndIncrementUsage(message.author.id, "ai_calls", message.guildId);
+      if (!usageCheck.allowed) {
+        const limits = TIER_LIMITS[usageCheck.tier];
+        const limitExceededMessage = `❌ **AI 호출 한도 초과**\n` +
+          `현재 ${message.author.username}님의 등급은 \`${limits.name}\`이며, 하루 AI 호출 제한량은 **${limits.ai_calls === Infinity ? "무제한" : `${limits.ai_calls}회`}**입니다.\n` +
+          `오늘 제한량을 모두 소모하셨습니다. 내일 다시 시도하시거나, \`${PREFIX} 등급 구매\`를 통해 한도를 늘려보세요!`;
+        await loadingMessage.edit(limitExceededMessage);
+        return;
+      }
+
       await handleBotFeatureInfoRequest(message, intent, loadingMessage);
     } catch (error) {
       logError("bot_feature_info", message.guildId, error, {
@@ -201,6 +250,17 @@ export async function handleMessageCreate(client, message) {
 
   if (intent.tool === "developer_diagnostics") {
     try {
+      // 사용량 체크
+      usageCheck = checkAndIncrementUsage(message.author.id, "ai_calls", message.guildId);
+      if (!usageCheck.allowed) {
+        const limits = TIER_LIMITS[usageCheck.tier];
+        const limitExceededMessage = `❌ **AI 호출 한도 초과**\n` +
+          `현재 ${message.author.username}님의 등급은 \`${limits.name}\`이며, 하루 AI 호출 제한량은 **${limits.ai_calls === Infinity ? "무제한" : `${limits.ai_calls}회`}**입니다.\n` +
+          `오늘 제한량을 모두 소모하셨습니다. 내일 다시 시도하시거나, \`${PREFIX} 등급 구매\`를 통해 한도를 늘려보세요!`;
+        await loadingMessage.edit(limitExceededMessage);
+        return;
+      }
+
       await handleDeveloperDiagnosticsRequest(message, intent, loadingMessage);
     } catch (error) {
       logError("developer_diagnostics", message.guildId, error, {
@@ -225,7 +285,7 @@ export async function handleMessageCreate(client, message) {
       return;
     }
 
-    const usageCheck = checkAndIncrementUsage(message.author.id, "ai_calls");
+    usageCheck = checkAndIncrementUsage(message.author.id, "ai_calls", message.guildId);
     if (!usageCheck.allowed) {
       const limits = TIER_LIMITS[usageCheck.tier];
       const limitExceededMessage = `❌ **AI 호출 한도 초과**\n` +
@@ -253,7 +313,7 @@ export async function handleMessageCreate(client, message) {
   }
 
   if (intent.type === "image_generation") {
-    const usageCheck = checkAndIncrementUsage(message.author.id, "image_generations", message.guildId);
+    usageCheck = checkAndIncrementUsage(message.author.id, "image_generations", message.guildId);
     if (!usageCheck.allowed) {
       const limits = TIER_LIMITS[usageCheck.tier];
       const limitExceededMessage = `❌ **이미지 생성 한도 초과**\n` +
@@ -283,11 +343,10 @@ export async function handleMessageCreate(client, message) {
     return;
   }
 
-  const isImageRead = intent.type === "image_read" || attachedImageUrls.length > 0;
-  const usageType = isImageRead ? "image_readings" : "ai_calls";
+  // 일반 채팅 및 이미지 판독에 대한 사용량 체크
   const usageTypeName = isImageRead ? "이미지 판독" : "AI 호출";
 
-  const usageCheck = checkAndIncrementUsage(message.author.id, usageType, message.guildId);
+  usageCheck = checkAndIncrementUsage(message.author.id, usageType, message.guildId);
   if (!usageCheck.allowed) {
     const limits = TIER_LIMITS[usageCheck.tier];
     const limitVal = limits[usageType] === Infinity ? "무제한" : `${limits[usageType]}회`;
@@ -572,7 +631,7 @@ export async function handleMessageCreate(client, message) {
       storedHistoryMessageCount: getStoredHistoryLength(historyKey),
     });
   } catch (error) {
-    if (usageCheck.usedServerToken) {
+    if (usageCheck?.usedServerToken) {
       addServerImageToken(message.guildId, usageType);
     } else {
       decrementUsage(message.author.id, usageType);
