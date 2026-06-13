@@ -224,6 +224,9 @@ export async function createChatCompletion({
   historyMessages,
   currentApiUserMessage,
   imageUrls,
+  guildName,
+  guildId,
+  serverContext = "",
   logContext = {},
 }) {
   const model = getChatModel(imageUrls);
@@ -248,9 +251,6 @@ export async function createChatCompletion({
       stream: false,
       stop: null,
     };
-    if (!isGemini) {
-      options.reasoning_effort = "default";
-    }
     if (!requestModel.includes("deepseek")) {
       options.tools = AI_TOOLS;
     }
@@ -258,7 +258,7 @@ export async function createChatCompletion({
     if (imageUrls.length === 0) {
       return client.chat.completions.create({
         ...options,
-        messages: createTextChatMessages(userName, historyMessages, currentApiUserMessage),
+        messages: createTextChatMessages(userName, historyMessages, currentApiUserMessage, guildName, guildId, serverContext),
       });
     }
 
@@ -273,6 +273,9 @@ export async function createChatCompletion({
           role: "system",
           content: `현재 응답해야 하는 유저 이름 변수 userName은 "${userName}"입니다. 답변에서 반드시 "${userName}"님이라고 불러주세요.`,
         },
+        ...(guildName ? [{ role: "system", content: `현재 대화가 진행되는 서버의 이름은 "${guildName}"입니다.` }] : []),
+        ...(guildId ? [{ role: "system", content: `현재 대화가 진행되는 서버의 ID는 "${guildId}"입니다.` }] : []),
+        ...(serverContext ? [{ role: "system", content: serverContext }] : []),
         ...historyMessages,
         {
           role: currentApiUserMessage.role,
@@ -290,7 +293,7 @@ export async function createChatCompletion({
         ...logContext,
         fallbackModel: GEMINI_CHAT_MODEL,
       });
-
+      
       return await request({ model: GEMINI_CHAT_MODEL });
     }
 
@@ -301,6 +304,9 @@ export async function createChatCompletionStream({
   userName,
   historyMessages,
   currentApiUserMessage,
+  guildName,
+  guildId,
+  serverContext = "",
   logContext = {},
 }) {
   logInfo("ai_call", {
@@ -317,6 +323,8 @@ export async function createChatCompletionStream({
   // Groq 모델 호출 시에는 방대한 SYSTEM_PROMPT 대신 최소한의 페르소나만 전달
   const groqMessages = [
     { role: "system", content: "당신은 '먼지'라는 이름의 다정한 AI입니다. 한국어로 짧고 친절하게 답변하세요." },
+    ...(guildName ? [{ role: "system", content: `서버: ${guildName} (${guildId})` }] : []),
+    ...(serverContext ? [{ role: "system", content: serverContext }] : []),
     ...limitedHistory,
     { role: currentApiUserMessage.role, content: String(currentApiUserMessage.content) }
   ];
@@ -328,8 +336,6 @@ export async function createChatCompletionStream({
     max_completion_tokens: 1024, // 응답 길이를 제한하여 토큰 확보
     top_p: 0.95,
     stream: true,
-    reasoning_effort: "default",
-    stop: null,
   });
 }
 export async function shouldUseWebSearch({ userPrompt, logContext = {} }) {
@@ -425,8 +431,8 @@ export async function createLogSearchAnswer({
   return stripReasoningTags(completion.choices?.[0]?.message?.content ?? "");
 }
 
-function createTextChatMessages(userName, historyMessages, currentApiUserMessage) {
-  return [
+function createTextChatMessages(userName, historyMessages, currentApiUserMessage, guildName, guildId, serverContext = "") {
+  const systemMessages = [
     {
       role: "system",
       content: SYSTEM_PROMPT,
@@ -435,6 +441,20 @@ function createTextChatMessages(userName, historyMessages, currentApiUserMessage
       role: "system",
       content: `현재 사용자의 이름은 "${userName}"입니다. 답변할 때 유저를 이 이름으로 불러주세요.`,
     },
+  ];
+
+  if (guildName) {
+    systemMessages.push({ role: "system", content: `현재 대화가 진행되는 서버의 이름은 "${guildName}"입니다.` });
+  }
+  if (guildId) {
+    systemMessages.push({ role: "system", content: `현재 대화가 진행되는 서버의 ID는 "${guildId}"입니다.` });
+  }
+  if (serverContext) {
+    systemMessages.push({ role: "system", content: serverContext });
+  }
+
+  return [
+    ...systemMessages,
     ...historyMessages,
     {
       role: currentApiUserMessage.role,

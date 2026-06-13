@@ -342,6 +342,14 @@ export async function handleMessageCreate(client, message) {
       imageCount: imageUrls.length,
     });
 
+    // 유저/멤버 관련 질문인 경우 서버 컨텍스트 생성 (토큰 절약을 위해 50명 제한)
+    const needsServerInfo = /유저|멤버|누구|사람|명|있어|존재/.test(userPrompt);
+    let serverContext = "";
+    if (needsServerInfo) {
+      const cachedMembers = message.guild.members.cache.first(50).map(m => m.displayName).join(", ");
+      serverContext = `현재 서버 멤버 목록(일부): ${cachedMembers}`;
+    }
+
     currentStep = "send_typing";
     await message.channel.sendTyping();
 
@@ -371,6 +379,9 @@ export async function handleMessageCreate(client, message) {
           historyMessages,
           currentApiUserMessage,
           imageUrls,
+          guildName: message.guild.name,
+          guildId: message.guildId,
+          serverContext,
           logContext,
         });
 
@@ -467,12 +478,18 @@ export async function handleMessageCreate(client, message) {
 
         currentStep = "parse_ai_answer";
         answer = stripReasoningTags(chatCompletion.choices?.[0]?.message?.content ?? "");
+
+        // 답변이 비어있다면 에러를 던져 catch 블록의 폴백(Groq)이 실행되도록 함
+        if (!answer || answer.trim().length === 0) {
+          throw new Error("Primary model returned empty content");
+        }
       } catch (primaryError) {
         logError("primary_ai_completion_failed", message.guildId, primaryError, {
           guildName: message.guild.name,
           channelId: message.channelId,
           userId: message.author.id,
           userTag: message.author.tag,
+          errorDetail: primaryError.message
         });
 
         currentStep = "request_groq_fallback_stream";
@@ -482,6 +499,9 @@ export async function handleMessageCreate(client, message) {
           userName,
           historyMessages,
           currentApiUserMessage,
+          guildName: message.guild.name,
+          guildId: message.guildId,
+          serverContext,
           logContext: {
             ...logContext,
             fallbackFrom: "deepseek",
@@ -498,6 +518,9 @@ export async function handleMessageCreate(client, message) {
         historyMessages,
         currentApiUserMessage,
         imageUrls,
+        guildName: message.guild.name,
+        guildId: message.guildId,
+        serverContext,
         logContext,
       });
 
