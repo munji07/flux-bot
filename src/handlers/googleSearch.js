@@ -20,7 +20,7 @@ export async function handleGoogleSearch(query) {
       model: GEMINI_SEARCH_MODEL,
       tools: [
         {
-          googleSearchRetrieval: {},
+          googleSearch: {},
         },
       ],
     });
