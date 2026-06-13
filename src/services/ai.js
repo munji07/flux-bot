@@ -153,7 +153,7 @@ const INTENT_ROUTER_PROMPT = [
   `- search_logs: owner-only. Use only when requester user id is ${ADMIN_USER_ID}. Search this bot/guild logs, errors, command history, AI call history, or admin action records. arguments: {"query":"natural language log query"}.`,
   '- google_search: answer needs fresh external information such as current news, prices, schedules, versions, weather, laws, or live facts. arguments: {"query":"search query"}.',
   '- run_management: perform Discord moderation/server-management. arguments: {"command":"help|deleteMessage|purgeMessages|setSlowMode|timeoutMember|kickMember|banMember|muteMember|deafenMember|moveMember|disconnectMember|changeNickname|autoMod|auditLog|setVerificationLevel|addRole|removeRole|addRolePermission|removeRolePermission","args":["..."]}. Put target/user/channel/role/duration/reason values in execution order.',
-  '- subscription: plan/tier/usage, purchase (tier or server tokens), or admin assignment. arguments: {"action":"status|purchase|grant","targetUserId":"","tier":"free|basic|premium","type":"tier|image_generations|image_readings","count":1,"days":30}.',
+  '- subscription: plan/tier/usage, purchase (tier or server tokens), or admin assignment. arguments: {"action":"status|purchase|grant","targetUserId":"","tier":"free|basic|premium","type":"tier|image_generations|image_readings","count":number,"days":30}. "type" must be "image_generations" for drawing tokens, or "image_readings" for analysis/reading tokens.',
   '- bot_feature_info: answer questions about what this bot can do, available bot features, usage, limits, subscription, image generation/reading, web search, management commands, or which source file owns a feature. arguments: {"query":"user question about bot features"}.',
   '- pronunciation: convert Korean pronunciation to romanization or English pronunciation to Hangul. arguments: {"text":"text to convert"}.',
   '- developer_diagnostics: only when the requester is owner/developer user id 1269575955626725390 and asks to inspect internal source, console/bot logs, error logs, or recent failures. arguments: {"query":"what to investigate","files":["optional repo-relative source file paths"],"includeSource":true}.',
@@ -183,28 +183,6 @@ export async function classifyRequestIntent({ userPrompt, hasImageAttachment, lo
         {
           role: "system",
           content: SYSTEM_PROMPT,
-        },
-        {
-          role: "system",
-          content: [
-            "너는 디스코드 봇 요청 라우터야.",
-            "상황을 묘사하는 말을 사용하지 말고 이모지를 필요할 때만 사용해. 사람과 대화할 때는 존댓말을 사용해.",
-            "사용자 메시지를 보고 아래 네 가지 중 하나로만 분류해.",
-            "- chat: 일반 대화, 질문, 서버 관리가 아닌 텍스트 요청",
-            "- image_read: 사용자가 이미지, 사진, 스크린샷, 첨부물을 읽거나 설명하거나 분석해달라는 요청",
-            "- image_generation: 사용자가 새 이미지, 그림, 사진, 일러스트, 아이콘, 배너, 프로필 이미지, 썸네일 등을 만들어달라는 요청",
-            "- bot_feature_info: 이 봇이 할 수 있는 기능, 사용법, 제한, 등급, 이미지/검색/관리 기능, 기능 담당 파일을 묻는 요청",
-            "자연스러운 표현이 되도록 판단해. 예를 들어 '몽환적인 배너 하나 만들어줄래?', '프로필에 쓸 그림 부탁해'는 image_generation이야.",
-            "반드시 JSON만 출력해. 마크다운, 설명, 코드블록은 쓰지 마.",
-            '형식: {"type":"chat|image_read|image_generation|log_search","imagePrompt":"이미지 생성을 위한 프롬프트 또는 빈 문자열"}',
-
-            "분류기 확장: log_search는 봇이 기록한 서버 로그(명령어 기록, 오류, AI 호출 이력, 관리 작업 이력)를 명시적으로 검색·조회 요청할 때만 사용해.",
-            "분류기 확장: bot_feature_info는 '너 뭐 할 수 있어?', '이미지 생성 돼?', '등급 뭐 있어?', '관리 기능 알려줘', '이 기능 어느 파일이야?'처럼 봇 자체 기능을 묻는 요청에 사용해.",
-            "log_search 예시 (명시적 로그 조회): '어제 닉네임 변경한 사람 찾아줘' / '어제 AI 로그 보여줘' / '누가 차단했어?' / '최근 타임아웃 로그 찾아줘'",
-            "chat으로 분류해야 하는 예시 (단순 질문): '베르스타펜이라는 유저 있어?' / 'OO 유저가 서버에 있나?' / '누가 관리자야?' / '서버에 몇 명이나 있어?'",
-            "단순히 특정 유저의 존재나 정보를 묻는 질문은 chat이야. 봇 로그/기록 데이터를 직접 뒤져야 하는 경우만 log_search야.",
-            "허용된 JSON type 값: chat, image_read, image_generation, log_search, bot_feature_info.",
-          ].join("\n"),
         },
         {
           role: "system",

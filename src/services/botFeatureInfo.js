@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { relative, resolve, sep } from "node:path";
 import { groqClient, stripReasoningTags } from "./ai.js";
+import { PREFIX } from "../config.js";
 
 const PROJECT_ROOT = resolve(fileURLToPath(new URL("../../", import.meta.url)));
 const MAX_DISCORD_EDIT_CHARS = 1900;
@@ -88,6 +89,7 @@ const FEATURE_FILES = [
 export async function handleBotFeatureInfoRequest(message, intent, loadingMessage) {
   const args = intent?.arguments ?? {};
   const query = String(args.query || args.topic || "").trim() || "봇 기능을 알려줘";
+
   const relevantFiles = selectRelevantFiles(query);
   const sourceSnippets = readSourceSnippets(relevantFiles);
 
@@ -96,10 +98,40 @@ export async function handleBotFeatureInfoRequest(message, intent, loadingMessag
     requesterName: message.member?.displayName ?? message.author.globalName ?? message.author.username,
     relevantFiles,
     sourceSnippets,
+    prefix: PREFIX,
   });
 
   await loadingMessage.edit(truncate(answer || createFallbackAnswer(relevantFiles), MAX_DISCORD_EDIT_CHARS));
   return true;
+}
+
+/**
+ * 봇의 전체적인 사용법을 안내하는 고정 텍스트를 생성합니다.
+ */
+export function getGeneralHelpText(prefix) {
+  return [
+    `### 🤖 ${prefix} 봇 사용 도움말`,
+    "먼지는 다정하고 똑똑한 AI 친구예요! 아래와 같이 말을 걸어보세요.",
+    "",
+    "**💬 일반 대화**",
+    `- \`${prefix} 안녕? 반가워\` - 일상적인 대화를 나눕니다.`,
+    `- \`${prefix} 오늘 저녁 메뉴 추천해줘\` - 다양한 정보를 물어보세요.`,
+    "",
+    "**🎨 이미지 생성 및 분석**",
+    `- \`${prefix} 이미지 생성 [설명]\` - 원하는 그림을 그려드려요.`,
+    `- \`${prefix} [이미지 첨부] 이 사진 설명해줘\` - 사진의 내용을 분석합니다.`,
+    "",
+    "**💳 등급 및 토큰**",
+    `- \`${prefix} 등급\` - 내 사용량과 등급 만료일을 확인합니다.`,
+    `- \`${prefix} 등급 구매\` - 더 많은 사용량을 위해 등급을 업그레이드합니다.`,
+    "",
+    "**🛡️ 서버 관리 (관리자 권한 필요)**",
+    `- \`${prefix} 관리 도움말\` - 서버 관리 명령어 목록을 확인합니다.`,
+    `- \`${prefix} 서버 이모지 분석 토큰 (개수) 구매\` - 서버 이모지 분석을 위한 토큰을 구매합니다.`,
+    `- \`${prefix} 서버 이모지 생성 토큰 (개수) 구매\` - 서버 이모지 생성을 위한 토큰을 구매합니다.`,
+    "",
+    "*※ 모든 명령어는 접두사(`!먼지야`) 뒤에 한 칸을 띄우고 입력해주세요!*"
+  ].join("\n");
 }
 
 function selectRelevantFiles(query) {
@@ -176,7 +208,7 @@ function isSafeProjectFile(resolvedPath) {
   return normalized.endsWith(".js");
 }
 
-async function createBotFeatureAnswer({ query, requesterName, relevantFiles, sourceSnippets }) {
+async function createBotFeatureAnswer({ query, requesterName, relevantFiles, sourceSnippets, prefix }) {
   const completion = await groqClient.chat.completions.create({
     model: "qwen/qwen3-32b",
     messages: [
@@ -184,6 +216,8 @@ async function createBotFeatureAnswer({ query, requesterName, relevantFiles, sou
         role: "system",
         content: [
           "You answer user questions about this Discord bot's features and usage.",
+          `IMPORTANT: This bot uses text-based commands starting with "${prefix}". It does NOT support slash commands (/).`,
+          "Do not suggest or mention any slash commands like /subscription or /usage.",
           "Read the provided source snippets internally to infer the actual user-facing steps.",
           "Default answer style: explain how to use the feature, exact commands, button flow, pricing, permissions, limits, and what happens next.",
           "Focus on user-facing behavior rather than implementation details.",
@@ -202,6 +236,7 @@ async function createBotFeatureAnswer({ query, requesterName, relevantFiles, sou
           requesterName,
           query,
           relevantFeatureAreas: relevantFiles.map(({ area, summary }) => ({ area, summary })),
+          botPrefix: prefix,
           sourceSnippets,
         }),
       },

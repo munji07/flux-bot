@@ -22,7 +22,7 @@ discordClient.once(Events.ClientReady, (client) => {
     status: "online",
     activities: [
       {
-        name: "유저들의 질문을 듣는중",
+        name: "'!먼지야 도움말' 로 기능을 안내해드려요!",
         type: ActivityType.Listening,
       },
     ],

@@ -1,4 +1,4 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from "discord.js";
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from "discord.js";
 import { ADMIN_USER_ID, PREFIX } from "../config.js";
 import { getUserSubscription, updateUserSubscription, getDailyUsage, getServerImageTokens, TIER_LIMITS, getKstNow } from "../services/subscription.js";
 
@@ -18,12 +18,17 @@ const SERVER_IMAGE_TOKEN_PRODUCTS = {
 };
 
 export async function handleServerImageTokenPurchaseCommand(message, userPrompt, loadingMessage = null) {
-  // "서버 이미지 생성 토큰 5개 구매" 또는 "서버 이미지 생성 토큰 구매" 형태를 인식
-  const regex = /^(서버 이미지 (?:검토|생성) 토큰)\s*(?:(\d+)개)?\s*구매$/;
+  // "서버 이미지/이모지 생성/분석/검토 토큰 (수량) 구매" 형태를 인식
+  const regex = /^(서버 [이미모]지 (?:검토|분석|생성) 토큰)\s*(?:(\d+)개)?\s*구매$/;
   const match = userPrompt.trim().match(regex);
   if (!match) return false;
 
-  const product = SERVER_IMAGE_TOKEN_PRODUCTS[match[1] + " 구매"];
+  // 사용자 입력 키워드 정규화 (이모지 -> 이미지, 분석 -> 검토)
+  const normalizedType = match[1]
+    .replace("이모지", "이미지")
+    .replace("분석", "검토");
+
+  const product = SERVER_IMAGE_TOKEN_PRODUCTS[normalizedType + " 구매"];
   if (!product) return false;
 
   const count = match[2] ? parseInt(match[2], 10) : 1;
@@ -76,11 +81,23 @@ export async function handleServerImageTokenPurchaseCommand(message, userPrompt,
   return true;
 }
 
-export async function handleSubscriptionToolCall(message, intent) {
+/**
+ * AI 도구 호출을 통한 구독/등급 관련 작업을 처리합니다.
+ * @param {import("discord.js").Message} message 
+ * @param {object} intent 
+ * @param {import("discord.js").Message} [loadingMessage=null]
+ */
+export async function handleSubscriptionToolCall(message, intent, loadingMessage = null) {
   if (intent?.tool !== "subscription") return false;
 
   const args = intent.arguments ?? {};
   const action = args.action || "status";
+
+  const sendResponse = async (payload) => {
+    const options = typeof payload === "string" ? { content: payload } : payload;
+    if (loadingMessage) return await loadingMessage.edit(options);
+    return await message.reply(options);
+  };
 
   if (action === "status") {
     const sub = getUserSubscription(message.author.id);
@@ -89,22 +106,91 @@ export async function handleSubscriptionToolCall(message, intent) {
     const aiCallLimit = limits.ai_calls === Infinity ? "무제한" : `${limits.ai_calls}회`;
     const expiresAt = sub.expires_at ? `${sub.expires_at} (KST)` : "무제한";
 
-    await message.reply([
-      `### ${message.author.username}님의 등급 정보`,
-      `- 현재 등급: \`${limits.name}\``,
-      `- 만료 일자: \`${expiresAt}\``,
-      "",
-      "**오늘 사용 현황**",
-      `- AI 호출: ${usage.ai_calls} / ${aiCallLimit}`,
-      `- 이미지 생성: ${usage.image_generations} / ${limits.image_generations}회`,
-      `- 이미지 판독: ${usage.image_readings} / ${limits.image_readings}회`,
-      "",
-      `등급을 변경하려면 \`${PREFIX} 등급 구매\`라고 말해 주세요.`,
-    ].join("\n"));
+    const embed = new EmbedBuilder()
+      .setAuthor({ 
+        name: `${message.author.username}님의 멤버십 정보`, 
+        iconURL: message.author.displayAvatarURL() 
+      })
+      .setColor(limits.name === "Premium" ? 0xFFD700 : limits.name === "Basic" ? 0x3498DB : 0x95A5A6)
+      .addFields(
+        { name: "✨ 현재 등급", value: `**${limits.name}**`, inline: true },
+        { name: "📅 만료 예정", value: expiresAt, inline: true },
+        { name: "━━━━━━━━━━━━━━━━━━━━", value: "**📊 오늘의 사용 현황**" },
+        { name: "💬 AI 대화", value: `\`${usage.ai_calls}\` / ${aiCallLimit}`, inline: true },
+        { name: "🎨 이미지 생성", value: `\`${usage.image_generations}\` / ${limits.image_generations}회`, inline: true },
+        { name: "🔍 이미지 분석", value: `\`${usage.image_readings}\` / ${limits.image_readings}회`, inline: true }
+      )
+      .setFooter({ text: `💡 등급 변경이나 토큰 구매는 "${PREFIX} 등급 구매"를 입력하세요.` })
+      .setTimestamp();
+
+    await sendResponse({ content: null, embeds: [embed] });
     return true;
   }
 
   if (action === "purchase") {
+    let type = args.type || "tier";
+    const userQuery = message.content.toLowerCase();
+
+    // 보정 로직: AI가 type을 잘못 뽑았더라도 텍스트에 '토큰'이 포함되어 있으면 분석/생성 토큰으로 전환
+    if (type === "tier" && (userQuery.includes("토큰") || userQuery.includes("token"))) {
+      if (userQuery.includes("생성") || userQuery.includes("그림") || userQuery.includes("그리기")) {
+        type = "image_generations";
+      } else if (userQuery.includes("분석") || userQuery.includes("검토") || userQuery.includes("판독") || userQuery.includes("읽기")) {
+        type = "image_readings";
+      }
+    }
+
+    // 1. 서버 이미지 토큰 구매 요청인 경우 (AI가 type을 분류했을 때)
+    if (type === "image_generations" || type === "image_readings") {
+      const productKey = type === "image_generations" ? "서버 이미지 생성 토큰 구매" : "서버 이미지 검토 토큰 구매";
+      const product = SERVER_IMAGE_TOKEN_PRODUCTS[productKey];
+      
+      // 수량(count) 처리: AI가 추출한 숫자를 우선 사용, 없으면 1
+      let count = parseInt(args.count, 10);
+      if (isNaN(count) || count <= 0) count = 1;
+
+      const totalPrice = product.price * count;
+
+      const now = getKstNow();
+      const hours = String(now.getHours()).padStart(2, "0");
+      const minutes = String(now.getMinutes()).padStart(2, "0");
+      const timeStr = `${hours}${minutes}`;
+      const depositName = `${timeStr}-${count}-${message.guildId.slice(-4)}`;
+      const tokens = getServerImageTokens(message.guildId);
+
+      const dmContent = [
+        `## ${product.label} 구매 안내`,
+        `${message.guild.name} 서버에서 사용할 ${product.label} ${count}개 구매 안내입니다.`,
+        "",
+        "**입금 계좌**",
+        "- 토스뱅크",
+        "- `1908-8961-3017`",
+        "- 예금주: 전민재",
+        "",
+        "**상품**",
+        `- 상품명: ${product.label}`,
+        `- 수량: ${count}개`,
+        `- 총 입금액: **${totalPrice.toLocaleString("ko-KR")}원** (1개당 ${product.price.toLocaleString("ko-KR")}원)`,
+        `- 입금자명: \`${depositName}\``,
+        "",
+        "**현재 서버 토큰**",
+        `- 이미지 검토: ${tokens.image_readings}개`,
+        `- 이미지 생성: ${tokens.image_generations}개`,
+      ].join("\n");
+
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`server_token_complete:${product.type}:${message.guildId}:${message.author.id}:${timeStr}:${count}`)
+          .setLabel(product.buttonLabel)
+          .setStyle(ButtonStyle.Success),
+      );
+
+      await message.author.send({ content: dmContent, components: [row] });
+      await sendResponse(`${message.author.username}님, ${product.label} ${count}개 구매 안내를 DM으로 보냈어요.`);
+      return true;
+    }
+
+    // 2. 일반 등급(Tier) 구매 요청인 경우
     const now = getKstNow();
     const hours = String(now.getHours()).padStart(2, "0");
     const minutes = String(now.getMinutes()).padStart(2, "0");
@@ -139,13 +225,13 @@ export async function handleSubscriptionToolCall(message, intent) {
     );
 
     await message.author.send({ content: dmContent, components: [row] });
-    await message.reply(`${message.author.username}님, 등급 구매 안내를 DM으로 보냈어요.`);
+    await sendResponse(`${message.author.username}님, 등급 구매 안내를 DM으로 보냈어요.`);
     return true;
   }
 
   if (action === "grant") {
     if (message.author.id !== ADMIN_USER_ID) {
-      await message.reply("이 작업은 개발자만 사용할 수 있어요.");
+      await sendResponse("이 작업은 개발자만 사용할 수 있어요.");
       return true;
     }
 
@@ -154,13 +240,13 @@ export async function handleSubscriptionToolCall(message, intent) {
     const days = Number.parseInt(args.days ?? "30", 10);
 
     if (!targetUserId || !["free", "basic", "premium"].includes(targetTier) || !Number.isInteger(days) || days <= 0) {
-      await message.reply(`사용법: \`${PREFIX} 등급부여 <유저ID> <free|basic|premium> [일수]\``);
+      await sendResponse(`사용법: \`${PREFIX} 등급부여 <유저ID> <free|basic|premium> [일수]\``);
       return true;
     }
 
     const { tier, expiresAt } = updateUserSubscription(targetUserId, targetTier, days);
     const displayExpiry = expiresAt ? `${expiresAt} (KST)` : "무제한";
-    await message.reply([
+    await sendResponse([
       "등급을 변경했어요.",
       `- 대상 유저 ID: ${targetUserId}`,
       `- 부여 등급: \`${tier.toUpperCase()}\``,
@@ -169,7 +255,7 @@ export async function handleSubscriptionToolCall(message, intent) {
     return true;
   }
 
-  await message.reply("등급 작업을 이해하지 못했어요. 등급 조회, 등급 구매, 등급 부여 중 하나로 말해 주세요.");
+  await sendResponse("등급 작업을 이해하지 못했어요. 등급 조회, 등급 구매, 등급 부여 중 하나로 말해 주세요.");
   return true;
 }
 

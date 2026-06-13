@@ -3,7 +3,7 @@ import { UserFacingError } from "../errors.js";
 import { handleManagementToolCall } from "../commands/management.js";
 import { handleServerImageTokenPurchaseCommand, handleSubscriptionToolCall } from "../commands/subscription.js";
 import { handleImageGenerationRequest } from "./imageGeneration.js";
-import { handleBotFeatureInfoRequest } from "../services/botFeatureInfo.js";
+import { handleBotFeatureInfoRequest, getGeneralHelpText } from "../services/botFeatureInfo.js";
 import { handleDeveloperDiagnosticsRequest } from "../services/developerDiagnostics.js";
 import { handleLogSearchRequest } from "../services/logSearch.js";
 import { addServerImageToken, checkAndIncrementUsage, decrementUsage, TIER_LIMITS } from "../services/subscription.js";
@@ -58,6 +58,12 @@ export async function handleMessageCreate(client, message) {
   let intent;
 
   if (await handleServerImageTokenPurchaseCommand(message, userPrompt, loadingMessage)) {
+    return;
+  }
+
+  // "도움말"과 정확히 일치하는 경우 AI를 거치지 않고 즉시 반환
+  if (userPrompt === "도움말") {
+    await loadingMessage.edit(getGeneralHelpText(PREFIX));
     return;
   }
 
@@ -129,7 +135,7 @@ export async function handleMessageCreate(client, message) {
 
   if (intent.tool === "subscription") {
     try {
-      const handled = await handleSubscriptionToolCall(message, intent);
+      const handled = await handleSubscriptionToolCall(message, intent, loadingMessage);
       if (handled) return;
     } catch (error) {
       logError("subscription_tool", message.guildId, error, {
