@@ -18,27 +18,39 @@ const SERVER_IMAGE_TOKEN_PRODUCTS = {
 };
 
 export async function handleServerImageTokenPurchaseCommand(message, userPrompt, loadingMessage = null) {
-  const product = SERVER_IMAGE_TOKEN_PRODUCTS[userPrompt.trim()];
+  // "서버 이미지 생성 토큰 5개 구매" 또는 "서버 이미지 생성 토큰 구매" 형태를 인식
+  const regex = /^(서버 이미지 (?:검토|생성) 토큰)\s*(?:(\d+)개)?\s*구매$/;
+  const match = userPrompt.trim().match(regex);
+  if (!match) return false;
+
+  const product = SERVER_IMAGE_TOKEN_PRODUCTS[match[1] + " 구매"];
   if (!product) return false;
+
+  const count = match[2] ? parseInt(match[2], 10) : 1;
+  if (count <= 0) return false;
+
+  const totalPrice = product.price * count;
 
   const now = getKstNow();
   const hours = String(now.getHours()).padStart(2, "0");
   const minutes = String(now.getMinutes()).padStart(2, "0");
   const timeStr = `${hours}${minutes}`;
-  const depositName = `${timeStr}-${message.guildId}`;
+  const depositName = `${timeStr}-${count}-${message.guildId.slice(-4)}`; // 입금자명에 수량 포함
   const tokens = getServerImageTokens(message.guildId);
 
   const dmContent = [
     `## ${product.label} 구매 안내`,
-    `${message.guild.name} 서버에서 사용할 ${product.label} 1개 구매 안내입니다.`,
+    `${message.guild.name} 서버에서 사용할 ${product.label} ${count}개 구매 안내입니다.`,
     "",
     "**입금 계좌**",
     "- 토스뱅크",
     "- `1908-8961-3017`",
-    "- 예금주: 민재",
+    "- 예금주: 전민재",
     "",
     "**상품**",
-    `- ${product.label}: 1장당 ${product.price.toLocaleString("ko-KR")}원`,
+    `- 상품명: ${product.label}`,
+    `- 수량: ${count}개`,
+    `- 총 입금액: **${totalPrice.toLocaleString("ko-KR")}원** (1개당 ${product.price.toLocaleString("ko-KR")}원)`,
     `- 입금자명: \`${depositName}\``,
     "",
     "**현재 서버 토큰**",
@@ -48,14 +60,14 @@ export async function handleServerImageTokenPurchaseCommand(message, userPrompt,
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setCustomId(`server_token_complete:${product.type}:${message.guildId}:${message.author.id}:${timeStr}`)
+      .setCustomId(`server_token_complete:${product.type}:${message.guildId}:${message.author.id}:${timeStr}:${count}`)
       .setLabel(product.buttonLabel)
       .setStyle(ButtonStyle.Success),
   );
 
   await message.author.send({ content: dmContent, components: [row] });
 
-  const replyText = `${message.author.username}님, ${product.label} 구매 안내를 DM으로 보냈어요.`;
+  const replyText = `${message.author.username}님, ${product.label} ${count}개 구매 안내를 DM으로 보냈어요.`;
   if (loadingMessage) {
     await loadingMessage.edit(replyText);
   } else {
@@ -106,7 +118,7 @@ export async function handleSubscriptionToolCall(message, intent) {
       "**입금 계좌**",
       "- 토스뱅크",
       "- `1908-8961-3017`",
-      "- 예금주: 민재",
+      "- 예금주: 전민재",
       "",
       "**등급**",
       "- Basic: 3,000원 / 30일",

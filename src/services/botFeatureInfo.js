@@ -5,8 +5,10 @@ import { groqClient, stripReasoningTags } from "./ai.js";
 
 const PROJECT_ROOT = resolve(fileURLToPath(new URL("../../", import.meta.url)));
 const MAX_DISCORD_EDIT_CHARS = 1900;
-const MAX_SOURCE_CHARS_PER_FILE = 6000;
-const MAX_TOTAL_SOURCE_CHARS = 22000;
+const MAX_SNIPPET_CHARS_PER_FILE = 600; // 파일당 최대 글자수 축소
+const MAX_TOTAL_SNIPPET_CHARS = 1800;   // 전체 스니펫 합계 대폭 축소
+const MAX_RELEVANT_FILES = 3;
+const CONTEXT_LINES = 1;                // 키워드 주변 컨텍스트 줄 수 축소 (핵심만 포함)
 
 const FEATURE_FILES = [
   {
@@ -113,10 +115,10 @@ function selectRelevantFiles(query) {
     .map((entry) => entry.file);
 
   if (scored.length > 0) {
-    return scored.slice(0, 5);
+    return scored.slice(0, MAX_RELEVANT_FILES);
   }
 
-  return FEATURE_FILES.slice(0, 5);
+  return FEATURE_FILES.slice(0, MAX_RELEVANT_FILES);
 }
 
 function readSourceSnippets(files) {
@@ -127,12 +129,11 @@ function readSourceSnippets(files) {
     const resolved = resolve(PROJECT_ROOT, file.path);
     if (!isSafeProjectFile(resolved) || !existsSync(resolved)) continue;
 
-    const content = truncate(readFileSync(resolved, "utf8"), MAX_SOURCE_CHARS_PER_FILE);
-    if (totalChars + content.length > MAX_TOTAL_SOURCE_CHARS) break;
+    const content = extractRelevantExcerpt(readFileSync(resolved, "utf8"), file.keywords);
+    if (totalChars + content.length > MAX_TOTAL_SNIPPET_CHARS) break;
 
     snippets.push({
       area: file.area,
-      path: file.path,
       summary: file.summary,
       content,
     });
@@ -140,6 +141,27 @@ function readSourceSnippets(files) {
   }
 
   return snippets;
+}
+
+function extractRelevantExcerpt(source, keywords) {
+  // JSDoc 주석 (/** ... */) 패턴만 추출
+  const jsDocRegex = /\/\*\*[\s\S]*?\*\//g;
+  const matches = source.match(jsDocRegex) || [];
+  const normalizedKeywords = keywords.map((keyword) => keyword.toLowerCase());
+
+  // 키워드가 포함된 JSDoc 블록만 필터링
+  const relevantDocs = matches.filter((doc) => {
+    const lowerDoc = doc.toLowerCase();
+    return normalizedKeywords.some((keyword) => lowerDoc.includes(keyword));
+  });
+
+  // 매칭되는 주석이 없으면 파일 최상단의 첫 번째 JSDoc이라도 반환하거나, 그마저 없으면 첫 10줄만 반환
+  if (relevantDocs.length === 0) {
+    const fallback = matches.length > 0 ? matches[0] : source.split(/\r?\n/).slice(0, 10).join("\n");
+    return truncate(fallback, MAX_SNIPPET_CHARS_PER_FILE);
+  }
+
+  return truncate(relevantDocs.join("\n\n"), MAX_SNIPPET_CHARS_PER_FILE);
 }
 
 function isSafeProjectFile(resolvedPath) {
@@ -176,10 +198,10 @@ async function createBotFeatureAnswer({ query, requesterName, relevantFiles, sou
       },
       {
         role: "user",
-        content: JSON.stringify({
+        content: JSON.stringify({ // AI에게 전달하는 데이터 구조 최적화
           requesterName,
           query,
-          relevantFeatureAreas: relevantFiles.map(({ path, area, summary }) => ({ path, area, summary })),
+          relevantFeatureAreas: relevantFiles.map(({ area, summary }) => ({ area, summary })),
           sourceSnippets,
         }),
       },
