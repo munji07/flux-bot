@@ -118,7 +118,7 @@ export function getDailyUsage(userId) {
  * @param {'ai_calls' | 'image_generations' | 'image_readings'} type 
  * @returns {{allowed: boolean, current: number, limit: number, tier: string}}
  */
-export function checkAndIncrementUsage(userId, type) {
+export function checkAndIncrementUsage(userId, type, guildId = null) {
   const sub = getUserSubscription(userId);
   const limits = TIER_LIMITS[sub.tier];
   const todayStr = getKstDateString();
@@ -139,6 +139,16 @@ export function checkAndIncrementUsage(userId, type) {
   const maxLimit = limits[type];
   
   if (currentCount >= maxLimit) {
+    if (guildId && consumeServerImageToken(guildId, type)) {
+      return {
+        allowed: true,
+        current: currentCount,
+        limit: maxLimit,
+        tier: sub.tier,
+        usedServerToken: true,
+      };
+    }
+
     return {
       allowed: false,
       current: currentCount,
@@ -159,6 +169,7 @@ export function checkAndIncrementUsage(userId, type) {
     current: currentCount + 1,
     limit: maxLimit,
     tier: sub.tier,
+    usedServerToken: false,
   };
 }
 
@@ -177,3 +188,48 @@ export function decrementUsage(userId, type) {
   `).run(userId, todayStr);
 }
 
+export function getServerImageTokens(guildId) {
+  const row = db.prepare(`
+    SELECT image_generations, image_readings
+    FROM server_image_tokens
+    WHERE guild_id = ?
+  `).get(guildId);
+
+  if (!row) {
+    return { image_generations: 0, image_readings: 0 };
+  }
+
+  return row;
+}
+
+export function addServerImageToken(guildId, type, amount = 1) {
+  if (!["image_generations", "image_readings"].includes(type)) {
+    throw new Error(`Unsupported server image token type: ${type}`);
+  }
+
+  const kstNow = getKstDateTimeString();
+  db.prepare(`
+    INSERT INTO server_image_tokens (guild_id, ${type}, created_at, updated_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(guild_id) DO UPDATE SET
+      ${type} = ${type} + excluded.${type},
+      updated_at = excluded.updated_at
+  `).run(guildId, amount, kstNow, kstNow);
+
+  return getServerImageTokens(guildId);
+}
+
+export function consumeServerImageToken(guildId, type) {
+  if (!["image_generations", "image_readings"].includes(type)) {
+    return false;
+  }
+
+  const result = db.prepare(`
+    UPDATE server_image_tokens
+    SET ${type} = ${type} - 1,
+        updated_at = ?
+    WHERE guild_id = ? AND ${type} > 0
+  `).run(getKstDateTimeString(), guildId);
+
+  return result.changes > 0;
+}

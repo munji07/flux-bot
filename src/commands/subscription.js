@@ -1,6 +1,68 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from "discord.js";
 import { ADMIN_USER_ID, PREFIX } from "../config.js";
-import { getUserSubscription, updateUserSubscription, getDailyUsage, TIER_LIMITS, getKstNow } from "../services/subscription.js";
+import { getUserSubscription, updateUserSubscription, getDailyUsage, getServerImageTokens, TIER_LIMITS, getKstNow } from "../services/subscription.js";
+
+const SERVER_IMAGE_TOKEN_PRODUCTS = {
+  "서버 이미지 검토 토큰 구매": {
+    type: "image_readings",
+    label: "서버 이미지 검토 토큰",
+    price: 100,
+    buttonLabel: "검토 토큰 입금완료",
+  },
+  "서버 이미지 생성 토큰 구매": {
+    type: "image_generations",
+    label: "서버 이미지 생성 토큰",
+    price: 500,
+    buttonLabel: "생성 토큰 입금완료",
+  },
+};
+
+export async function handleServerImageTokenPurchaseCommand(message, userPrompt, loadingMessage = null) {
+  const product = SERVER_IMAGE_TOKEN_PRODUCTS[userPrompt.trim()];
+  if (!product) return false;
+
+  const now = getKstNow();
+  const hours = String(now.getHours()).padStart(2, "0");
+  const minutes = String(now.getMinutes()).padStart(2, "0");
+  const timeStr = `${hours}${minutes}`;
+  const depositName = `${timeStr}-${message.guildId}`;
+  const tokens = getServerImageTokens(message.guildId);
+
+  const dmContent = [
+    `## ${product.label} 구매 안내`,
+    `${message.guild.name} 서버에서 사용할 ${product.label} 1개 구매 안내입니다.`,
+    "",
+    "**입금 계좌**",
+    "- 토스뱅크",
+    "- `1908-8961-3017`",
+    "- 예금주: 민재",
+    "",
+    "**상품**",
+    `- ${product.label}: 1장당 ${product.price.toLocaleString("ko-KR")}원`,
+    `- 입금자명: \`${depositName}\``,
+    "",
+    "**현재 서버 토큰**",
+    `- 이미지 검토: ${tokens.image_readings}개`,
+    `- 이미지 생성: ${tokens.image_generations}개`,
+  ].join("\n");
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`server_token_complete:${product.type}:${message.guildId}:${message.author.id}:${timeStr}`)
+      .setLabel(product.buttonLabel)
+      .setStyle(ButtonStyle.Success),
+  );
+
+  await message.author.send({ content: dmContent, components: [row] });
+
+  const replyText = `${message.author.username}님, ${product.label} 구매 안내를 DM으로 보냈어요.`;
+  if (loadingMessage) {
+    await loadingMessage.edit(replyText);
+  } else {
+    await message.reply(replyText);
+  }
+  return true;
+}
 
 export async function handleSubscriptionToolCall(message, intent) {
   if (intent?.tool !== "subscription") return false;

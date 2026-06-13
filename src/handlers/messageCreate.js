@@ -1,11 +1,12 @@
-import { PREFIX, SAFE_MESSAGE_LIMIT } from "../config.js";
+import { ADMIN_USER_ID, PREFIX, SAFE_MESSAGE_LIMIT } from "../config.js";
 import { UserFacingError } from "../errors.js";
 import { handleManagementToolCall } from "../commands/management.js";
-import { handleSubscriptionToolCall } from "../commands/subscription.js";
+import { handleServerImageTokenPurchaseCommand, handleSubscriptionToolCall } from "../commands/subscription.js";
 import { handleImageGenerationRequest } from "./imageGeneration.js";
+import { handleBotFeatureInfoRequest } from "../services/botFeatureInfo.js";
 import { handleDeveloperDiagnosticsRequest } from "../services/developerDiagnostics.js";
 import { handleLogSearchRequest } from "../services/logSearch.js";
-import { checkAndIncrementUsage, decrementUsage, TIER_LIMITS } from "../services/subscription.js";
+import { addServerImageToken, checkAndIncrementUsage, decrementUsage, TIER_LIMITS } from "../services/subscription.js";
 import { handleGoogleSearch } from "./googleSearch.js";
 import {
   classifyRequestIntent,
@@ -55,6 +56,10 @@ export async function handleMessageCreate(client, message) {
   const attachedImageUrls = getImageAttachmentUrls(message);
   const userName = getDisplayName(message);
   let intent;
+
+  if (await handleServerImageTokenPurchaseCommand(message, userPrompt, loadingMessage)) {
+    return;
+  }
 
   try {
     intent = await classifyRequestIntent({
@@ -172,6 +177,22 @@ export async function handleMessageCreate(client, message) {
     return;
   }
 
+  if (intent.tool === "bot_feature_info") {
+    try {
+      await handleBotFeatureInfoRequest(message, intent, loadingMessage);
+    } catch (error) {
+      logError("bot_feature_info", message.guildId, error, {
+        guildName: message.guild.name,
+        channelId: message.channelId,
+        userId: message.author.id,
+        userTag: message.author.tag,
+        commandText: userPrompt,
+      });
+      await loadingMessage.edit("봇 기능 정보를 정리하는 중 문제가 생겼어요. 잠시 후 다시 시도해 주세요.");
+    }
+    return;
+  }
+
   if (intent.tool === "developer_diagnostics") {
     try {
       await handleDeveloperDiagnosticsRequest(message, intent, loadingMessage);
@@ -193,6 +214,11 @@ export async function handleMessageCreate(client, message) {
   }
 
   if (intent.type === "log_search") {
+    if (message.author.id !== ADMIN_USER_ID) {
+      await loadingMessage.edit("로그 조회는 최고 관리자만 사용할 수 있어요.");
+      return;
+    }
+
     const usageCheck = checkAndIncrementUsage(message.author.id, "ai_calls");
     if (!usageCheck.allowed) {
       const limits = TIER_LIMITS[usageCheck.tier];
@@ -221,7 +247,7 @@ export async function handleMessageCreate(client, message) {
   }
 
   if (intent.type === "image_generation") {
-    const usageCheck = checkAndIncrementUsage(message.author.id, "image_generations");
+    const usageCheck = checkAndIncrementUsage(message.author.id, "image_generations", message.guildId);
     if (!usageCheck.allowed) {
       const limits = TIER_LIMITS[usageCheck.tier];
       const limitExceededMessage = `❌ **이미지 생성 한도 초과**\n` +
@@ -233,7 +259,11 @@ export async function handleMessageCreate(client, message) {
 
     const success = await handleImageGenerationRequest(client, message, intent.imagePrompt, loadingMessage);
     if (!success) {
-      decrementUsage(message.author.id, "image_generations");
+      if (usageCheck.usedServerToken) {
+        addServerImageToken(message.guildId, "image_generations");
+      } else {
+        decrementUsage(message.author.id, "image_generations");
+      }
     }
     return;
   }
@@ -251,7 +281,7 @@ export async function handleMessageCreate(client, message) {
   const usageType = isImageRead ? "image_readings" : "ai_calls";
   const usageTypeName = isImageRead ? "이미지 판독" : "AI 호출";
 
-  const usageCheck = checkAndIncrementUsage(message.author.id, usageType);
+  const usageCheck = checkAndIncrementUsage(message.author.id, usageType, message.guildId);
   if (!usageCheck.allowed) {
     const limits = TIER_LIMITS[usageCheck.tier];
     const limitVal = limits[usageType] === Infinity ? "무제한" : `${limits[usageType]}회`;
@@ -343,7 +373,7 @@ export async function handleMessageCreate(client, message) {
           for (const toolCall of toolCalls) {
             if (toolCall.function.name === "generate_image") {
               decrementUsage(message.author.id, "ai_calls");
-              const usageCheck = checkAndIncrementUsage(message.author.id, "image_generations");
+              const usageCheck = checkAndIncrementUsage(message.author.id, "image_generations", message.guildId);
               if (!usageCheck.allowed) {
                 const limits = TIER_LIMITS[usageCheck.tier];
                 const limitExceededMessage = `❌ **이미지 생성 한도 초과**\n` +
@@ -356,13 +386,21 @@ export async function handleMessageCreate(client, message) {
               const args = JSON.parse(toolCall.function.arguments);
               const success = await handleImageGenerationRequest(client, message, args.prompt, loadingMessage);
               if (!success) {
-                decrementUsage(message.author.id, "image_generations");
+                if (usageCheck.usedServerToken) {
+                  addServerImageToken(message.guildId, "image_generations");
+                } else {
+                  decrementUsage(message.author.id, "image_generations");
+                }
               }
               return;
             }
 
             if (toolCall.function.name === "search_logs") {
               const args = JSON.parse(toolCall.function.arguments);
+              if (message.author.id !== ADMIN_USER_ID) {
+                await loadingMessage.edit("로그 조회는 최고 관리자만 사용할 수 있어요.");
+                return;
+              }
               try {
                 await handleLogSearchRequest(message, args.query, loadingMessage);
               } catch (error) {
@@ -505,7 +543,11 @@ export async function handleMessageCreate(client, message) {
       storedHistoryMessageCount: getStoredHistoryLength(historyKey),
     });
   } catch (error) {
-    decrementUsage(message.author.id, usageType);
+    if (usageCheck.usedServerToken) {
+      addServerImageToken(message.guildId, usageType);
+    } else {
+      decrementUsage(message.author.id, usageType);
+    }
 
     logError(currentStep, message.guildId, error, {
       guildName: message.guild.name,

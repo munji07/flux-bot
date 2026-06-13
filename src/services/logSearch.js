@@ -1,4 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
+import { ADMIN_USER_ID } from "../config.js";
+import { UserFacingError } from "../errors.js";
 import { createLogSearchAnswer } from "./ai.js";
 
 const LOG_FILES = [
@@ -11,6 +13,10 @@ const MAX_LOG_SEARCH_PAYLOAD_CHARS = 4000;
 const TIME_ZONE = "Asia/Seoul";
 
 export async function handleLogSearchRequest(message, userPrompt, loadingMessage) {
+  if (message.author.id !== ADMIN_USER_ID) {
+    throw new UserFacingError("로그 조회는 최고 관리자만 사용할 수 있어요.");
+  }
+
   const timeRange = resolveTimeRange(userPrompt);
   const records = findLogRecords({
     guildId: message.guildId,

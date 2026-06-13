@@ -51,4 +51,12 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_user_daily_usage_user_date
     ON user_daily_usage (user_id, usage_date);
+
+  CREATE TABLE IF NOT EXISTS server_image_tokens (
+    guild_id TEXT PRIMARY KEY,
+    image_generations INTEGER NOT NULL DEFAULT 0,
+    image_readings INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
 `);
