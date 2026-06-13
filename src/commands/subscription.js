@@ -58,12 +58,12 @@ export async function handleSubscriptionCommand(message, userPrompt) {
 
     dmContent += `### 🏷️ 등급별 요금 정보\n`;
     dmContent += `1. **Basic 등급 (3,000원 / 30일)**\n`;
-    dmContent += `   - 하루 이미지 생성 3회\n`;
-    dmContent += `   - 하루 이미지 판독 6회\n`;
+    dmContent += `   - 하루 이미지 생성 6회\n`;
+    dmContent += `   - 하루 이미지 판독 10회\n`;
     dmContent += `   - 하루 AI 호출량 30회\n\n`;
     dmContent += `2. **Premium 등급 (5,000원 / 30일)**\n`;
-    dmContent += `   - 하루 이미지 생성 10회\n`;
-    dmContent += `   - 하루 이미지 판독 25회\n`;
+    dmContent += `   - 하루 이미지 생성 15회\n`;
+    dmContent += `   - 하루 이미지 판독 30회\n`;
     dmContent += `   - 하루 AI 호출량 **무제한**\n\n`;
 
     dmContent += `### ⚠️ 중요: 입금자명 설정 안내\n`;

@@ -5,7 +5,7 @@ import { logError, logInfo } from "../logger.js";
 import { getDisplayName } from "../utils/message.js";
 
 
-export async function handleImageGenerationRequest(client, message, imagePrompt, loadingMessage = null) {
+export async function handleImageGenerationRequest(client, message, imagePrompt, loadingMessage = null, style = "default") {
   let typingInterval;
 
   try {
@@ -19,6 +19,7 @@ export async function handleImageGenerationRequest(client, message, imagePrompt,
       commandText: imagePrompt,
       model: IMAGE_GENERATION_MODEL,
       promptLength: imagePrompt.length,
+      style,
     });
 
     await message.channel.sendTyping();
@@ -47,7 +48,7 @@ export async function handleImageGenerationRequest(client, message, imagePrompt,
       userName: getDisplayName(message),
       userTag: message.author.tag,
       commandText: imagePrompt,
-    });
+    }, style);
     const generatedImage = imageResult.data?.[0];
     const imageUrl = generatedImage?.url;
     const imageBase64 = generatedImage?.b64_json;

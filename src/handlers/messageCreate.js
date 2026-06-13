@@ -305,6 +305,89 @@ export async function handleMessageCreate(client, message) {
           logContext,
         });
 
+        const toolCalls = chatCompletion.choices?.[0]?.message?.tool_calls;
+        if (toolCalls && toolCalls.length > 0) {
+          for (const toolCall of toolCalls) {
+            if (toolCall.function.name === "generate_image") {
+              decrementUsage(message.author.id, "ai_calls");
+              const usageCheck = checkAndIncrementUsage(message.author.id, "image_generations");
+              if (!usageCheck.allowed) {
+                const limits = TIER_LIMITS[usageCheck.tier];
+                const limitExceededMessage = `❌ **이미지 생성 한도 초과**\n` +
+                  `현재 ${message.author.username}님의 등급은 \`${limits.name}\`이며, 하루 이미지 생성 제한량은 **${limits.image_generations}회**입니다.\n` +
+                  `오늘 제한량을 모두 소모하셨습니다. 내일 다시 시도하시거나, \`${PREFIX} 등급 구매\`를 통해 한도를 늘려보세요!`;
+                await loadingMessage.edit(limitExceededMessage);
+                return;
+              }
+
+              const args = JSON.parse(toolCall.function.arguments);
+              const success = await handleImageGenerationRequest(client, message, args.prompt, loadingMessage, args.style || "default");
+              if (!success) {
+                decrementUsage(message.author.id, "image_generations");
+              }
+              return;
+            }
+
+            if (toolCall.function.name === "search_logs") {
+              const args = JSON.parse(toolCall.function.arguments);
+              try {
+                await handleLogSearchRequest(message, args.query, loadingMessage);
+              } catch (error) {
+                logError("log_search_tool", message.guildId, error, {
+                  guildName: message.guild.name,
+                  channelId: message.channelId,
+                  userId: message.author.id,
+                  userTag: message.author.tag,
+                  commandText: args.query,
+                });
+                await loadingMessage.edit("로그를 검색하는 중 문제가 생겼어요. 잠시 뒤 다시 시도해 주세요.");
+              }
+              return;
+            }
+
+            if (toolCall.function.name === "google_search") {
+              const args = JSON.parse(toolCall.function.arguments);
+              try {
+                const searchResult = await handleGoogleSearch(args.query);
+                if (searchResult) {
+                  await sendChunkedAnswer(message, loadingMessage, searchResult);
+                  appendConversationHistory(
+                    historyKey,
+                    {
+                      guildId: message.guildId,
+                      channelId: message.channelId,
+                      userId: message.author.id,
+                      userTag: message.author.tag,
+                      userName,
+                    },
+                    currentUserMessage,
+                    {
+                      role: "assistant",
+                      content: searchResult,
+                    },
+                  );
+                  logInfo("web_search_answer_sent", {
+                    ...logContext,
+                    answerLength: searchResult.length,
+                  });
+                } else {
+                  await loadingMessage.edit("웹 검색 결과가 없습니다.");
+                }
+              } catch (error) {
+                logError("google_search_tool", message.guildId, error, {
+                  guildName: message.guild.name,
+                  channelId: message.channelId,
+                  userId: message.author.id,
+                  userTag: message.author.tag,
+                  commandText: args.query,
+                });
+                await loadingMessage.edit("웹 검색 중 문제가 발생했습니다.");
+              }
+              return;
+            }
+          }
+        }
+
         currentStep = "parse_ai_answer";
         answer = stripReasoningTags(chatCompletion.choices?.[0]?.message?.content ?? "");
       } catch (primaryError) {

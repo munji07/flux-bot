@@ -5,20 +5,20 @@ export const TIER_LIMITS = {
   free: {
     name: "Free",
     ai_calls: 10,
-    image_generations: 0,
-    image_readings: 3,
+    image_generations: 3,
+    image_readings: 5,
   },
   basic: {
     name: "Basic",
     ai_calls: 30,
-    image_generations: 3,
-    image_readings: 6,
+    image_generations: 6,
+    image_readings: 10,
   },
   premium: {
     name: "Premium",
     ai_calls: Infinity, // 무제한
-    image_generations: 10,
-    image_readings: 25,
+    image_generations: 15,
+    image_readings: 30,
   },
 };
 

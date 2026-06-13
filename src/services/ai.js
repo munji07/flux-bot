@@ -71,6 +71,65 @@ export function createApiUserMessage(userName, userPrompt, imageUrls) {
   };
 }
 
+export const AI_TOOLS = [
+  {
+    type: "function",
+    function: {
+      name: "generate_image",
+      description: "Generates a new image, picture, drawing, illustration, banner, thumbnail, or icon based on the user request. Call this tool when the user asks to draw or create an image.",
+      parameters: {
+        type: "object",
+        properties: {
+          prompt: {
+            type: "string",
+            description: "The detailed prompt describing the image to generate. Translate to English for better results.",
+          },
+          style: {
+            type: "string",
+            description: "Artistic style or mode of the image. Must be one of: 'default' (standard/default flux), 'realism' (realistic photos/gptimage-large), 'anime' (anime drawing/seedream5), 'high_quality' (highly detailed/nanobanana-2), 'fast' (faster generation speed/zimage). Detect what style fits best from the user prompt context (e.g. '실사', '애니', '고품질', '빠른').",
+            enum: ["default", "realism", "anime", "high_quality", "fast"]
+          }
+        },
+        required: ["prompt"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "search_logs",
+      description: "Searches the Discord guild logs, error logs, user commands, timeouts, nickname changes, and other administration history logs.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "The search query (e.g. '어제 닉네임 변경한 사람', '오늘 발생한 에러').",
+          },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "google_search",
+      description: "Search Google for real-time information, weather, news, events, prices, etc. Use this when the user's query requires fresh or external knowledge.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "The search query.",
+          },
+        },
+        required: ["query"],
+      },
+    },
+  }
+];
+
 export async function classifyRequestIntent({ userPrompt, hasImageAttachment, logContext = {} }) {
   logInfo("ai_call", {
     ...logContext,
@@ -79,43 +138,62 @@ export async function classifyRequestIntent({ userPrompt, hasImageAttachment, lo
     hasImageAttachment,
     promptLength: userPrompt.length,
   });
-  const completion = await aiClient.chat.completions.create({
-    model: HF_CHAT_MODEL,
-    messages: [
-      {
-        role: "system",
-        content: SYSTEM_PROMPT,
-      },
-      {
-        role: "system",
-        content: [
-          "너는 디스코드 봇 요청 라우터야.",
-          "상황을 묘사하는 말을 사용하지 말고 이모지를 필요할 때만 사용해. 사람과 대화할 때는 존댓말을 사용해.",
-          "사용자 메시지를 보고 아래 네 가지 중 하나로만 분류해.",
-          "- chat: 일반 대화, 질문, 서버 관리가 아닌 텍스트 요청",
-          "- image_read: 사용자가 이미지, 사진, 스크린샷, 첨부물을 읽거나 설명하거나 분석해달라는 요청",
-          "- image_generation: 사용자가 새 이미지, 그림, 사진, 일러스트, 아이콘, 배너, 프로필 이미지, 썸네일 등을 만들어달라는 요청",
-          "자연스러운 표현이 되도록 판단해. 예를 들어 '몽환적인 배너 하나 만들어줄래?', '프로필에 쓸 그림 부탁해'는 image_generation이야.",
-          "반드시 JSON만 출력해. 마크다운, 설명, 코드블록은 쓰지 마.",
-          '형식: {"type":"chat|image_read|image_generation|log_search","imagePrompt":"이미지 생성을 위한 프롬프트 또는 빈 문자열"}',
-          
-          "분류기 확장: 사용자가 봇/서버 로그, 명령어 기록, 오류, AI 호출 로그 검색, 또는 관리자 작업 수행자 확인을 요청할 때는 log_search 타입을 사용하세요.",
-          "log_search 필수 예시: 어제 닉네임 변경한 사람 찾아줘 / 어제 AI 로그 보여줘 / 누가 차단했어?",
-          "허용된 JSON type 값: chat, image_read, image_generation, log_search.",
-        ].join("\n"),
-      },
-      {
-        role: "user",
-        content: JSON.stringify({
-          userPrompt,
-          hasImageAttachment,
-        }),
-      },
-    ],
-  });
 
-  const content = completion.choices?.[0]?.message?.content?.trim() ?? "";
-  return normalizeIntentResult(content, userPrompt);
+  const requestClassification = async (modelName) => {
+    const client = getClientForModel(modelName);
+    const completion = await client.chat.completions.create({
+      model: modelName,
+      messages: [
+        {
+          role: "system",
+          content: SYSTEM_PROMPT,
+        },
+        {
+          role: "system",
+          content: [
+            "너는 디스코드 봇 요청 라우터야.",
+            "상황을 묘사하는 말을 사용하지 말고 이모지를 필요할 때만 사용해. 사람과 대화할 때는 존댓말을 사용해.",
+            "사용자 메시지를 보고 아래 네 가지 중 하나로만 분류해.",
+            "- chat: 일반 대화, 질문, 서버 관리가 아닌 텍스트 요청",
+            "- image_read: 사용자가 이미지, 사진, 스크린샷, 첨부물을 읽거나 설명하거나 분석해달라는 요청",
+            "- image_generation: 사용자가 새 이미지, 그림, 사진, 일러스트, 아이콘, 배너, 프로필 이미지, 썸네일 등을 만들어달라는 요청",
+            "자연스러운 표현이 되도록 판단해. 예를 들어 '몽환적인 배너 하나 만들어줄래?', '프로필에 쓸 그림 부탁해'는 image_generation이야.",
+            "반드시 JSON만 출력해. 마크다운, 설명, 코드블록은 쓰지 마.",
+            '형식: {"type":"chat|image_read|image_generation|log_search","imagePrompt":"이미지 생성을 위한 프롬프트 또는 빈 문자열"}',
+            
+            "분류기 확장: 사용자가 봇/서버 로그, 명령어 기록, 오류, AI 호출 로그 검색, 또는 관리자 작업 수행자 확인을 요청할 때는 log_search 타입을 사용하세요.",
+            "log_search 필수 예시: 어제 닉네임 변경한 사람 찾아줘 / 어제 AI 로그 보여줘 / 누가 차단했어?",
+            "허용된 JSON type 값: chat, image_read, image_generation, log_search.",
+          ].join("\n"),
+        },
+        {
+          role: "user",
+          content: JSON.stringify({
+            userPrompt,
+            hasImageAttachment,
+          }),
+        },
+      ],
+    });
+    return completion.choices?.[0]?.message?.content?.trim() ?? "";
+  };
+
+  try {
+    const content = await requestClassification(HF_CHAT_MODEL);
+    return normalizeIntentResult(content, userPrompt);
+  } catch (error) {
+    logError("intent_classification_failed_trying_fallback", logContext.guildId, error, {
+      ...logContext,
+      fallbackModel: GEMINI_CHAT_MODEL,
+    });
+    try {
+      const content = await requestClassification(GEMINI_CHAT_MODEL);
+      return normalizeIntentResult(content, userPrompt);
+    } catch (fallbackError) {
+      logError("intent_classification_fallback_failed", logContext.guildId, fallbackError, logContext);
+      throw fallbackError;
+    }
+  }
 }
 
 export async function createChatCompletion({
@@ -149,6 +227,9 @@ export async function createChatCompletion({
     };
     if (!isGemini) {
       options.reasoning_effort = "default";
+    }
+    if (!requestModel.includes("deepseek")) {
+      options.tools = AI_TOOLS;
     }
 
     if (imageUrls.length === 0) {
@@ -332,15 +413,25 @@ function createTextChatMessages(userName, historyMessages, currentApiUserMessage
   ];
 }
 
-export async function generateImage(prompt, logContext = {}) {
+export async function generateImage(prompt, logContext = {}, style = "default") {
+  const modelMap = {
+    default: "flux",
+    realism: "gptimage-large",
+    anime: "seedream5",
+    high_quality: "nanobanana-2",
+    fast: "zimage",
+  };
+  const selectedModel = modelMap[style] || modelMap.default;
+
   logInfo("ai_call", {
     ...logContext,
     task: "image_generation",
-    model: IMAGE_GENERATION_MODEL,
+    model: selectedModel,
     promptLength: prompt.length,
+    style,
   });
 
-  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?model=${encodeURIComponent(IMAGE_GENERATION_MODEL)}&nologo=true&private=true`;
+  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?model=${encodeURIComponent(selectedModel)}&nologo=true&private=true`;
   const response = await fetch(url, {
     headers: {
       "Authorization": `Bearer ${process.env.POLLINATIONS_API_KEY}`
