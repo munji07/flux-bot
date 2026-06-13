@@ -311,9 +311,13 @@ export async function createChatCompletionStream({
     historyMessageCount: historyMessages.length,
   });
 
+  // Groq 프리 티어는 TPM(Tokens Per Minute) 제한이 매우 낮습니다(6000 토큰).
+  // 8707 토큰 요청으로 인한 413 에러를 방지하기 위해 히스토리를 최근 1개로 대폭 제한합니다.
+  const limitedHistory = historyMessages.slice(-1);
+
   return groqClient.chat.completions.create({
     model: GROQ_CHAT_MODEL,
-    messages: createTextChatMessages(userName, historyMessages, currentApiUserMessage),
+    messages: createTextChatMessages(userName, limitedHistory, currentApiUserMessage),
     temperature: 0.6,
     max_completion_tokens: 8192,
     top_p: 0.95,

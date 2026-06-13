@@ -42,23 +42,25 @@ export async function handleGoogleSearch(query) {
     // 검색 출처(Grounding Metadata) 추출 및 하단 추가
     const metadata = response?.candidates?.[0]?.groundingMetadata;
     if (metadata?.groundingChunks) {
-      const uniqueLinks = new Map();
+      const uniqueDomains = new Map();
       metadata.groundingChunks.forEach((chunk) => {
-        if (chunk.web?.uri && chunk.web?.title) {
-          uniqueLinks.set(chunk.web.uri, chunk.web.title);
+        if (chunk.web?.uri) {
+          try {
+            const domain = new URL(chunk.web.uri).hostname.replace(/^www\./, "");
+            // 동일한 도메인이 여러 번 나와도 한 번만 추가되도록 설정
+            if (!uniqueDomains.has(domain)) {
+              uniqueDomains.set(domain, chunk.web.uri);
+            }
+          } catch {
+            // 잘못된 URL 형식인 경우 무시
+          }
         }
       });
 
-      if (uniqueLinks.size > 0) {
-        const footer = Array.from(uniqueLinks.entries())
-          .map(([uri, title]) => {
-            try {
-              const domain = new URL(uri).hostname.replace(/^www\./, "");
-              return `${domain}`;
-            } catch {
-              return `${title}`;
-            }
-          })
+      if (uniqueDomains.size > 0) {
+        const footer = Array.from(uniqueDomains.entries())
+          .slice(0, 5) // 최대 5개의 고유 도메인만 표시
+          .map(([domain, uri]) => `${domain}`)
           .join(" | ");
         text = `${text.trim()}\n\n-# 🔗 출처: ${footer}`;
       }
