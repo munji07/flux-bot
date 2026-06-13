@@ -604,51 +604,60 @@ export async function handleMessageCreate(client, message) {
 }
 
 async function sendStreamingAnswer(message, loadingMessage, stream) {
-  let answer = "";
+  let fullAnswer = "";
   let sentText = "";
   let currentMessage = loadingMessage;
   let lastEditAt = 0;
 
-  async function editOrSend(text) {
-    if (!text.trim()) return;
+  try {
+    for await (const chunk of stream) {
+      const delta = chunk.choices?.[0]?.delta?.content ?? "";
+      if (!delta) continue;
 
+      fullAnswer += delta;
+      const visible = stripReasoningTags(fullAnswer);
+      let currentChunk = visible.slice(sentText.length);
+
+      // 디스코드 메시지 길이 제한(약 2000자)을 넘는 경우 분할 처리
+      while (currentChunk.length > SAFE_MESSAGE_LIMIT) {
+        const toSend = currentChunk.slice(0, SAFE_MESSAGE_LIMIT);
+        if (currentMessage) {
+          await currentMessage.edit(toSend).catch(() => {});
+        } else {
+          currentMessage = await message.channel.send(toSend);
+        }
+        sentText += toSend;
+        currentChunk = visible.slice(sentText.length);
+        currentMessage = null; // 다음 조각은 새 메시지로 전송
+        lastEditAt = Date.now();
+      }
+
+      // API 레이트 리밋 방지를 위해 1.2초마다 편집 업데이트
+      if (currentChunk.trim() && Date.now() - lastEditAt >= 1200) {
+        if (currentMessage) {
+          await currentMessage.edit(currentChunk).catch(async () => {
+            currentMessage = await message.channel.send(currentChunk);
+          });
+        } else {
+          currentMessage = await message.channel.send(currentChunk);
+        }
+        lastEditAt = Date.now();
+      }
+    }
+  } catch (error) {
+    logError("streaming_process_error", message.guildId, error);
+  }
+
+  // 스트리밍 종료 후 남은 마지막 텍스트 처리
+  const finalVisible = stripReasoningTags(fullAnswer);
+  const finalRemaining = finalVisible.slice(sentText.length).trim();
+  if (finalRemaining) {
     if (currentMessage) {
-      await currentMessage.edit(text).catch(async () => {
-        currentMessage = await message.channel.send(text);
-      });
+      await currentMessage.edit(finalRemaining).catch(() => message.channel.send(finalRemaining));
     } else {
-      currentMessage = await message.channel.send(text);
-    }
-
-    lastEditAt = Date.now();
-  }
-
-  for await (const chunk of stream) {
-    const delta = chunk.choices?.[0]?.delta?.content ?? "";
-    if (!delta) continue;
-
-    answer += delta;
-    const visible = stripReasoningTags(answer);
-    let currentChunk = visible.slice(sentText.length);
-
-    while (currentChunk.length > SAFE_MESSAGE_LIMIT) {
-      const chunkToSend = currentChunk.slice(0, SAFE_MESSAGE_LIMIT).trimEnd();
-      await editOrSend(chunkToSend);
-      sentText += currentChunk.slice(0, SAFE_MESSAGE_LIMIT);
-      currentChunk = visible.slice(sentText.length);
-      currentMessage = null;
-      lastEditAt = Date.now();
-    }
-
-    if (currentChunk.trim() && Date.now() - lastEditAt >= 1200) {
-      await editOrSend(currentChunk);
+      await message.channel.send(finalRemaining);
     }
   }
 
-  const finalChunk = stripReasoningTags(answer).slice(sentText.length).trimEnd();
-  if (finalChunk) {
-    await editOrSend(finalChunk);
-  }
-
-  return stripReasoningTags(answer);
+  return finalVisible;
 }

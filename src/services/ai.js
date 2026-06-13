@@ -243,7 +243,7 @@ export async function createChatCompletion({
     const options = {
       model: requestModel,
       temperature: 0.6,
-      max_completion_tokens: 4096,
+      max_completion_tokens: 8192,
       top_p: 0.95,
       stream: false,
       stop: null,
@@ -315,7 +315,7 @@ export async function createChatCompletionStream({
     model: GROQ_CHAT_MODEL,
     messages: createTextChatMessages(userName, historyMessages, currentApiUserMessage),
     temperature: 0.6,
-    max_completion_tokens: 4096,
+    max_completion_tokens: 8192,
     top_p: 0.95,
     stream: true,
     reasoning_effort: "default",
