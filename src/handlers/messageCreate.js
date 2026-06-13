@@ -441,7 +441,7 @@ export async function handleMessageCreate(client, message) {
 
 async function sendStreamingAnswer(message, loadingMessage, stream) {
   let answer = "";
-  let currentText = "";
+  let sentText = "";
   let currentMessage = loadingMessage;
   let lastEditAt = 0;
 
@@ -459,31 +459,32 @@ async function sendStreamingAnswer(message, loadingMessage, stream) {
     lastEditAt = Date.now();
   }
 
-  async function rotateChunk() {
-    const chunk = currentText.slice(0, SAFE_MESSAGE_LIMIT).trimEnd();
-    await editOrSend(chunk);
-    currentText = currentText.slice(SAFE_MESSAGE_LIMIT).trimStart();
-    currentMessage = null;
-    lastEditAt = Date.now();
-  }
-
   for await (const chunk of stream) {
     const delta = chunk.choices?.[0]?.delta?.content ?? "";
     if (!delta) continue;
 
     answer += delta;
-    currentText += delta;
-    const visibleText = stripReasoningTags(currentText);
+    const visible = stripReasoningTags(answer);
+    let currentChunk = visible.slice(sentText.length);
 
-    while (currentText.length > SAFE_MESSAGE_LIMIT) {
-      await rotateChunk();
+    while (currentChunk.length > SAFE_MESSAGE_LIMIT) {
+      const chunkToSend = currentChunk.slice(0, SAFE_MESSAGE_LIMIT).trimEnd();
+      await editOrSend(chunkToSend);
+      sentText += currentChunk.slice(0, SAFE_MESSAGE_LIMIT);
+      currentChunk = visible.slice(sentText.length);
+      currentMessage = null;
+      lastEditAt = Date.now();
     }
 
-    if (Date.now() - lastEditAt >= 1200) {
-      await editOrSend(visibleText);
+    if (currentChunk.trim() && Date.now() - lastEditAt >= 1200) {
+      await editOrSend(currentChunk);
     }
   }
 
-  await editOrSend(stripReasoningTags(currentText).trimEnd());
+  const finalChunk = stripReasoningTags(answer).slice(sentText.length).trimEnd();
+  if (finalChunk) {
+    await editOrSend(finalChunk);
+  }
+
   return stripReasoningTags(answer);
 }
