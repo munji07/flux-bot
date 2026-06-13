@@ -6,7 +6,6 @@ import {
   GEMINI_CHAT_MODEL,
   GEMINI_WEB_SEARCH_MODEL,
   HF_BASE_URL,
-  IMAGE_GENERATION_MODEL,
   IMAGE_MODEL,
   SYSTEM_PROMPT,
 } from "../config.js";
@@ -84,11 +83,6 @@ export const AI_TOOLS = [
             type: "string",
             description: "The detailed prompt describing the image to generate. Translate to English for better results.",
           },
-          style: {
-            type: "string",
-            description: "Artistic style or mode of the image. Must be one of: 'default' (standard/default flux), 'realism' (realistic photos/gptimage-large), 'anime' (anime drawing/seedream5), 'high_quality' (highly detailed/nanobanana-2), 'fast' (faster generation speed/zimage). Detect what style fits best from the user prompt context (e.g. '실사', '애니', '고품질', '빠른').",
-            enum: ["default", "realism", "anime", "high_quality", "fast"]
-          }
         },
         required: ["prompt"],
       },
@@ -413,46 +407,45 @@ function createTextChatMessages(userName, historyMessages, currentApiUserMessage
   ];
 }
 
-export async function generateImage(prompt, logContext = {}, style = "default") {
-  const modelMap = {
-    default: "flux",
-    realism: "gptimage-large",
-    anime: "seedream5",
-    high_quality: "nanobanana-2",
-    fast: "zimage",
-  };
-  const selectedModel = modelMap[style] || modelMap.default;
+export async function generateImage(prompt, logContext = {}) {
+  const selectedModel = "gptimage";
 
   logInfo("ai_call", {
     ...logContext,
     task: "image_generation",
     model: selectedModel,
     promptLength: prompt.length,
-    style,
   });
 
-  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?model=${encodeURIComponent(selectedModel)}&nologo=true&private=true`;
-  const response = await fetch(url, {
-    headers: {
-      "Authorization": `Bearer ${process.env.POLLINATIONS_API_KEY}`
-    }
-  });
+  const url = `https://gen.pollinations.ai/image/${encodeURIComponent(prompt)}?model=${encodeURIComponent(selectedModel)}&nologo=true&private=true`;
+  let response;
+  try {
+    response = await fetch(url, {
+      headers: {
+        "Authorization": `Bearer ${process.env.POLLINATIONS_API_KEY}`
+      }
+    });
+  } catch (err) {
+    logError("pollinations_auth_request_failed", logContext.guildId, err, logContext);
+  }
+
+  if (!response || !response.ok) {
+    logInfo("pollinations_auth_failed_trying_free_tier", {
+      status: response?.status,
+      statusText: response?.statusText,
+    });
+    // Fallback to the free public tier without API key authorization
+    response = await fetch(url);
+  }
 
   if (!response.ok) {
     throw new Error(`Failed to generate image from pollinations.ai: ${response.status} ${response.statusText}`);
   }
 
   const arrayBuffer = await response.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
-  const base64Json = buffer.toString("base64");
+  const imageBuffer = Buffer.from(arrayBuffer);
 
-  return {
-    data: [
-      {
-        b64_json: base64Json
-      },
-    ],
-  };
+  return { imageBuffer };
 }
 
 function normalizeIntentResult(content, userPrompt) {

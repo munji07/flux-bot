@@ -321,7 +321,7 @@ export async function handleMessageCreate(client, message) {
               }
 
               const args = JSON.parse(toolCall.function.arguments);
-              const success = await handleImageGenerationRequest(client, message, args.prompt, loadingMessage, args.style || "default");
+              const success = await handleImageGenerationRequest(client, message, args.prompt, loadingMessage);
               if (!success) {
                 decrementUsage(message.author.id, "image_generations");
               }
