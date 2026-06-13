@@ -25,12 +25,36 @@ export async function handleGoogleSearch(query) {
       ],
     });
 
-    const result = await model.generateContent(query);
+    // 한국어 응답 및 디스코드 마크다운 형식을 강제하는 프롬프트 구성
+    const prompt = `다음 질문에 대해 실시간 검색 결과를 바탕으로 한국어로 답변해줘. 
+디스코드 마크다운(### 제목, **굵게** 등)을 사용하여 가독성 있게 작성하고, 질문의 핵심 내용을 잘 정리해줘.
+
+질문: ${query}`;
+
+    const result = await model.generateContent(prompt);
     const response = result?.response;
-    const text = response?.text?.();
+    let text = response?.text?.();
 
     if (!text) {
       throw new Error("Google 검색에서 응답 텍스트를 받지 못했습니다.");
+    }
+
+    // 검색 출처(Grounding Metadata) 추출 및 하단 추가
+    const metadata = response?.candidates?.[0]?.groundingMetadata;
+    if (metadata?.groundingChunks) {
+      const uniqueLinks = new Map();
+      metadata.groundingChunks.forEach((chunk) => {
+        if (chunk.web?.uri && chunk.web?.title) {
+          uniqueLinks.set(chunk.web.uri, chunk.web.title);
+        }
+      });
+
+      if (uniqueLinks.size > 0) {
+        const footer = Array.from(uniqueLinks.entries())
+          .map(([uri, title]) => `${title}`)
+          .join(" | ");
+        text = `${text.trim()}\n\n-# 🔗 출처: ${footer}`;
+      }
     }
 
     return text.trim();
