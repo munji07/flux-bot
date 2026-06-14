@@ -364,6 +364,7 @@ export async function handleSubscriptionCommand(message, userPrompt, loadingMess
     dmContent += `   - 하루 이미지 판독 30회\n`;
     dmContent += `   - 하루 비디오 판독 3회\n`;
     dmContent += `   - 하루 AI 호출량 **무제한**\n\n`;
+    dmContent += `   - Premium 등급은 AI 모델 선택 기능 혜택이 포함되어 있습니다.\n\n`;
 
     dmContent += `### ⚠️ 중요: 입금자명 설정 안내\n`;
     dmContent += `정확하고 빠른 확인을 위해 입금하실 때 **입금자명**을 반드시 아래와 같이 정확하게 설정해 주세요.\n\n`;

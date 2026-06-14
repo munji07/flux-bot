@@ -2,7 +2,6 @@ import { Groq } from "groq-sdk";
 import { OpenAI } from "openai";
 import {
   DEEPSEEK_CHAT_MODEL,
-  GROQ_CHAT_MODEL,
   GEMINI_CHAT_MODEL,
   GEMINI_WEB_SEARCH_MODEL,
   ADMIN_USER_ID,

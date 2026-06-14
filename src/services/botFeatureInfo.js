@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { relative, resolve, sep } from "node:path";
-import { groqClient, stripReasoningTags } from "./ai.js";
+import { nvidiaClient, stripReasoningTags } from "./ai.js";
 import { PREFIX } from "../config.js";
 
 const PROJECT_ROOT = resolve(fileURLToPath(new URL("../../", import.meta.url)));
@@ -220,8 +220,8 @@ function isSafeProjectFile(resolvedPath) {
 }
 
 async function createBotFeatureAnswer({ query, requesterName, relevantFiles, sourceSnippets, prefix }) {
-  const completion = await groqClient.chat.completions.create({
-    model: "qwen/qwen3-32b",
+  const completion = await nvidiaClient.chat.completions.create({
+    model: "meta/llama-3.1-8b-instruct",
     messages: [
       {
         role: "system",
@@ -244,7 +244,7 @@ async function createBotFeatureAnswer({ query, requesterName, relevantFiles, sou
       },
       {
         role: "user",
-        content: JSON.stringify({ // AI에게 전달하는 데이터 구조 최적화
+        content: JSON.stringify({
           requesterName,
           query,
           relevantFeatureAreas: relevantFiles.map(({ area, summary }) => ({ area, summary })),
@@ -259,7 +259,6 @@ async function createBotFeatureAnswer({ query, requesterName, relevantFiles, sou
 
   return stripReasoningTags(completion.choices?.[0]?.message?.content ?? "");
 }
-
 function createFallbackAnswer(files) {
   return files
     .slice(0, 4)
