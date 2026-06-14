@@ -44,6 +44,8 @@ export async function handleMessageCreate(client, message) {
   const videoAttachment = message.attachments.find(a => a.contentType?.startsWith('video/'));
 
   if (videoAttachment) {
+    // 사용자가 !먼지야 명령어를 사용한 경우에만 로깅 및 사용량 체크를 위해 처리
+    // 만약 영상 분석이 항상 실행되길 원한다면, messageCreate 상단에서 이미 체크하고 있으므로 여기서 호출하면 됩니다.
     return await handleVideoAnalysis(message, userPrompt);
   }
 

@@ -25,6 +25,7 @@ export async function handleVideoAnalysis(message, userPrompt) {
 
   try {
     const msg = await message.reply("-# <a:loading:1495336917326368829> DUST봇이 영상을 분석 중이에요... 잠시만 기다려 주세요!");
+    console.log(`Video analysis started for user: ${message.author.id}, video: ${videoAttachment.url}`);
 
     // 사용량 체크
     const usageCheck = checkAndIncrementUsage(message.author.id, "video_analysis", message.guildId);
@@ -40,6 +41,7 @@ export async function handleVideoAnalysis(message, userPrompt) {
       guildName: message.guild.name
     });
 
+    console.log(`Video analysis success for user: ${message.author.id}`);
     logInfo("video_analysis_success", {
       guildId: message.guildId,
       userId: message.author.id,
@@ -48,6 +50,7 @@ export async function handleVideoAnalysis(message, userPrompt) {
 
     await msg.edit(response.choices[0].message.content);
   } catch (error) {
+    console.error(`Video analysis failed for user: ${message.author.id}, error:`, error);
     decrementUsage(message.author.id, "video_analysis");
 
     logError("video_analysis_failed", message.guildId, error, {
