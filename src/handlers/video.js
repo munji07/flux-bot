@@ -3,62 +3,72 @@ import { checkAndIncrementUsage, decrementUsage } from "../services/subscription
 import { logError, logInfo } from "../logger.js";
 import { getDisplayName } from "../utils/message.js";
 
-export async function handleVideoAnalysis(message, userPrompt) {
+export async function handleVideoAnalysis(message, userPrompt, loadingMessage) {
   const videoAttachment = message.attachments.find(a => 
     a.contentType?.startsWith('video/')
   );
 
   if (!videoAttachment) {
-    return message.reply("분석할 영상을 첨부해주세요.");
+    await loadingMessage.edit("분석할 영상을 첨부해주세요.");
+    return;
   }
 
   const prompt = userPrompt || "이 영상을 분석하고 핵심 내용을 요약해줘.";
   const userName = getDisplayName(message);
-
-  logInfo("video_analysis_start", {
-    guildId: message.guildId,
-      userId: message.author.id,
-    userName,
-    prompt,
-    videoUrl: videoAttachment.url
-    });
+  
+  let usageCheck = null;
+  await loadingMessage.edit("-# <a:loading:1495336917326368829> DUST봇이 영상을 분석 중이에요... 잠시만 기다려 주세요!");
 
   try {
-    const msg = await message.reply("-# <a:loading:1495336917326368829> DUST봇이 영상을 분석 중이에요... 잠시만 기다려 주세요!");
-    console.log(`Video analysis started for user: ${message.author.id}, video: ${videoAttachment.url}`);
-
     // 사용량 체크
-    const usageCheck = checkAndIncrementUsage(message.author.id, "video_analysis", message.guildId);
+    usageCheck = checkAndIncrementUsage(message.author.id, "video_analysis", message.guildId);
     if (!usageCheck.allowed) {
-      return await msg.edit("죄송해요! 영상 분석은 프리미엄 등급에게 하루 3회까지만 제공돼요. `!먼지야 등급 구매`를 통해 프리미엄 등급을 이용해보세요!");
+      await loadingMessage.edit("죄송해요! 영상 분석은 프리미엄 등급에게 하루 3회까지만 제공돼요. `!먼지야 등급 구매`를 통해 프리미엄 등급을 이용해보세요!");
+      return true;
     }
 
     const response = await createVideoAnalysis({
-      userId: message.author.id,
+      logContext: {
+        guildName: message.guild.name,
+        channelId: message.channelId,
+        userId: message.author.id,
+        userName,
+        userTag: message.author.tag,
+        commandText: prompt,
+      },
       videoUrl: videoAttachment.url,
-      prompt: prompt,
-      userName: userName,
-      guildName: message.guild.name
+      prompt,
+      userName,
+      guildName: message.guild.name,
     });
 
-    console.log(`Video analysis success for user: ${message.author.id}`);
-    logInfo("video_analysis_success", {
+    await loadingMessage.edit(response.choices[0].message.content);
+
+    logInfo("answer_sent", {
       guildId: message.guildId,
+      guildName: message.guild.name,
+      channelId: message.channelId,
       userId: message.author.id,
       userName,
+      answerLength: response.choices[0].message.content.length,
     });
-
-    await msg.edit(response.choices[0].message.content);
+    return true;
   } catch (error) {
-    console.error(`Video analysis failed for user: ${message.author.id}, error:`, error);
-    decrementUsage(message.author.id, "video_analysis");
+    if (usageCheck?.usedServerToken) {
+      // 서버 토큰을 사용했다면 토큰을 다시 돌려줌
+      addServerImageToken(message.guildId, "video_analysis");
+    } else {
+      decrementUsage(message.author.id, "video_analysis");
+    }
 
     logError("video_analysis_failed", message.guildId, error, {
       userId: message.author.id,
       channelId: message.channelId,
-      prompt
+      userName,
+      userTag: message.author.tag,
+      commandText: prompt,
     });
-      message.reply("영상 분석 중 오류가 발생했어요. 다시 시도해 주세요.");
-    }
+    await loadingMessage.edit("영상 분석 중 오류가 발생했어요. 다시 시도해 주세요.").catch(() => {});
+    return false;
   }
-
+}

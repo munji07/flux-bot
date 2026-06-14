@@ -32,8 +32,18 @@ export const geminiClient = new OpenAI({
   apiKey: process.env.GEMINI_API_KEY,
 });
 
-export async function createVideoAnalysis({ userId, videoUrl, prompt, userName, guildName }) {
+export async function createVideoAnalysis({ videoUrl, prompt, userName, guildName, logContext = {} }) {
   // 사용량 체크는 이미 호출부(handleVideoAnalysis)에서 수행함
+  const model = "nvidia/nemotron-nano-12b-v2-vl";
+  
+  logInfo("ai_call", {
+    ...logContext,
+    userId: logContext.userId, // 로거에서 인식할 수 있도록 명시
+    task: "video_analysis",
+    model: model,
+    videoUrl: videoUrl,
+  });
+
   const messages = [
     { role: "system", content: "당신은 영상 내용을 분석하는 AI입니다. 영상의 핵심 내용을 요약하고 질문에 답변하세요." },
     { role: "system", content: `현재 유저 이름은 "${userName}"입니다.` },
@@ -51,7 +61,7 @@ export async function createVideoAnalysis({ userId, videoUrl, prompt, userName, 
   ];
 
   return await nvidiaClient.chat.completions.create({
-    model: "nvidia/nemotron-nano-12b-v2-vl",
+    model: model,
     messages: messages,
     max_completion_tokens: 4096,
   });
@@ -80,11 +90,11 @@ export function getChatTask(imageUrls) {
 
 export function createApiUserMessage(userName, userPrompt, imageUrls) {
   const text = createUserMessageContent(userName, userPrompt, imageUrls);
-    if (imageUrls.length === 0) {
-  return {
-        role: "user",
+  if (imageUrls.length === 0) {
+    return {
+      role: "user",
       content: text,
-        };
+    };
   }
 
   return {
@@ -161,6 +171,7 @@ export const AI_TOOLS = [
 export const INTENT_TOOL_NAMES = new Set([
   "chat",
   "image_read",
+  "video_analysis",
   "generate_image",
   "search_logs",
   "google_search",
@@ -177,11 +188,12 @@ const INTENT_ROUTER_PROMPT = [
   "You are the first and only intent router for a Discord bot.",
   "Do not use keyword rules. Infer the user's intent from meaning.",
   "Return JSON only. No markdown, no prose, no code fences.",
-  'Schema: {"tool":"chat|image_read|generate_image|search_logs|google_search|run_management|subscription|bot_feature_info|pronunciation|developer_diagnostics|confirm_management|cancel_management","arguments":{...}}',
+  'Schema: {"tool":"chat|image_read|video_analysis|generate_image|search_logs|google_search|run_management|subscription|bot_feature_info|pronunciation|developer_diagnostics|confirm_management|cancel_management","arguments":{...}}',
   "",
   "Tool meanings:",
   "- chat: normal conversation or questions that do not require another tool.",
   "- image_read: the user wants attached images/screenshots/photos analyzed.",
+  '- video_analysis: Use when the user attaches a video file and asks to analyze, summarize, or talk about the video content. arguments: {"prompt":"what to ask about the video"}',
   '- generate_image: create a new image/drawing/banner/icon/profile picture/thumbnail. arguments: {"prompt":"detailed image prompt, preferably English"}.',
   `- search_logs: owner-only. Use only when requester user id is ${ADMIN_USER_ID}. Search this bot/guild logs, errors, command history, AI call history, or admin action records. arguments: {"query":"natural language log query"}.`,
   '- google_search: answer needs fresh external information such as current news, prices, schedules, versions, weather, laws, or live facts. arguments: {"query":"search query"}.',
@@ -199,14 +211,15 @@ const INTENT_ROUTER_PROMPT = [
   "- For run_management, preserve raw IDs/mentions when present. For natural names, put the spoken target text as the first arg so member matching can resolve it.",
 ].join("\n");
 
-export async function classifyRequestIntent({ userPrompt, hasImageAttachment, logContext = {} }) {
+export async function classifyRequestIntent({ userPrompt, hasImageAttachment, hasVideoAttachment, logContext = {} }) {
   logInfo("ai_call", {
     ...logContext,
     task: "intent_classification",
     model: DEEPSEEK_CHAT_MODEL,
     hasImageAttachment,
+    hasVideoAttachment,
     promptLength: userPrompt.length,
-    });
+  });
 
   const requestClassification = async (modelName) => {
     const client = getClientForModel(modelName);
@@ -224,9 +237,10 @@ export async function classifyRequestIntent({ userPrompt, hasImageAttachment, lo
         {
           role: "user",
           content: JSON.stringify({
-            routerInstructions: INTENT_ROUTER_PROMPT,
             userPrompt,
             hasImageAttachment,
+            hasVideoAttachment,
+            videoInstructions: "If a video is attached (hasVideoAttachment: true), prefer using the 'video_analysis' tool if the user asks about the content.",
           }),
         },
       ],
@@ -248,7 +262,7 @@ export async function classifyRequestIntent({ userPrompt, hasImageAttachment, lo
     } catch (fallbackError) {
       logError("intent_classification_fallback_failed", logContext.guildId, fallbackError, logContext);
       throw fallbackError;
-}
+    }
   }
 }
 
@@ -283,7 +297,7 @@ export async function createChatCompletion({
     };
 
     if (requestModel === DEEPSEEK_CHAT_MODEL) {
-        options.chat_template_kwargs = { "thinking": true, "reasoning_effort": "high" };
+      options.chat_template_kwargs = { "thinking": true, "reasoning_effort": "high" };
     }
 
     if (requestModel !== "meta/llama-4-maverick-17b-128e-instruct" && !requestModel.includes("deepseek")) {
@@ -683,4 +697,3 @@ export async function fetchChannelContext(message, limit = HISTORY_BATCH_SIZE) {
     return [];
   }
 }
-

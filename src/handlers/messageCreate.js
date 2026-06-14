@@ -43,12 +43,6 @@ export async function handleMessageCreate(client, message) {
     const attachedImageUrls = getImageAttachmentUrls(message);
   const videoAttachment = message.attachments.find(a => a.contentType?.startsWith('video/'));
 
-  if (videoAttachment) {
-    // 사용자가 !먼지야 명령어를 사용한 경우에만 로깅 및 사용량 체크를 위해 처리
-    // 만약 영상 분석이 항상 실행되길 원한다면, messageCreate 상단에서 이미 체크하고 있으므로 여기서 호출하면 됩니다.
-    return await handleVideoAnalysis(message, userPrompt);
-  }
-
   if (!userPrompt) {
     await message.reply(`질문을 함께 입력해주세요. 예: \`${PREFIX} 오늘 저녁 메뉴 추천해줘\``);
     return;
@@ -67,64 +61,52 @@ export async function handleMessageCreate(client, message) {
     const userName = getDisplayName(message);
     let intent;
 
-  if (await handleServerImageTokenPurchaseCommand(message, userPrompt, loadingMessage)) {
+    if (await handleServerImageTokenPurchaseCommand(message, userPrompt, loadingMessage)) {
       return;
     }
 
-  // "도움말"과 정확히 일치하는 경우 AI를 거치지 않고 즉시 반환
-  if (userPrompt === "도움말") {
-    await loadingMessage.edit(getGeneralHelpText(PREFIX));
-        return;
-      }
-
-  // "등급" 관련 명령어도 즉시 반환
-  if (["등급", "나의 등급", "나의등급", "등급 구매", "구매"].includes(userPrompt)) {
-    const handled = await handleSubscriptionCommand(message, userPrompt, loadingMessage);
-    if (handled) {
+    // "도움말"과 정확히 일치하는 경우 AI를 거치지 않고 즉시 반환
+    if (userPrompt === "도움말") {
+      await loadingMessage.edit(getGeneralHelpText(PREFIX));
       return;
     }
-  }
+
+    // "등급" 관련 명령어도 즉시 반환
+    if (["등급", "나의 등급", "나의등급", "등급 구매", "구매"].includes(userPrompt)) {
+      const handled = await handleSubscriptionCommand(message, userPrompt, loadingMessage);
+      if (handled) return;
+    }
 
     try {
-    intent = await classifyRequestIntent({
-      userPrompt,
-      hasImageAttachment: attachedImageUrls.length > 0,
-          logContext: {
-        guildId: message.guildId,
-        guildName: message.guild.name,
-        channelId: message.channelId,
-        userId: message.author.id,
-        userName,
-        userTag: message.author.tag,
-        commandText: userPrompt,
-      },
-    });
-  } catch (error) {
-    logError("classify_request_intent", message.guildId, error, {
-      guildName: message.guild.name,
-      channelId: message.channelId,
-      userId: message.author.id,
-      userTag: message.author.tag,
-    });
-
-    if (attachedImageUrls.length === 0) {
-      intent = {
-        type: "chat",
-        imagePrompt: "",
-        raw: "",
-      };
-      logInfo("intent_classification_fallback", {
-        guildId: message.guildId,
+      intent = await classifyRequestIntent({
+        userPrompt,
+        hasImageAttachment: attachedImageUrls.length > 0,
+        hasVideoAttachment: !!videoAttachment,
+        logContext: {
+          guildId: message.guildId,
           guildName: message.guild.name,
           channelId: message.channelId,
           userId: message.author.id,
-        userName,
-        });
-    } else {
-      await loadingMessage.edit("요청 의도를 확인하는 중 문제가 발생했어요. 잠시 뒤 다시 시도해주세요.").catch(() => {});
-      return;
+          userName,
+          userTag: message.author.tag,
+          commandText: userPrompt,
+        },
+      });
+    } catch (error) {
+      logError("classify_request_intent", message.guildId, error, {
+        guildName: message.guild.name,
+        channelId: message.channelId,
+        userId: message.author.id,
+        userTag: message.author.tag,
+      });
+
+      if (attachedImageUrls.length === 0 && !videoAttachment) {
+        intent = { type: "chat", tool: "chat", arguments: {} };
+      } else {
+        await loadingMessage.edit("요청 의도를 확인하는 중 문제가 발생했어요. 잠시 뒤 다시 시도해주세요.").catch(() => {});
+        return;
+      }
     }
-  }
 
   if (["run_management", "confirm_management", "cancel_management"].includes(intent.tool)) {
   try {
@@ -157,7 +139,7 @@ export async function handleMessageCreate(client, message) {
   // 사용량 타입 결정
   const isImageRead = intent.type === "image_read" || attachedImageUrls.length > 0;
   try {
-  if (intent.type === "image_generation") {
+    if (intent.type === "image_generation") {
       usageType = "image_generations";
     } else if (isImageRead) {
       usageType = "image_readings";
@@ -169,10 +151,11 @@ export async function handleMessageCreate(client, message) {
     }
 
     // 사용량 타입이 설정되지 않았는데 AI 호출이 필요한 경우 기본값 설정
-    if (!usageType && intent.type === "chat") {
+    // video_analysis는 위에서 별도로 처리되거나 여기서 ai_calls로 분류될 수 있음
+    if (!usageType && (intent.type === "chat" || intent.tool === "chat")) {
       usageType = "ai_calls";
     }
-              } catch (error) {
+  } catch (error) {
     logError("usage_type_determination", message.guildId, error);
     usageType = "ai_calls"; // 에러 발생 시 안전하게 기본값 사용
   }
@@ -180,21 +163,21 @@ export async function handleMessageCreate(client, message) {
   // --- 도구 및 의도별 처리 시작 ---
 
   if (intent.tool === "subscription") {
-              try {
+    try {
       const handled = await handleSubscriptionToolCall(message, intent, loadingMessage);
       if (handled) return;
-              } catch (error) {
+    } catch (error) {
       logError("subscription_tool", message.guildId, error, {
-                  guildName: message.guild.name,
-                  channelId: message.channelId,
-                  userId: message.author.id,
-                  userTag: message.author.tag,
+        guildName: message.guild.name,
+        channelId: message.channelId,
+        userId: message.author.id,
+        userTag: message.author.tag,
         commandText: userPrompt,
-                });
+      });
       await loadingMessage.edit("등급 작업을 처리하는 중 문제가 생겼어요. 잠시 뒤 다시 시도해 주세요.");
-              return;
-            }
-          }
+      return;
+    }
+  }
 
   if (intent.tool === "pronunciation") {
     try {
@@ -204,6 +187,12 @@ export async function handleMessageCreate(client, message) {
       const errorMessage = error instanceof UserFacingError ? error.message : "발음 변환 중 문제가 생겼어요.";
       await loadingMessage.edit(errorMessage);
     }
+    return;
+  }
+
+  if (intent.tool === "video_analysis") {
+    // handleVideoAnalysis 내부에서 자체적으로 사용량 체크를 하고 답변을 마무리하므로 바로 호출하고 종료합니다.
+    await handleVideoAnalysis(message, userPrompt, loadingMessage);
     return;
   }
 
@@ -765,4 +754,3 @@ async function sendStreamingAnswer(message, loadingMessage, stream) {
 
   return finalVisible;
 }
-
