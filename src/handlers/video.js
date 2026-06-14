@@ -29,7 +29,7 @@ export async function handleVideoAnalysis(message, userPrompt) {
     // 사용량 체크
     const usageCheck = checkAndIncrementUsage(message.author.id, "video_analysis", message.guildId);
     if (!usageCheck.allowed) {
-      return await msg.edit("죄송해요! 영상 분석은 프리미엄 등급에게 하루 3회까지만 제공돼요. `!등급 구매`를 통해 프리미엄 등급을 이용해보세요!");
+      return await msg.edit("죄송해요! 영상 분석은 프리미엄 등급에게 하루 3회까지만 제공돼요. `!먼지야 등급 구매`를 통해 프리미엄 등급을 이용해보세요!");
     }
 
     const response = await createVideoAnalysis({

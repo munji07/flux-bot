@@ -86,15 +86,16 @@ export async function handleInteractionCreate(client, interaction) {
     const parts = customId.split(":");
     if (parts.length < 5) return;
 
-    const [, type, guildId, userId, timeStr] = parts;
+    const [, type, guildId, userId, timeStr, countStr] = parts;
+    const count = parseInt(countStr || "1", 10);
     const label = SERVER_TOKEN_LABELS[type];
     if (!label) {
       await interaction.reply({ content: "알 수 없는 서버 토큰 상품이에요.", ephemeral: true });
       return;
     }
 
-    const depositName = `${timeStr}-${guildId}`;
-    const price = SERVER_TOKEN_PRICES[type];
+    const depositName = `${timeStr}-${count}-${guildId.slice(-4)}`;
+    const price = SERVER_TOKEN_PRICES[type] * count;
     const guild = await client.guilds.fetch(guildId).catch(() => null);
 
     try {
@@ -102,7 +103,7 @@ export async function handleInteractionCreate(client, interaction) {
       if (developer) {
         const row = new ActionRowBuilder().addComponents(
           new ButtonBuilder()
-            .setCustomId(`server_token_approve:${type}:${guildId}:${userId}`)
+            .setCustomId(`server_token_approve:${type}:${guildId}:${userId}:${timeStr}:${count}`)
             .setLabel("승인")
             .setStyle(ButtonStyle.Success),
           new ButtonBuilder()
@@ -117,7 +118,7 @@ export async function handleInteractionCreate(client, interaction) {
             "",
             `- 신청자: <@${userId}> (ID: \`${userId}\`)`,
             `- 서버: ${guild?.name ?? "알 수 없는 서버"} (ID: \`${guildId}\`)`,
-            `- 상품: \`${label} 1개\``,
+            `- 상품: \`${label} ${count}개\``,
             `- 금액: \`${price.toLocaleString("ko-KR")}원\``,
             `- 입금자명: \`${depositName}\``,
             "",
@@ -131,7 +132,7 @@ export async function handleInteractionCreate(client, interaction) {
         content: [
           "**입금 완료 알림을 전송했어요.**",
           "",
-          `- 상품: \`${label} 1개\``,
+          `- 상품: \`${label} ${count}개\``,
           `- 금액: \`${price.toLocaleString("ko-KR")}원\``,
           `- 입금자명: \`${depositName}\``,
           "",
@@ -162,14 +163,17 @@ export async function handleInteractionCreate(client, interaction) {
     const label = SERVER_TOKEN_LABELS[type];
     if (!label) return;
 
+    // customId에 저장된 count 추출 (parts[5]에 위치)
+    const count = parseInt(parts[5] || 1, 10);
+
     try {
-      const tokens = addServerImageToken(guildId, type, 1);
+      const tokens = addServerImageToken(guildId, type, count);
       await interaction.update({
         content: [
           `**${label} 구매 신청을 승인했습니다.**`,
           `- 서버 ID: \`${guildId}\``,
           `- 신청자: <@${userId}>`,
-          `- 추가 토큰: \`${label} 1개\``,
+          `- 추가 토큰: \`${label} ${count}개\``,
           `- 현재 이미지 검토 토큰: \`${tokens.image_readings}개\``,
           `- 현재 이미지 생성 토큰: \`${tokens.image_generations}개\``,
         ].join("\n"),
@@ -181,7 +185,7 @@ export async function handleInteractionCreate(client, interaction) {
         await targetUser.send([
           `**${label} 승인 완료**`,
           "",
-          "입금 확인이 완료되어 서버 토큰 1개가 추가됐어요.",
+          `입금 확인이 완료되어 서버 토큰 ${count}개가 추가됐어요.`,
           `- 서버 ID: \`${guildId}\``,
           `- 이미지 검토 토큰: \`${tokens.image_readings}개\``,
           `- 이미지 생성 토큰: \`${tokens.image_generations}개\``,
@@ -312,3 +316,4 @@ export async function handleInteractionCreate(client, interaction) {
     return;
   }
 }
+
