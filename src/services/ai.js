@@ -45,12 +45,12 @@ export async function createVideoAnalysis({ videoUrl, prompt, userName, guildNam
   });
 
   const messages = [
-    { role: "system", content: "당신은 영상 내용을 분석하는 AI입니다. 영상의 핵심 내용을 요약하고 질문에 답변하세요." },
-    { role: "system", content: `현재 유저 이름은 "${userName}"입니다.` },
+        { role: "system", content: SYSTEM_PROMPT },
+    { role: "system", content: `현재 유저 이름은 "${userName}"입니다. 답변에서 반드시 "${userName}"님이라고 불러주세요.` },
     { role: "system", content: `현재 서버 이름은 "${guildName}"입니다.` },
-    {
+        {
       role: "user",
-      content: [
+          content: [
         { type: "text", text: prompt },
         {
           type: "video_url",
@@ -65,7 +65,7 @@ export async function createVideoAnalysis({ videoUrl, prompt, userName, guildNam
     messages: messages,
     max_completion_tokens: 4096,
   });
-}
+  }
 
 function getClientForModel(model) {
   if (model === "meta/llama-4-maverick-17b-128e-instruct") {
@@ -92,9 +92,9 @@ export function createApiUserMessage(userName, userPrompt, imageUrls) {
   const text = createUserMessageContent(userName, userPrompt, imageUrls);
   if (imageUrls.length === 0) {
     return {
-      role: "user",
+        role: "user",
       content: text,
-    };
+        };
   }
 
   return {
@@ -219,7 +219,7 @@ export async function classifyRequestIntent({ userPrompt, hasImageAttachment, ha
     hasImageAttachment,
     hasVideoAttachment,
     promptLength: userPrompt.length,
-  });
+    });
 
   const requestClassification = async (modelName) => {
     const client = getClientForModel(modelName);
@@ -262,7 +262,7 @@ export async function classifyRequestIntent({ userPrompt, hasImageAttachment, ha
     } catch (fallbackError) {
       logError("intent_classification_fallback_failed", logContext.guildId, fallbackError, logContext);
       throw fallbackError;
-    }
+}
   }
 }
 
@@ -697,3 +697,4 @@ export async function fetchChannelContext(message, limit = HISTORY_BATCH_SIZE) {
     return [];
   }
 }
+

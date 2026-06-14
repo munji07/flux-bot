@@ -13,7 +13,7 @@ export async function handleVideoAnalysis(message, userPrompt, loadingMessage) {
     return;
   }
 
-  const prompt = userPrompt || "이 영상을 분석하고 핵심 내용을 요약해줘.";
+  const prompt = userPrompt || "이 영상의 내용을 아주 상세하게 분석해줘. 영상의 흐름을 시간대별로 나누어 각 부분에서 어떤 일이 일어나는지 요약하고, 영상 전체에서 전달하고자 하는 핵심 주제나 결론을 포함해서 아주 자세하게 설명해줘.";
   const userName = getDisplayName(message);
   
   let usageCheck = null;
@@ -72,3 +72,4 @@ export async function handleVideoAnalysis(message, userPrompt, loadingMessage) {
     return false;
   }
 }
+
