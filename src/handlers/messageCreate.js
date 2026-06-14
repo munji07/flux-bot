@@ -6,7 +6,7 @@ import { handleImageGenerationRequest } from "./imageGeneration.js";
 import { handleBotFeatureInfoRequest, getGeneralHelpText } from "../services/botFeatureInfo.js";
 import { handleDeveloperDiagnosticsRequest } from "../services/developerDiagnostics.js";
 import { handleLogSearchRequest, isPayloadTooLargeError } from "../services/logSearch.js";
-import { addServerImageToken, checkAndIncrementUsage, decrementUsage, TIER_LIMITS } from "../services/subscription.js";
+import { addServerImageToken, checkAndIncrementUsage, decrementUsage, TIER_LIMITS, getUserSubscription, getUserChatModel } from "../services/subscription.js";
 import { handleGoogleSearch } from "./googleSearch.js";
 import { handleVideoAnalysis } from "./video.js";
 import {
@@ -379,6 +379,17 @@ export async function handleMessageCreate(client, message) {
   let typingInterval;
   let currentStep = "command_detected";
 
+  // 사용자 설정 모델 가져오기 (Premium 전용)
+  const userSub = getUserSubscription(message.author.id);
+  let chatModel = null;
+  if (userSub.tier === "premium") {
+    chatModel = getUserChatModel(message.author.id);
+  }
+
+  // 의도 파악(classifyRequestIntent)은 내부적으로 이미 llama-3.1-8b-instruct를 사용 중임
+  // 실제 답변 생성에 쓰일 모델 결정
+  const usedModel = chatModel || (attachedImageUrls.length > 0 ? "meta/llama-4-maverick-17b-128e-instruct" : "nvidia/nemotron-3-nano-30b-a3b");
+
   try {
     const historyKey = getHistoryKey(message); // 로깅 및 DB 저장을 위해 유지
     const historyNeeded = shouldUseConversationHistory(userPrompt);
@@ -453,98 +464,9 @@ export async function handleMessageCreate(client, message) {
           guildId: message.guildId,
           serverContext,
           logContext,
+          intent: intent.type,
+          model: usedModel,
         });
-
-        const toolCalls = chatCompletion.choices?.[0]?.message?.tool_calls;
-        if (toolCalls && toolCalls.length > 0) {
-          for (const toolCall of toolCalls) {
-            if (toolCall.function.name === "generate_image") {
-              decrementUsage(message.author.id, "ai_calls");
-              const usageCheck = checkAndIncrementUsage(message.author.id, "image_generations", message.guildId);
-              if (!usageCheck.allowed) {
-                const limits = TIER_LIMITS[usageCheck.tier];
-                const limitExceededMessage = `❌ **이미지 생성 한도 초과**\n` +
-                  `현재 ${message.author.username}님의 등급은 \`${limits.name}\`이며, 하루 이미지 생성 제한량은 **${limits.image_generations}회**입니다.\n` +
-                  `오늘 제한량을 모두 소모하셨습니다. 내일 다시 시도하시거나, \`${PREFIX} 등급 구매\`를 통해 한도를 늘려보세요!`;
-                await loadingMessage.edit(limitExceededMessage);
-                return;
-              }
-
-              const args = JSON.parse(toolCall.function.arguments);
-              const success = await handleImageGenerationRequest(client, message, args.prompt, loadingMessage);
-              if (!success) {
-                if (usageCheck.usedServerToken) {
-                  addServerImageToken(message.guildId, "image_generations");
-                } else {
-                  decrementUsage(message.author.id, "image_generations");
-                }
-              }
-              return;
-            }
-
-            if (toolCall.function.name === "search_logs") {
-              const args = JSON.parse(toolCall.function.arguments);
-              if (message.author.id !== ADMIN_USER_ID) {
-                await loadingMessage.edit("로그 조회는 최고 관리자만 사용할 수 있어요.");
-                return;
-              }
-              try {
-                await handleLogSearchRequest(message, args.query, loadingMessage);
-              } catch (error) {
-                logError("log_search_tool", message.guildId, error, {
-                  guildName: message.guild.name,
-                  channelId: message.channelId,
-                  userId: message.author.id,
-                  userTag: message.author.tag,
-                  commandText: args.query,
-                });
-                await loadingMessage.edit("로그를 검색하는 중 문제가 생겼어요. 잠시 뒤 다시 시도해 주세요.");
-              }
-              return;
-            }
-
-            if (toolCall.function.name === "google_search") {
-              const args = JSON.parse(toolCall.function.arguments);
-              try {
-                const searchResult = await handleGoogleSearch(args.query);
-                if (searchResult) {
-                  await sendChunkedAnswer(message, loadingMessage, searchResult);
-                  appendConversationHistory(
-                    historyKey,
-                    {
-                      guildId: message.guildId,
-                      channelId: message.channelId,
-                      userId: message.author.id,
-                      userTag: message.author.tag,
-                      userName,
-                    },
-                    currentUserMessage,
-                    {
-                      role: "assistant",
-                      content: searchResult,
-                    },
-                  );
-                  logInfo("web_search_answer_sent", {
-                    ...logContext,
-                    answerLength: searchResult.length,
-                  });
-                } else {
-                  await loadingMessage.edit("웹 검색 결과가 없습니다.");
-                }
-              } catch (error) {
-                logError("google_search_tool", message.guildId, error, {
-                  guildName: message.guild.name,
-                  channelId: message.channelId,
-                  userId: message.author.id,
-                  userTag: message.author.tag,
-                  commandText: args.query,
-                });
-                await loadingMessage.edit("웹 검색 중 문제가 발생했습니다.");
-              }
-              return;
-            }
-          }
-        }
 
         currentStep = "parse_ai_answer";
         answer = stripReasoningTags(chatCompletion.choices?.[0]?.message?.content ?? "");
@@ -576,10 +498,11 @@ export async function handleMessageCreate(client, message) {
             ...logContext,
             fallbackFrom: "deepseek",
           },
+          model: usedModel,
         });
 
         currentStep = "stream_groq_fallback_answer";
-        answer = await sendStreamingAnswer(message, loadingMessage, chatCompletion);
+        answer = await sendStreamingAnswer(message, loadingMessage, chatCompletion, usedModel);
         answerAlreadySent = true;
       }
     } else {
@@ -592,6 +515,7 @@ export async function handleMessageCreate(client, message) {
         guildId: message.guildId,
         serverContext,
         logContext,
+        model: usedModel,
       });
 
       currentStep = "parse_ai_answer";
@@ -613,7 +537,7 @@ export async function handleMessageCreate(client, message) {
 
     currentStep = "send_ai_answer";
     if (!answerAlreadySent) {
-      await sendChunkedAnswer(message, loadingMessage, answer);
+      await sendChunkedAnswer(message, loadingMessage, `${answer}\n\n-# 🤖 모델: ${usedModel}`);
     }
 
     appendConversationHistory(
@@ -696,7 +620,7 @@ export async function handleMessageCreate(client, message) {
   }
 }
 
-async function sendStreamingAnswer(message, loadingMessage, stream) {
+async function sendStreamingAnswer(message, loadingMessage, stream, usedModel) {
   let fullAnswer = "";
   let sentText = "";
   let currentMessage = loadingMessage;
@@ -744,12 +668,19 @@ async function sendStreamingAnswer(message, loadingMessage, stream) {
   // 스트리밍 종료 후 남은 마지막 텍스트 처리
   const finalVisible = stripReasoningTags(fullAnswer);
   const finalRemaining = finalVisible.slice(sentText.length).trim();
+  const footer = `\n\n-# 🤖 모델: ${usedModel}`;
+
   if (finalRemaining) {
+    const textToSend = finalRemaining + footer;
     if (currentMessage) {
-      await currentMessage.edit(finalRemaining).catch(() => message.channel.send(finalRemaining));
+      await currentMessage.edit(textToSend).catch(() => message.channel.send(textToSend));
     } else {
-      await message.channel.send(finalRemaining);
+      await message.channel.send(textToSend);
     }
+  } else if (currentMessage) {
+    // 남은 텍스트는 없지만 모델 푸터는 달아야 하는 경우
+    const lastContent = (await currentMessage.fetch()).content;
+    await currentMessage.edit(lastContent + footer).catch(() => {});
   }
 
   return finalVisible;

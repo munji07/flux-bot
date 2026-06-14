@@ -64,8 +64,7 @@ db.exec(`
 
   CREATE TABLE IF NOT EXISTS user_settings (
     user_id TEXT PRIMARY KEY,
-    chat_model TEXT DEFAULT 'groq',
+    chat_model TEXT DEFAULT 'nvidia/nemotron-3-nano-30b-a3b',
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 `);
-

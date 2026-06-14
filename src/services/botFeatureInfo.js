@@ -135,7 +135,7 @@ export function getGeneralHelpText(prefix) {
     "",
     "**⚙️ 모델 변경 (프리미엄 전용)**",
     `- \`${prefix} 모델변경 <모델명>\` - 사용하려는 챗 모델을 변경합니다.`,
-    "  - 지원 모델: deepseek-ai/deepseek-v4-flash, deepseek-ai/deepseek-v4-pro, meta/llama-3.3-70b-instruct",
+    "  - 지원 모델: deepseek-ai/deepseek-v4-flash, deepseek-ai/deepseek-v4-pro, meta/llama-3.3-70b-instruct, nvidia/nemotron-3-nano-30b-a3b",
     "  - 모델 선택 후 확인 메시지가 표시됩니다."
   ].join("\n");
 }

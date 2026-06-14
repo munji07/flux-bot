@@ -2,11 +2,11 @@ import { Groq } from "groq-sdk";
 import { OpenAI } from "openai";
 import {
   DEEPSEEK_CHAT_MODEL,
-  GEMINI_CHAT_MODEL,
   GEMINI_WEB_SEARCH_MODEL,
   ADMIN_USER_ID,
   SYSTEM_PROMPT,
   HISTORY_BATCH_SIZE,
+  IMAGE_GENERATION_MODEL,
 } from "../config.js";
 import { logError, logInfo } from "../logger.js";
 import { createUserMessageContent } from "../utils/message.js";
@@ -67,20 +67,15 @@ export async function createVideoAnalysis({ videoUrl, prompt, userName, guildNam
   }
 
 function getClientForModel(model) {
-  if (model === "meta/llama-4-maverick-17b-128e-instruct") {
-    return nvidiaClient;
-  }
-  if (model === DEEPSEEK_CHAT_MODEL) {
-    return deepseekClient;
-  }
   if (model && model.startsWith("gemini-")) {
     return geminiClient;
   }
-  return deepseekClient;
+  // NVIDIA NIM 모델들(DeepSeek, Llama 3.3, Nemotron 등)은 nvidiaClient 사용
+  return nvidiaClient;
 }
 
 export function getChatModel(imageUrls) {
-  return imageUrls.length > 0 ? "meta/llama-4-maverick-17b-128e-instruct" : DEEPSEEK_CHAT_MODEL;
+  return imageUrls.length > 0 ? "meta/llama-4-maverick-17b-128e-instruct" : "nvidia/nemotron-3-nano-30b-a3b";
 }
 
 export function getChatTask(imageUrls) {
@@ -197,16 +192,9 @@ const INTENT_ROUTER_PROMPT = [
 ].join("\n");
 
 export async function classifyRequestIntent({ userPrompt, hasImageAttachment, hasVideoAttachment, logContext = {} }) {
-  // --- 최적화: 간단한 채팅은 AI 호출 없이 즉시 반환 ---
-  const isSimpleChat = !hasImageAttachment && !hasVideoAttachment && userPrompt.trim().length < 15;
-  if (isSimpleChat) {
-    return { type: "chat", tool: "chat", arguments: {}, raw: "quick_chat" };
-  }
-  // ---------------------------------------------
-
   logInfo("ai_call", {
     ...logContext,
-    task: "intent_classification",
+    task: "Intent Classification",
     model: "meta/llama-3.1-8b-instruct",
     hasImageAttachment,
     hasVideoAttachment,
@@ -214,7 +202,7 @@ export async function classifyRequestIntent({ userPrompt, hasImageAttachment, ha
     });
 
   const requestClassification = async (modelName) => {
-    const client = getClientForModel(modelName);
+    const client = nvidiaClient; // 항상 nvidiaClient 사용
     const completion = await client.chat.completions.create({
       model: modelName,
       temperature: 0.2,
@@ -245,20 +233,20 @@ export async function classifyRequestIntent({ userPrompt, hasImageAttachment, ha
 
   try {
     const content = await requestClassification("meta/llama-3.1-8b-instruct");
-    return normalizeIntentResult(content, userPrompt);
-  } catch (error) {
-    logError("intent_classification_failed_trying_fallback", logContext.guildId, error, {
+    const result = normalizeIntentResult(content, userPrompt);
+    
+    // 의도 파악 결과를 로그에 기록
+    logInfo("intent_classified", {
       ...logContext,
-      fallbackModel: GEMINI_CHAT_MODEL,
+      intent: result.type,
+      tool: result.tool,
     });
-    try {
-      const content = await requestClassification(GEMINI_CHAT_MODEL);
-      return normalizeIntentResult(content, userPrompt);
-    } catch (fallbackError) {
-      logError("intent_classification_fallback_failed", logContext.guildId, fallbackError, logContext);
-      throw fallbackError;
+    
+    return result;
+  } catch (error) {
+    logError("intent_classification_failed", logContext.guildId, error, logContext);
+    throw error;
   }
-}
 }
 
 export async function createChatCompletion({
@@ -270,9 +258,11 @@ export async function createChatCompletion({
   guildId,
   serverContext = "",
   logContext = {},
+  intent = null,
+  model: userModel = null,
 }) {
-  const model = "nvidia/nemotron-3-nano-30b-a3b";
-  const task = getChatTask(imageUrls);
+  const task = intent || getChatTask(imageUrls);
+  const model = userModel || (imageUrls.length > 0 ? "meta/llama-4-maverick-17b-128e-instruct" : "nvidia/nemotron-3-nano-30b-a3b");
 
   logInfo("ai_call", {
     ...logContext,
@@ -285,38 +275,27 @@ export async function createChatCompletion({
   const request = ({ requestModel }) => {
     const options = {
       model: requestModel,
-      temperature: 0.4, // 안정성을 위해 낮춤
+      temperature: 0.4,
       top_p: 0.95,
-      max_completion_tokens: 16384,
+      max_completion_tokens: 8192,
       stream: false,
     };
 
-    if (imageUrls.length === 0) {
-      return nvidiaClient.chat.completions.create({
-        ...options,
-      messages: [
-          { role: "system", content: `${SYSTEM_PROMPT}\nSTRICT RULE: 반드시 오직 한국어로만 답변하십시오. 다른 언어나 알 수 없는 문자를 포함하지 마십시오.` },
-          { role: "system", content: `현재 응답해야 하는 유저 이름은 "${userName}"입니다. 답변에서 반드시 "${userName}"님이라고 불러주세요.` },
-        ...(guildName ? [{ role: "system", content: `현재 대화가 진행되는 서버의 이름은 "${guildName}"입니다.` }] : []),
-        ...(guildId ? [{ role: "system", content: `현재 대화가 진행되는 서버의 ID는 "${guildId}"입니다.` }] : []),
-        ...(serverContext ? [{ role: "system", content: serverContext }] : []),
-        ...historyMessages,
-        { role: currentApiUserMessage.role, content: currentApiUserMessage.content },
-      ],
-    });
-    }
-  return nvidiaClient.chat.completions.create({
+    const messages = [
+      { role: "system", content: `${SYSTEM_PROMPT}\nSTRICT RULE: 반드시 오직 한국어로만 답변하십시오. 다른 언어나 알 수 없는 문자를 포함하지 마십시오.` },
+      { role: "system", content: `현재 응답해야 하는 유저 이름은 "${userName}"입니다. 답변에서 반드시 "${userName}"님이라고 불러주세요.` },
+      ...(guildName ? [{ role: "system", content: `현재 대화가 진행되는 서버의 이름은 "${guildName}"입니다.` }] : []),
+      ...(guildId ? [{ role: "system", content: `현재 대화가 진행되는 서버의 ID는 "${guildId}"입니다.` }] : []),
+      ...(serverContext ? [{ role: "system", content: serverContext }] : []),
+      ...historyMessages,
+      { role: currentApiUserMessage.role, content: currentApiUserMessage.content },
+    ];
+
+    const client = getClientForModel(requestModel);
+    return client.chat.completions.create({
       ...options,
-      messages: [
-        { role: "system", content: `${SYSTEM_PROMPT}\nSTRICT RULE: 반드시 오직 한국어로만 답변하십시오.` },
-        { role: "system", content: `현재 응답해야 하는 유저 이름은 "${userName}"입니다. 답변에서 반드시 "${userName}"님이라고 불러주세요.` },
-        ...(guildName ? [{ role: "system", content: `현재 대화가 진행되는 서버의 이름은 "${guildName}"입니다.` }] : []),
-        ...(guildId ? [{ role: "system", content: `현재 대화가 진행되는 서버의 ID는 "${guildId}"입니다.` }] : []),
-        ...(serverContext ? [{ role: "system", content: serverContext }] : []),
-    ...historyMessages,
-        { role: currentApiUserMessage.role, content: currentApiUserMessage.content },
-    ],
-  });
+      messages,
+    });
         };
 
   try {
@@ -338,8 +317,9 @@ export async function createChatCompletionStream({
   guildId,
   serverContext = "",
   logContext = {},
+  model: userModel = null,
 }) {
-  const model = "nvidia/nemotron-3-nano-30b-a3b";
+  const model = userModel || "nvidia/nemotron-3-nano-30b-a3b";
   logInfo("ai_call", {
     ...logContext,
     task: "chat_stream",
@@ -358,7 +338,8 @@ export async function createChatCompletionStream({
     { role: currentApiUserMessage.role, content: String(currentApiUserMessage.content) }
   ];
 
-  return nvidiaClient.chat.completions.create({
+  const client = getClientForModel(model);
+  return client.chat.completions.create({
     model: model,
     messages: messages,
     max_completion_tokens: 1024,
@@ -375,14 +356,13 @@ export async function shouldUseWebSearch({ userPrompt, logContext = {} }) {
   logInfo("ai_call", {
     ...logContext,
     task: "web_search_classification",
-    model: GEMINI_WEB_SEARCH_MODEL,
+    model: "meta/llama-3.1-8b-instruct",
     promptLength: prompt.length,
   });
 
   try {
-    const client = getClientForModel(GEMINI_WEB_SEARCH_MODEL);
-    const completion = await client.chat.completions.create({
-      model: GEMINI_WEB_SEARCH_MODEL,
+    const completion = await nvidiaClient.chat.completions.create({
+      model: "meta/llama-3.1-8b-instruct",
       messages: [
         {
           role: "system",
@@ -499,7 +479,6 @@ function createTextChatMessages(userName, historyMessages, currentApiUserMessage
 
 export async function generateImage(prompt, logContext = {}) {
   const selectedModel = "gptimage";
-
   logInfo("ai_call", {
     ...logContext,
     task: "image_generation",
@@ -511,6 +490,7 @@ export async function generateImage(prompt, logContext = {}) {
   try {
     response = await fetch(url, {
       headers: {
+        Authorization: `Bearer ${process.env.POLLINATIONS_API_KEY}`
       }
     });
   } catch (err) {
@@ -559,7 +539,6 @@ function normalizeIntentResult(content, userPrompt) {
       : tool === "search_logs"
         ? "log_search"
         : tool;
-
   return {
     type,
     tool,
@@ -576,7 +555,7 @@ export async function matchServerMember({ guildName, targetText, candidates, log
   logInfo("ai_call", {
     ...logContext,
     task: "member_matching",
-    model: DEEPSEEK_CHAT_MODEL,
+    model: "meta/llama-3.1-8b-instruct",
     targetText,
     candidateCount: candidates.length,
   });
@@ -588,8 +567,8 @@ export async function matchServerMember({ guildName, targetText, candidates, log
     tag: member.user.tag,
   }));
 
-  const completion = await deepseekClient.chat.completions.create({
-    model: DEEPSEEK_CHAT_MODEL,
+  const completion = await nvidiaClient.chat.completions.create({
+    model: "meta/llama-3.1-8b-instruct",
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
       {
@@ -599,7 +578,7 @@ export async function matchServerMember({ guildName, targetText, candidates, log
           "사용자가 입력한 대상 텍스트(targetText)를 보고, 후보 목록(candidates)에서 가장 적합한 멤버를 선택해.",
           "",
           "【매칭 규칙】",
-          "- 완전 일치뿐 아니라 약칭, 별명, 닉네임 줄임말, 발음 유사, 초성 등도 적극 고려해.",
+          "- 완전 일치뿐 아니라 약칭, 별명, 닉네임 줄임말, 발음 유사, 초성 등도 고려해.",
           "- 한국어 닉네임의 경우 첫 단어만 부르거나 특징적인 단어 하나만 말해도 매칭 가능.",
           "- 발음이 비슷하거나, 특징 단어를 포함하면 매칭 가능.",
           "- 후보 중 가장 가능성 높은 멤버 1명만 선택해. 확신할 수 없으면 memberId를 null로 반환해.",
@@ -692,4 +671,3 @@ export async function fetchChannelContext(message, limit = HISTORY_BATCH_SIZE) {
     return [];
   }
 }
-

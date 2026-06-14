@@ -915,7 +915,8 @@ export async function showModelSelectionUI(messageOrInteraction, isUpdate = fals
   const models = [
     { label: "DeepSeek Flash", value: "deepseek-ai/deepseek-v4-flash", style: ButtonStyle.Primary },
     { label: "DeepSeek Pro", value: "deepseek-ai/deepseek-v4-pro", style: ButtonStyle.Success },
-    { label: "Llama 3.3", value: "meta/llama-3.3-70b-instruct", style: ButtonStyle.Secondary }
+    { label: "Llama 3.3", value: "meta/llama-3.3-70b-instruct", style: ButtonStyle.Secondary },
+    { label: "Nemotron Chat", value: "nvidia/nemotron-3-nano-30b-a3b", style: ButtonStyle.Secondary }
   ];
 
   const row = new ActionRowBuilder().addComponents(
@@ -1250,6 +1251,7 @@ function getManagementHelpText() {
     `\`${PREFIX} 뮤트 @유저 on/off\`, \`${PREFIX} 청각차단 @유저 on/off\`, \`${PREFIX} 이동 @유저 <음성채널>\`, \`${PREFIX} 연결끊기 @유저\``,
     `\`${PREFIX} 닉네임 @유저 새닉네임\`, \`${PREFIX} 오토모드 키워드 단어1,단어2\`, \`${PREFIX} 감사로그 5\`, \`${PREFIX} 보안수준 높음\``,
     `\`${PREFIX} 역할부여 @유저 @역할\`, \`${PREFIX} 역할제거 @유저 @역할\`, \`${PREFIX} 권한추가 @역할 ManageMessages\`, \`${PREFIX} 권한제거 @역할 ManageMessages\``,
-    `\`${PREFIX} 모델변경 <모델명>\` (프리미엄 전용) - 모델 목록: deepseek-ai/deepseek-v4-flash, deepseek-ai/deepseek-v4-pro, meta/llama-3.3-70b-instruct`,
+    `\`${PREFIX} 모델변경 <모델명>\` (프리미엄 전용) - 모델 목록: deepseek-ai/deepseek-v4-flash, deepseek-ai/deepseek-v4-pro, meta/llama-3.3-70b-instruct, nvidia/nemotron-3-nano-30b-a3b`,
   ].join("\n");
 }
+

@@ -6,7 +6,7 @@ export const ADMIN_USER_ID = "1269575955626725390";
 export const DEEPSEEK_CHAT_MODEL = "deepseek-ai/deepseek-v4-flash";
 export const GEMINI_WEB_SEARCH_MODEL = "gemini-3.5-flash";
 export const GEMINI_SEARCH_MODEL = "gemini-2.5-flash";
-export const IMAGE_GENERATION_MODEL = "flux";
+export const IMAGE_GENERATION_MODEL = "gptimage";
 export const DISCORD_MESSAGE_LIMIT = 2000;
 export const SAFE_MESSAGE_LIMIT = 1900;
 export const MAX_STORED_HISTORY_MESSAGES = 20;
@@ -66,4 +66,3 @@ export function validateEnv() {
     process.exit(1);
   }
 }
-
