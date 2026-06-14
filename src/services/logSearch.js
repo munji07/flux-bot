@@ -323,7 +323,7 @@ function truncateText(value, maxLength) {
   return `${value.slice(0, maxLength)}...`;
 }
 
-function isPayloadTooLargeError(error) {
+export function isPayloadTooLargeError(error) {
   return error?.status === 413;
 }
 
