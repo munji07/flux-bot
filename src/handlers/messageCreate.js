@@ -154,46 +154,51 @@ export async function handleMessageCreate(client, message) {
 
   // 사용량 타입 결정
   const isImageRead = intent.type === "image_read" || attachedImageUrls.length > 0;
+  try {
   if (intent.type === "image_generation") {
-    usageType = "image_generations";
-  } else if (isImageRead) {
-    usageType = "image_readings";
-  } else if (
-    ["chat", "log_search"].includes(intent.type) ||
-    ["google_search", "bot_feature_info", "developer_diagnostics", "subscription"].includes(intent.tool)
-  ) {
-    usageType = "ai_calls";
-  }
+      usageType = "image_generations";
+    } else if (isImageRead) {
+      usageType = "image_readings";
+    } else if (
+      ["chat", "log_search"].includes(intent.type) ||
+      ["google_search", "bot_feature_info", "developer_diagnostics", "subscription"].includes(intent.tool)
+    ) {
+      usageType = "ai_calls";
+    }
 
-  // 사용량 타입이 설정되지 않았는데 AI 호출이 필요한 경우 기본값 설정
-  if (!usageType && intent.type === "chat") {
-    usageType = "ai_calls";
+    // 사용량 타입이 설정되지 않았는데 AI 호출이 필요한 경우 기본값 설정
+    if (!usageType && intent.type === "chat") {
+      usageType = "ai_calls";
+    }
+              } catch (error) {
+    logError("usage_type_determination", message.guildId, error);
+    usageType = "ai_calls"; // 에러 발생 시 안전하게 기본값 사용
   }
 
   // --- 도구 및 의도별 처리 시작 ---
 
   if (intent.tool === "subscription") {
-    try {
+              try {
       const handled = await handleSubscriptionToolCall(message, intent, loadingMessage);
       if (handled) return;
-    } catch (error) {
+              } catch (error) {
       logError("subscription_tool", message.guildId, error, {
-        guildName: message.guild.name,
-        channelId: message.channelId,
-        userId: message.author.id,
-        userTag: message.author.tag,
+                  guildName: message.guild.name,
+                  channelId: message.channelId,
+                  userId: message.author.id,
+                  userTag: message.author.tag,
         commandText: userPrompt,
-      });
+                });
       await loadingMessage.edit("등급 작업을 처리하는 중 문제가 생겼어요. 잠시 뒤 다시 시도해 주세요.");
-      return;
-    }
-  }
+              return;
+            }
+          }
 
   if (intent.tool === "pronunciation") {
     try {
       const text = String(intent.arguments?.text || userPrompt).trim();
       await loadingMessage.edit(getPronunciationReply(`발음 ${text}`));
-    } catch (error) {
+  } catch (error) {
       const errorMessage = error instanceof UserFacingError ? error.message : "발음 변환 중 문제가 생겼어요.";
       await loadingMessage.edit(errorMessage);
     }
@@ -201,7 +206,7 @@ export async function handleMessageCreate(client, message) {
   }
 
   if (intent.tool === "google_search") {
-    try {
+  try {
       const query = String(intent.arguments?.query || userPrompt).trim();
 
       // 사용량 체크
@@ -218,10 +223,10 @@ export async function handleMessageCreate(client, message) {
       const searchResult = await handleGoogleSearch(query);
       if (searchResult) {
         await sendChunkedAnswer(message, loadingMessage, searchResult);
-    } else {
+        } else {
         await loadingMessage.edit("검색 결과가 없어요.");
-    }
-    } catch (error) {
+        }
+  } catch (error) {
       logError("google_search_tool", message.guildId, error, {
         guildName: message.guild.name,
         channelId: message.channelId,
@@ -353,12 +358,12 @@ export async function handleMessageCreate(client, message) {
     if (!success) {
       if (usageCheck.usedServerToken) {
         addServerImageToken(message.guildId, "image_generations");
-      } else {
+    } else {
         decrementUsage(message.author.id, "image_generations");
-      }
     }
-    return;
   }
+    return;
+}
 
   if (intent.type === "image_read" && attachedImageUrls.length === 0) {
     await loadingMessage.edit("이미지 판독을 원하시면 분석할 이미지를 함께 첨부해주세요.").catch(() => {});
