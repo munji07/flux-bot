@@ -19,9 +19,9 @@ const DEFAULT_SOURCE_FILES = [
 ];
 const ALLOWED_SOURCE_EXTENSIONS = new Set([".js", ".json", ".md"]);
 const BLOCKED_PATH_PARTS = new Set([".env", "node_modules", ".git", "logs", "data"]);
-const MAX_LOG_LINES_PER_FILE = 80;
-const MAX_SOURCE_CHARS_PER_FILE = 7000;
-const MAX_TOTAL_SOURCE_CHARS = 24000;
+const MAX_LOG_LINES_PER_FILE = 25;
+const MAX_SOURCE_CHARS_PER_FILE = 1200;
+const MAX_TOTAL_SOURCE_CHARS = 5000;
 const MAX_DISCORD_EDIT_CHARS = 1900;
 
 export async function handleDeveloperDiagnosticsRequest(message, intent, loadingMessage) {
