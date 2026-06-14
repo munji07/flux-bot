@@ -165,6 +165,11 @@ export async function handleMessageCreate(client, message) {
     usageType = "ai_calls";
   }
 
+  // 사용량 타입이 설정되지 않았는데 AI 호출이 필요한 경우 기본값 설정
+  if (!usageType && intent.type === "chat") {
+    usageType = "ai_calls";
+  }
+
   // --- 도구 및 의도별 처리 시작 ---
 
   if (intent.tool === "subscription") {

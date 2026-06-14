@@ -1,4 +1,10 @@
 import {
+  ActionRowBuilder,
+  StringSelectMenuBuilder,
+  StringSelectMenuOptionBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ComponentType,
   AutoModerationActionType,
   AutoModerationRuleEventType,
   AutoModerationRuleTriggerType,
@@ -12,6 +18,8 @@ import { logError, logInfo } from "../logger.js";
 import { extractDiscordId, normalizeCommand, splitArgs } from "../utils/command.js";
 import { getDisplayName } from "../utils/message.js";
 import { matchServerMember } from "../services/ai.js";
+import { db } from "../services/database.js";
+import { updateUserSubscription, TIER_LIMITS } from "../services/subscription.js";
 
 const CONFIRMATION_TIMEOUT_MS = 30_000;
 const DANGEROUS_COMMANDS = new Set([
@@ -101,6 +109,8 @@ const COMMANDS = {
   removeRole: "removeRole",
   addRolePermission: "addRolePermission",
   removeRolePermission: "removeRolePermission",
+  memoryReset: "memoryReset",
+  adminPanel: "adminPanel",
 };
 
 const COMMAND_ALIASES = {
@@ -174,6 +184,8 @@ const COMMAND_ALIASES = {
   권한제거: COMMANDS.removeRolePermission,
   removepermission: COMMANDS.removeRolePermission,
   removerolepermission: COMMANDS.removeRolePermission,
+  메모리초기화: COMMANDS.memoryReset,
+  어드민: COMMANDS.adminPanel,
 };
 
 export async function handleManagementCommand(message, userPrompt, loadingMessage) {
@@ -452,6 +464,12 @@ async function executeCommand(message, command, args, userPrompt, loadingMessage
       break;
     case COMMANDS.removeRolePermission:
       await rolePermissionCommand(message, args, "remove", loadingMessage);
+      break;
+    case COMMANDS.memoryReset:
+      await memoryResetCommand(message, args, loadingMessage);
+      break;
+    case COMMANDS.adminPanel:
+      await adminPanelCommand(message, args, loadingMessage);
       break;
     default:
       throw new UserFacingError("알 수 없는 관리 명령이에요.");
@@ -883,6 +901,67 @@ async function rolePermissionCommand(message, args, action, loadingMessage) {
   await loadingMessage.edit(`${role.name} 역할에서 ${args[1]} 권한을 제거했어요.`);
 }
 
+async function memoryResetCommand(message, args, loadingMessage) {
+  if (message.author.id !== ADMIN_USER_ID) {
+    throw new UserFacingError("최고 관리자만 사용할 수 있습니다.");
+  }
+  const userId = extractDiscordId(args[0]);
+  if (!userId) {
+    throw new UserFacingError("초기화할 유저 ID를 입력해주세요.");
+  }
+
+  db.prepare("DELETE FROM conversation_messages WHERE user_id = ?").run(userId);
+  await loadingMessage.edit(`<@${userId}>님의 메모리가 초기화되었습니다.`);
+}
+
+async function adminPanelCommand(message, args, loadingMessage) {
+  if (message.author.id !== ADMIN_USER_ID) {
+    throw new UserFacingError("최고 관리자만 사용할 수 있습니다.");
+  }
+
+  const userId = extractDiscordId(args[0]);
+  if (!userId) {
+    throw new UserFacingError("대상 유저 ID를 입력해주세요.");
+  }
+
+  const select = new StringSelectMenuBuilder()
+    .setCustomId("admin_tier_select")
+    .setPlaceholder("등급 선택...")
+    .addOptions(
+      Object.entries(TIER_LIMITS).map(([key, tier]) =>
+        new StringSelectMenuOptionBuilder().setLabel(tier.name).setValue(key)
+      )
+    );
+
+  const row = new ActionRowBuilder().addComponents(select);
+
+  const response = await loadingMessage.edit({
+    content: `<@${userId}>님의 등급을 선택해주세요.`,
+    components: [row],
+  });
+
+  try {
+    const collector = response.createMessageComponentCollector({
+      componentType: ComponentType.StringSelect,
+      time: 60000,
+    });
+
+    collector.on("collect", async (i) => {
+      if (i.user.id !== message.author.id) {
+        return i.reply({ content: "관리자만 사용할 수 있습니다.", ephemeral: true });
+      }
+
+      const tier = i.values[0];
+      updateUserSubscription(userId, tier);
+      await i.update({
+        content: `<@${userId}>님의 등급이 ${TIER_LIMITS[tier].name}(으)로 변경되었습니다.`,
+        components: [],
+      });
+    });
+  } catch (e) {
+    await loadingMessage.edit({ content: "시간이 초과되었습니다.", components: [] });
+  }
+}
 async function resolveMember(message, token, missingMessage) {
   const id = extractDiscordId(token);
   if (id) {
@@ -945,9 +1024,9 @@ async function findBestMemberMatch(message, normalizedToken) {
         getNameSimilarity(normalizedToken, normalizeName(member.user.tag));
       if (score > 0) {
         candidates.push({ member, score });
-      }
     }
   }
+}
 
   const best = candidates
     .sort((a, b) => b.score - a.score)
@@ -976,8 +1055,8 @@ async function findAiMemberMatch(message, token, normalizedToken) {
   return (
     message.guild.members.cache.get(match.memberId) ??
     (await message.guild.members.fetch(match.memberId).catch(() => null))
-  );
-}
+      );
+    }
 
 async function gatherAIMemberCandidates(message, token, normalizedToken) {
   const candidateById = new Map();
@@ -1200,5 +1279,7 @@ function getManagementHelpText() {
     `\`${PREFIX} 뮤트 @유저 on/off\`, \`${PREFIX} 청각차단 @유저 on/off\`, \`${PREFIX} 이동 @유저 <음성채널>\`, \`${PREFIX} 연결끊기 @유저\``,
     `\`${PREFIX} 닉네임 @유저 새닉네임\`, \`${PREFIX} 오토모드 키워드 단어1,단어2\`, \`${PREFIX} 감사로그 5\`, \`${PREFIX} 보안수준 높음\``,
     `\`${PREFIX} 역할부여 @유저 @역할\`, \`${PREFIX} 역할제거 @유저 @역할\`, \`${PREFIX} 권한추가 @역할 ManageMessages\`, \`${PREFIX} 권한제거 @역할 ManageMessages\``,
+    `\`${PREFIX} 메모리초기화 <유저ID>\`, \`${PREFIX} 어드민 <유저ID> <등급>\``,
   ].join("\n");
 }
+

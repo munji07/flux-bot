@@ -40,6 +40,12 @@ export async function handleVideoAnalysis(message, userPrompt) {
       guildName: message.guild.name
     });
 
+    logInfo("video_analysis_success", {
+      guildId: message.guildId,
+      userId: message.author.id,
+      userName,
+    });
+
     await msg.edit(response.choices[0].message.content);
   } catch (error) {
     decrementUsage(message.author.id, "video_analysis");
