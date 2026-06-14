@@ -1,4 +1,4 @@
-import { ADMIN_USER_ID, PREFIX, SAFE_MESSAGE_LIMIT, HISTORY_BATCH_SIZE } from "../config.js";
+import { ADMIN_USER_ID, PREFIX, SAFE_MESSAGE_LIMIT, HISTORY_BATCH_SIZE, GEMINI_SEARCH_MODEL } from "../config.js";
 import { UserFacingError } from "../errors.js";
 import { handleManagementToolCall } from "../commands/management.js";
 import { handleServerImageTokenPurchaseCommand, handleSubscriptionToolCall, handleSubscriptionCommand } from "../commands/subscription.js";
@@ -211,9 +211,33 @@ export async function handleMessageCreate(client, message) {
         return;
       }
 
+      // AI 호출 로그 기록 (콘솔 및 파일 로그용)
+      logInfo("ai_call", {
+        guildId: message.guildId,
+        guildName: message.guild.name,
+        channelId: message.channelId,
+        userId: message.author.id,
+        userName,
+        userTag: message.author.tag,
+        commandText: userPrompt,
+        task: "google_search",
+        model: GEMINI_SEARCH_MODEL,
+      });
+
       const searchResult = await handleGoogleSearch(query);
       if (searchResult) {
-        await sendChunkedAnswer(message, loadingMessage, searchResult);
+        const answerWithFooter = `${searchResult}\n\n-# 🤖 모델: ${GEMINI_SEARCH_MODEL}`;
+        await sendChunkedAnswer(message, loadingMessage, answerWithFooter);
+
+        // 결과 전송 로그 기록
+        logInfo("answer_sent", {
+          guildId: message.guildId,
+          guildName: message.guild.name,
+          channelId: message.channelId,
+          userId: message.author.id,
+          userName,
+          answerLength: searchResult.length,
+        });
         } else {
         await loadingMessage.edit("검색 결과가 없어요.");
         }

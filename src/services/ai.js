@@ -189,6 +189,7 @@ const INTENT_ROUTER_PROMPT = [
   `5. 'search_logs' for admin history checks (Owner ID: ${ADMIN_USER_ID}).`,
   "6. 'video_analysis' only if video file attached.",
   "7. 'image_read' only if image file attached and user asks for analysis.",
+  "8. 'google_search' if the user's query requires fresh or external knowledge (e.g., current events, weather, prices, news, real-time data).",
 ].join("\n");
 
 export async function classifyRequestIntent({ userPrompt, hasImageAttachment, hasVideoAttachment, logContext = {} }) {
