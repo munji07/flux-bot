@@ -198,6 +198,13 @@ const INTENT_ROUTER_PROMPT = [
 ].join("\n");
 
 export async function classifyRequestIntent({ userPrompt, hasImageAttachment, hasVideoAttachment, logContext = {} }) {
+  // --- 최적화: 간단한 채팅은 AI 호출 없이 즉시 반환 ---
+  const isSimpleChat = !hasImageAttachment && !hasVideoAttachment && userPrompt.trim().length < 15;
+  if (isSimpleChat) {
+    return { type: "chat", tool: "chat", arguments: {}, raw: "quick_chat" };
+  }
+  // ---------------------------------------------
+
   logInfo("ai_call", {
     ...logContext,
     task: "intent_classification",
