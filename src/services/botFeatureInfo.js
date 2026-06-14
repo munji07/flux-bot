@@ -233,6 +233,7 @@ async function createBotFeatureAnswer({ query, requesterName, relevantFiles, sou
           "Do not mention where information was found internally.",
           "If source and catalog disagree, trust the source snippet.",
           "Answer in Korean, concise and practical.",
+          "If the provided source snippets do not contain information about the user's query, honestly state that you don't have information on that specific feature.",
         ].join('\n')
       },
       {
