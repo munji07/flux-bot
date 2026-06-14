@@ -184,12 +184,13 @@ const INTENT_ROUTER_PROMPT = [
   "Rules:",
   "1. Infer intent from meaning, not keywords.",
   "2. If uncertain, default to 'chat'.",
-  "3. 'generate_image' for any art/draw request.",
+  "3. 'generate_image' is strictly for visual art, drawings, or pictures. DO NOT use for writing text, stories, or novels.",
   "4. 'run_management' for moderation/server tasks.",
   `5. 'search_logs' for admin history checks (Owner ID: ${ADMIN_USER_ID}).`,
   "6. 'video_analysis' only if video file attached.",
   "7. 'image_read' only if image file attached and user asks for analysis.",
   "8. 'google_search' if the user's query requires fresh or external knowledge (e.g., current events, weather, prices, news, real-time data).",
+  "9. Creative writing requests (stories, novels, poems, code) must ALWAYS be classified as 'chat'.",
 ].join("\n");
 
 export async function classifyRequestIntent({ userPrompt, hasImageAttachment, hasVideoAttachment, logContext = {} }) {
