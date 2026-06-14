@@ -3,7 +3,7 @@ import { GatewayIntentBits } from "discord.js";
 
 export const PREFIX = "!먼지야";
 export const ADMIN_USER_ID = "1269575955626725390";
-export const HF_CHAT_MODEL = "deepseek-ai/DeepSeek-R1";
+export const DEEPSEEK_CHAT_MODEL = "deepseek-ai/deepseek-v4-flash";
 export const GROQ_CHAT_MODEL = "qwen/qwen3-32B";
 export const GEMINI_CHAT_MODEL = "gemini-3.1-flash-lite";
 export const GEMINI_WEB_SEARCH_MODEL = "gemini-3.5-flash";
@@ -14,7 +14,7 @@ export const HF_BASE_URL = "https://router.huggingface.co/v1";
 export const DISCORD_MESSAGE_LIMIT = 2000;
 export const SAFE_MESSAGE_LIMIT = 1900;
 export const MAX_STORED_HISTORY_MESSAGES = 20;
-export const HISTORY_BATCH_SIZE = 5;
+export const HISTORY_BATCH_SIZE = 10;
 export const MAX_HISTORY_CONTENT_LENGTH = 800;
 
 export const CLIENT_INTENTS = [
@@ -56,10 +56,12 @@ export const SYSTEM_PROMPT = `
 5. 대화 히스토리
 - 이전 대화 히스토리가 함께 제공되면 자연스럽게 참고해.
 - 다만 현재 유저의 최신 질문에 가장 집중해서 답변해.
+- 히스토리에 여러 명의 대화가 포함되어 있을 경우(예: [이름]: 내용), 누가 어떤 말을 했는지 파악하여 "아까 OO님이 말씀하신 것처럼"과 같이 맥락에 맞는 답변을 해줘.
+- 만약 유저가 "아까 누가 그랬어?" 혹은 "방금 무슨 이야기 했어?"라고 물으면 제공된 히스토리를 바탕으로 친절하게 알려줘.
 `.trim();
 
 export function validateEnv() {
-  const requiredEnv = ["DISCORD_TOKEN", "HF_TOKEN", "GROQ_API_KEY", "GEMINI_API_KEY", "POLLINATIONS_API_KEY"];
+  const requiredEnv = ["DISCORD_TOKEN", "HF_TOKEN", "GROQ_API_KEY", "GEMINI_API_KEY", "NVIDIA_API_KEY"];
   const missingEnv = requiredEnv.filter((key) => !process.env[key]);
 
   if (missingEnv.length > 0) {
@@ -67,3 +69,4 @@ export function validateEnv() {
     process.exit(1);
   }
 }
+

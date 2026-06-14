@@ -7,18 +7,21 @@ export const TIER_LIMITS = {
     ai_calls: 10,
     image_generations: 3,
     image_readings: 5,
+    video_analysis: 0,
   },
   basic: {
     name: "Basic",
     ai_calls: 30,
     image_generations: 6,
     image_readings: 10,
+    video_analysis: 0,
   },
   premium: {
     name: "Premium",
     ai_calls: Infinity, // 무제한
     image_generations: 15,
     image_readings: 30,
+    video_analysis: 3,
   },
 };
 
@@ -100,13 +103,13 @@ export function getDailyUsage(userId) {
   const todayStr = getKstDateString();
   
   const row = db.prepare(`
-    SELECT ai_calls, image_generations, image_readings 
+    SELECT ai_calls, image_generations, image_readings, video_analysis
     FROM user_daily_usage 
     WHERE user_id = ? AND usage_date = ?
   `).get(userId, todayStr);
   
   if (!row) {
-    return { ai_calls: 0, image_generations: 0, image_readings: 0 };
+    return { ai_calls: 0, image_generations: 0, image_readings: 0, video_analysis: 0 };
   }
   
   return row;
@@ -115,7 +118,7 @@ export function getDailyUsage(userId) {
 /**
  * 사용량을 체크하고, 한도를 초과하지 않았다면 사용량을 1 증가시킵니다.
  * @param {string} userId 
- * @param {'ai_calls' | 'image_generations' | 'image_readings'} type 
+ * @param {'ai_calls' | 'image_generations' | 'image_readings' | 'video_analysis'} type 
  * @returns {{allowed: boolean, current: number, limit: number, tier: string}}
  */
 export function checkAndIncrementUsage(userId, type, guildId = null) {
@@ -124,19 +127,19 @@ export function checkAndIncrementUsage(userId, type, guildId = null) {
   const todayStr = getKstDateString();
 
   // SQL Injection 방지를 위한 컬럼 이름 검증
-  const validTypes = ['ai_calls', 'image_generations', 'image_readings'];
+  const validTypes = ['ai_calls', 'image_generations', 'image_readings', 'video_analysis'];
   if (!validTypes.includes(type)) {
     throw new Error(`Invalid usage type: ${type}`);
   }
   
   // 오늘 날짜의 레코드가 없는 경우 먼저 생성
   db.prepare(`
-    INSERT OR IGNORE INTO user_daily_usage (user_id, usage_date, ai_calls, image_generations, image_readings)
-    VALUES (?, ?, 0, 0, 0)
+    INSERT OR IGNORE INTO user_daily_usage (user_id, usage_date, ai_calls, image_generations, image_readings, video_analysis)
+    VALUES (?, ?, 0, 0, 0, 0)
   `).run(userId, todayStr);
   
   const usage = db.prepare(`
-    SELECT ai_calls, image_generations, image_readings 
+    SELECT ai_calls, image_generations, image_readings, video_analysis 
     FROM user_daily_usage 
     WHERE user_id = ? AND usage_date = ?
   `).get(userId, todayStr);
@@ -163,10 +166,11 @@ export function checkAndIncrementUsage(userId, type, guildId = null) {
     };
   }
   
-  // 사용량 1 증가
+  const column = type;
+  
   db.prepare(`
     UPDATE user_daily_usage
-    SET ${type === 'ai_calls' ? 'ai_calls' : type === 'image_generations' ? 'image_generations' : 'image_readings'} = ${type === 'ai_calls' ? 'ai_calls' : type === 'image_generations' ? 'image_generations' : 'image_readings'} + 1
+    SET ${column} = ${column} + 1
     WHERE user_id = ? AND usage_date = ?
   `).run(userId, todayStr);
   
@@ -182,15 +186,15 @@ export function checkAndIncrementUsage(userId, type, guildId = null) {
 /**
  * 사용량을 1 감소시킵니다. (오류 발생 시 롤백용)
  * @param {string} userId 
- * @param {'ai_calls' | 'image_generations' | 'image_readings'} type 
+ * @param {'ai_calls' | 'image_generations' | 'image_readings' | 'video_analysis'} type 
  */
 export function decrementUsage(userId, type) {
   const todayStr = getKstDateString();
 
-  const validTypes = ['ai_calls', 'image_generations', 'image_readings'];
+  const validTypes = ['ai_calls', 'image_generations', 'image_readings', 'video_analysis'];
   if (!validTypes.includes(type)) return;
 
-  const column = type === 'ai_calls' ? 'ai_calls' : type === 'image_generations' ? 'image_generations' : 'image_readings';
+  const column = type;
   
   db.prepare(`
     UPDATE user_daily_usage
@@ -201,20 +205,20 @@ export function decrementUsage(userId, type) {
 
 export function getServerImageTokens(guildId) {
   const row = db.prepare(`
-    SELECT image_generations, image_readings
+    SELECT image_generations, image_readings, video_analysis
     FROM server_image_tokens
     WHERE guild_id = ?
   `).get(guildId);
 
   if (!row) {
-    return { image_generations: 0, image_readings: 0 };
+    return { image_generations: 0, image_readings: 0, video_analysis: 0 };
   }
 
   return row;
 }
 
 export function addServerImageToken(guildId, type, amount = 1) {
-  if (!["image_generations", "image_readings"].includes(type)) {
+  if (!["image_generations", "image_readings", "video_analysis"].includes(type)) {
     throw new Error(`Unsupported server image token type: ${type}`);
   }
 
@@ -231,7 +235,7 @@ export function addServerImageToken(guildId, type, amount = 1) {
 }
 
 export function consumeServerImageToken(guildId, type) {
-  if (!["image_generations", "image_readings"].includes(type)) {
+  if (!["image_generations", "image_readings", "video_analysis"].includes(type)) {
     return false;
   }
 
@@ -244,3 +248,4 @@ export function consumeServerImageToken(guildId, type) {
 
   return result.changes > 0;
 }
+

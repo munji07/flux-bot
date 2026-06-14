@@ -46,6 +46,7 @@ db.exec(`
     ai_calls INTEGER NOT NULL DEFAULT 0,
     image_generations INTEGER NOT NULL DEFAULT 0,
     image_readings INTEGER NOT NULL DEFAULT 0,
+    video_analysis INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (user_id, usage_date)
   );
 

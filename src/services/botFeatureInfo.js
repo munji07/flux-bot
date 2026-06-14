@@ -27,14 +27,14 @@ const FEATURE_FILES = [
   {
     path: "src/commands/subscription.js",
     area: "구독과 토큰 구매 명령",
-    keywords: ["구독", "등급", "토큰", "구매", "입금", "서버 이미지", "검토", "생성"],
-    summary: "등급 구매, 서버 이미지 검토/생성 토큰 구매 안내와 입금완료 버튼을 제공합니다.",
+    keywords: ["구독", "등급", "토큰", "구매", "입금", "서버 이미지", "검토", "생성", "비디오 판독"],
+    summary: "등급 구매, 서버 이미지 검토/생성/비디오 판독 토큰 구매 안내와 입금완료 버튼을 제공합니다.",
   },
   {
     path: "src/services/subscription.js",
     area: "구독과 토큰 데이터",
-    keywords: ["구독", "등급", "토큰", "제한", "사용량", "소모", "추가", "서버 이미지"],
-    summary: "사용량 제한, 구독 등급, 서버 이미지 토큰 조회/추가/소모를 처리합니다.",
+    keywords: ["구독", "등급", "토큰", "제한", "사용량", "소모", "추가", "서버 이미지", "비디오 판독"],
+    summary: "사용량 제한, 구독 등급, 서버 이미지/비디오 판독 토큰 조회/추가/소모를 처리합니다.",
   },
   {
     path: "src/handlers/interactionCreate.js",
@@ -124,6 +124,7 @@ export function getGeneralHelpText(prefix) {
     "**💳 등급 및 토큰**",
     `- \`${prefix} 등급\` - 내 사용량과 등급 만료일을 확인합니다.`,
     `- \`${prefix} 등급 구매\` - 더 많은 사용량을 위해 등급을 업그레이드합니다.`,
+    `- \`${prefix} 서버 이미지/비디오 토큰 구매\` - 서버 전용 토큰을 구매합니다.`,
     "",
     "**🛡️ 서버 관리 (관리자 권한 필요)**",
     `- \`${prefix} 관리 도움말\` - 서버 관리 명령어 목록을 확인합니다.`,
@@ -266,3 +267,4 @@ function truncate(value, maxLength) {
   if (text.length <= maxLength) return text;
   return `${text.slice(0, maxLength)}...`;
 }
+

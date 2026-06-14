@@ -1,4 +1,4 @@
-import { ADMIN_USER_ID, PREFIX, SAFE_MESSAGE_LIMIT } from "../config.js";
+import { ADMIN_USER_ID, PREFIX, SAFE_MESSAGE_LIMIT, HISTORY_BATCH_SIZE } from "../config.js";
 import { UserFacingError } from "../errors.js";
 import { handleManagementToolCall } from "../commands/management.js";
 import { handleServerImageTokenPurchaseCommand, handleSubscriptionToolCall, handleSubscriptionCommand } from "../commands/subscription.js";
@@ -8,11 +8,13 @@ import { handleDeveloperDiagnosticsRequest } from "../services/developerDiagnost
 import { handleLogSearchRequest, isPayloadTooLargeError } from "../services/logSearch.js";
 import { addServerImageToken, checkAndIncrementUsage, decrementUsage, TIER_LIMITS } from "../services/subscription.js";
 import { handleGoogleSearch } from "./googleSearch.js";
+import { handleVideoAnalysis } from "./video.js";
 import {
   classifyRequestIntent,
   createApiUserMessage,
   createChatCompletion,
   createChatCompletionStream,
+  fetchChannelContext,
   stripReasoningTags,
 } from "../services/ai.js";
 import {
@@ -38,6 +40,12 @@ export async function handleMessageCreate(client, message) {
   if (!message.content.startsWith(PREFIX)) return;
 
   const userPrompt = message.content.slice(PREFIX.length).trim();
+    const attachedImageUrls = getImageAttachmentUrls(message);
+  const videoAttachment = message.attachments.find(a => a.contentType?.startsWith('video/'));
+
+  if (videoAttachment) {
+    return await handleVideoAnalysis(message, userPrompt);
+  }
 
   if (!userPrompt) {
     await message.reply(`질문을 함께 입력해주세요. 예: \`${PREFIX} 오늘 저녁 메뉴 추천해줘\``);
@@ -50,24 +58,22 @@ export async function handleMessageCreate(client, message) {
   }
 
   activeUsers.add(message.author.id);
-
   try {
     let usageCheck = null;
     let usageType = null;
     let loadingMessage = await message.reply("-# <a:loading:1495336917326368829> DUST봇이 요청을 확인하고 있어요...");
-    const attachedImageUrls = getImageAttachmentUrls(message);
     const userName = getDisplayName(message);
     let intent;
 
   if (await handleServerImageTokenPurchaseCommand(message, userPrompt, loadingMessage)) {
-    return;
-  }
+      return;
+    }
 
   // "도움말"과 정확히 일치하는 경우 AI를 거치지 않고 즉시 반환
   if (userPrompt === "도움말") {
     await loadingMessage.edit(getGeneralHelpText(PREFIX));
-    return;
-  }
+        return;
+      }
 
   // "등급" 관련 명령어도 즉시 반환
   if (["등급", "나의 등급", "나의등급", "등급 구매", "구매"].includes(userPrompt)) {
@@ -77,11 +83,11 @@ export async function handleMessageCreate(client, message) {
     }
   }
 
-  try {
+    try {
     intent = await classifyRequestIntent({
       userPrompt,
       hasImageAttachment: attachedImageUrls.length > 0,
-      logContext: {
+          logContext: {
         guildId: message.guildId,
         guildName: message.guild.name,
         channelId: message.channelId,
@@ -107,11 +113,11 @@ export async function handleMessageCreate(client, message) {
       };
       logInfo("intent_classification_fallback", {
         guildId: message.guildId,
-        guildName: message.guild.name,
-        channelId: message.channelId,
-        userId: message.author.id,
+          guildName: message.guild.name,
+          channelId: message.channelId,
+          userId: message.author.id,
         userName,
-      });
+        });
     } else {
       await loadingMessage.edit("요청 의도를 확인하는 중 문제가 발생했어요. 잠시 뒤 다시 시도해주세요.").catch(() => {});
       return;
@@ -119,10 +125,10 @@ export async function handleMessageCreate(client, message) {
   }
 
   if (["run_management", "confirm_management", "cancel_management"].includes(intent.tool)) {
-    try {
+  try {
       const handled = await handleManagementToolCall(message, intent, userPrompt, loadingMessage);
       if (handled) return;
-    } catch (error) {
+  } catch (error) {
       logError("management_tool", message.guildId, error, {
         guildName: message.guild.name,
         channelId: message.channelId,
@@ -135,7 +141,7 @@ export async function handleMessageCreate(client, message) {
         decrementUsage(message.author.id, "ai_calls");
         await loadingMessage.edit("진단하려는 로그나 소스 파일이 너무 큽니다. AI 분석을 위해 특정 서버 ID, 특정 파일 경로, 또는 더 좁은 시간 범위를 명시해서 다시 요청해 주세요.");
         return;
-      }
+  }
 
       const replyText =
         error instanceof UserFacingError
@@ -153,7 +159,7 @@ export async function handleMessageCreate(client, message) {
   } else if (isImageRead) {
     usageType = "image_readings";
   } else if (
-    ["chat", "log_search"].includes(intent.type) || 
+    ["chat", "log_search"].includes(intent.type) ||
     ["google_search", "bot_feature_info", "developer_diagnostics", "subscription"].includes(intent.tool)
   ) {
     usageType = "ai_calls";
@@ -192,7 +198,7 @@ export async function handleMessageCreate(client, message) {
   if (intent.tool === "google_search") {
     try {
       const query = String(intent.arguments?.query || userPrompt).trim();
-      
+
       // 사용량 체크
       usageCheck = checkAndIncrementUsage(message.author.id, "ai_calls", message.guildId);
       if (!usageCheck.allowed) {
@@ -207,9 +213,9 @@ export async function handleMessageCreate(client, message) {
       const searchResult = await handleGoogleSearch(query);
       if (searchResult) {
         await sendChunkedAnswer(message, loadingMessage, searchResult);
-      } else {
+    } else {
         await loadingMessage.edit("검색 결과가 없어요.");
-      }
+    }
     } catch (error) {
       logError("google_search_tool", message.guildId, error, {
         guildName: message.guild.name,
@@ -219,9 +225,9 @@ export async function handleMessageCreate(client, message) {
         commandText: userPrompt,
       });
       await loadingMessage.edit("검색 중 문제가 생겼어요.");
-    }
-    return;
   }
+    return;
+}
 
   if (intent.tool === "bot_feature_info") {
     try {
@@ -364,7 +370,7 @@ export async function handleMessageCreate(client, message) {
     const limitExceededMessage = `❌ **${usageTypeName} 한도 초과**\n` +
       `현재 ${message.author.username}님의 등급은 \`${limits.name}\`이며, 하루 ${usageTypeName} 제한량은 **${limitVal}**입니다.\n` +
       `오늘 제한량을 모두 소모하셨습니다. 내일 다시 시도하시거나, \`${PREFIX} 등급 구매\`를 통해 한도를 늘려보세요!`;
-    
+
     await loadingMessage.edit(limitExceededMessage).catch(() => {});
     return;
   }
@@ -373,9 +379,10 @@ export async function handleMessageCreate(client, message) {
   let currentStep = "command_detected";
 
   try {
-    const historyKey = getHistoryKey(message);
+    const historyKey = getHistoryKey(message); // 로깅 및 DB 저장을 위해 유지
     const historyNeeded = shouldUseConversationHistory(userPrompt);
-    const historyMessages = getConversationHistory(historyKey, historyNeeded);
+    // 채널의 최근 메시지 10개를 실시간으로 가져옵니다.
+    const historyMessages = await fetchChannelContext(message, HISTORY_BATCH_SIZE);
     const imageUrls = attachedImageUrls;
     const currentUserMessage = {
       role: "user",
@@ -746,3 +753,4 @@ async function sendStreamingAnswer(message, loadingMessage, stream) {
 
   return finalVisible;
 }
+

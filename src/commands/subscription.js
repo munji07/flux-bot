@@ -15,18 +15,25 @@ const SERVER_IMAGE_TOKEN_PRODUCTS = {
     price: 500,
     buttonLabel: "생성 토큰 입금완료",
   },
+  "서버 비디오 판독 토큰 구매": {
+    type: "video_analysis",
+    label: "서버 비디오 판독 토큰",
+    price: 1000,
+    buttonLabel: "판독 토큰 입금완료",
+  },
 };
 
 export async function handleServerImageTokenPurchaseCommand(message, userPrompt, loadingMessage = null) {
-  // "서버 이미지/이모지 생성/분석/검토 토큰 (수량) 구매" 형태를 인식
-  const regex = /^(서버 [이미모]지 (?:검토|분석|생성) 토큰)\s*(?:(\d+)개)?\s*구매$/;
+  // "서버 이미지/이모지 생성/분석/검토/비디오 판독 토큰 (수량) 구매" 형태를 인식
+  const regex = /^(서버 (?:이미지|이모지|비디오 판독) (?:검토|분석|생성|판독) 토큰)\s*(?:(\d+)개)?\s*구매$/;
   const match = userPrompt.trim().match(regex);
   if (!match) return false;
 
-  // 사용자 입력 키워드 정규화 (이모지 -> 이미지, 분석 -> 검토)
-  const normalizedType = match[1]
+  // 사용자 입력 키워드 정규화
+  let normalizedType = match[1]
     .replace("이모지", "이미지")
-    .replace("분석", "검토");
+    .replace("분석", "검토")
+    .replace("비디오 판독 검토", "비디오 판독");
 
   const product = SERVER_IMAGE_TOKEN_PRODUCTS[normalizedType + " 구매"];
   if (!product) return false;
@@ -61,6 +68,7 @@ export async function handleServerImageTokenPurchaseCommand(message, userPrompt,
     "**현재 서버 토큰**",
     `- 이미지 검토: ${tokens.image_readings}개`,
     `- 이미지 생성: ${tokens.image_generations}개`,
+    `- 비디오 판독: ${tokens.video_analysis}개`,
   ].join("\n");
 
   const row = new ActionRowBuilder().addComponents(
@@ -118,7 +126,8 @@ export async function handleSubscriptionToolCall(message, intent, loadingMessage
         { name: "━━━━━━━━━━━━━━━━━━━━", value: "**📊 오늘의 사용 현황**" },
         { name: "💬 AI 대화", value: `\`${usage.ai_calls}\` / ${aiCallLimit}`, inline: true },
         { name: "🎨 이미지 생성", value: `\`${usage.image_generations}\` / ${limits.image_generations}회`, inline: true },
-        { name: "🔍 이미지 분석", value: `\`${usage.image_readings}\` / ${limits.image_readings}회`, inline: true }
+        { name: "🔍 이미지 분석", value: `\`${usage.image_readings}\` / ${limits.image_readings}회`, inline: true },
+        { name: "🎬 비디오 판독", value: `\`${usage.video_analysis || 0}\` / ${limits.video_analysis}회`, inline: true }
       )
       .setFooter({ text: `💡 등급 변경이나 토큰 구매는 "${PREFIX} 등급 구매"를 입력하세요.` })
       .setTimestamp();
@@ -131,18 +140,26 @@ export async function handleSubscriptionToolCall(message, intent, loadingMessage
     let type = args.type || "tier";
     const userQuery = message.content.toLowerCase();
 
-    // 보정 로직: AI가 type을 잘못 뽑았더라도 텍스트에 '토큰'이 포함되어 있으면 분석/생성 토큰으로 전환
+    // 보정 로직: AI가 type을 잘못 뽑았더라도 텍스트에 '토큰'이 포함되어 있으면 분석/생성/판독 토큰으로 전환
     if (type === "tier" && (userQuery.includes("토큰") || userQuery.includes("token"))) {
       if (userQuery.includes("생성") || userQuery.includes("그림") || userQuery.includes("그리기")) {
         type = "image_generations";
       } else if (userQuery.includes("분석") || userQuery.includes("검토") || userQuery.includes("판독") || userQuery.includes("읽기")) {
-        type = "image_readings";
+        if (userQuery.includes("비디오")) {
+          type = "video_analysis";
+        } else {
+          type = "image_readings";
+        }
       }
     }
 
     // 1. 서버 이미지 토큰 구매 요청인 경우 (AI가 type을 분류했을 때)
-    if (type === "image_generations" || type === "image_readings") {
-      const productKey = type === "image_generations" ? "서버 이미지 생성 토큰 구매" : "서버 이미지 검토 토큰 구매";
+    if (type === "image_generations" || type === "image_readings" || type === "video_analysis") {
+      const productKey = type === "image_generations"
+        ? "서버 이미지 생성 토큰 구매"
+        : type === "image_readings"
+        ? "서버 이미지 검토 토큰 구매"
+        : "서버 비디오 판독 토큰 구매";
       const product = SERVER_IMAGE_TOKEN_PRODUCTS[productKey];
       
       // 수량(count) 처리: AI가 추출한 숫자를 우선 사용, 없으면 1
@@ -176,6 +193,7 @@ export async function handleSubscriptionToolCall(message, intent, loadingMessage
         "**현재 서버 토큰**",
         `- 이미지 검토: ${tokens.image_readings}개`,
         `- 이미지 생성: ${tokens.image_generations}개`,
+        `- 비디오 판독: ${tokens.video_analysis}개`,
       ].join("\n");
 
       const row = new ActionRowBuilder().addComponents(
@@ -294,7 +312,8 @@ export async function handleSubscriptionCommand(message, userPrompt, loadingMess
     replyText += `**📅 오늘 사용 현황 (남은 횟수 / 일일 제한)**\n`;
     replyText += `- 💬 **AI 호출 (텍스트 챗)**: ${usage.ai_calls} / ${aiCallLimit}\n`;
     replyText += `- 🎨 **이미지 생성**: ${usage.image_generations} / ${limits.image_generations}회\n`;
-    replyText += `- 🔍 **이미지 판독**: ${usage.image_readings} / ${limits.image_readings}회\n\n`;
+    replyText += `- 🔍 **이미지 판독**: ${usage.image_readings} / ${limits.image_readings}회\n`;
+    replyText += `- 🎬 **비디오 판독**: ${usage.video_analysis || 0} / ${limits.video_analysis}회\n\n`;
     replyText += `*※ 등급을 변경하려면 \`${PREFIX} 등급 구매\`를 입력해보세요.*`;
 
     await sendResponse(replyText);
@@ -329,6 +348,7 @@ export async function handleSubscriptionCommand(message, userPrompt, loadingMess
     dmContent += `2. **Premium 등급 (5,000원 / 30일)**\n`;
     dmContent += `   - 하루 이미지 생성 15회\n`;
     dmContent += `   - 하루 이미지 판독 30회\n`;
+    dmContent += `   - 하루 비디오 판독 3회\n`;
     dmContent += `   - 하루 AI 호출량 **무제한**\n\n`;
 
     dmContent += `### ⚠️ 중요: 입금자명 설정 안내\n`;
@@ -420,3 +440,4 @@ export async function handleSubscriptionCommand(message, userPrompt, loadingMess
 
   return false;
 }
+

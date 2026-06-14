@@ -1,27 +1,30 @@
 import { Groq } from "groq-sdk";
 import { OpenAI } from "openai";
 import {
-  HF_CHAT_MODEL,
+  DEEPSEEK_CHAT_MODEL,
   GROQ_CHAT_MODEL,
   GEMINI_CHAT_MODEL,
   GEMINI_WEB_SEARCH_MODEL,
-  HF_BASE_URL,
-  IMAGE_MODEL,
   ADMIN_USER_ID,
   SYSTEM_PROMPT,
+  HISTORY_BATCH_SIZE,
 } from "../config.js";
 import { logError, logInfo } from "../logger.js";
 import { createUserMessageContent } from "../utils/message.js";
-import { InferenceClient } from "@huggingface/inference";
+import { checkAndIncrementUsage } from "./subscription.js";
 
-const hfClient = new InferenceClient(process.env.HF_TOKEN);
 export const groqClient = new Groq({
   apiKey: process.env.GROQ_API_KEY,
 });
 
-export const aiClient = new OpenAI({
-  baseURL: HF_BASE_URL,
-  apiKey: process.env.HF_TOKEN,
+export const deepseekClient = new OpenAI({
+  baseURL: "https://integrate.api.nvidia.com/v1",
+  apiKey: process.env.NVIDIA_API_KEY,
+});
+
+export const nvidiaClient = new OpenAI({
+  baseURL: "https://integrate.api.nvidia.com/v1",
+  apiKey: process.env.NVIDIA_API_KEY,
 });
 
 export const geminiClient = new OpenAI({
@@ -29,15 +32,46 @@ export const geminiClient = new OpenAI({
   apiKey: process.env.GEMINI_API_KEY,
 });
 
+export async function createVideoAnalysis({ userId, videoUrl, prompt, userName, guildName }) {
+  // 사용량 체크는 이미 호출부(handleVideoAnalysis)에서 수행함
+  const messages = [
+    { role: "system", content: "당신은 영상 내용을 분석하는 AI입니다. 영상의 핵심 내용을 요약하고 질문에 답변하세요." },
+    { role: "system", content: `현재 유저 이름은 "${userName}"입니다.` },
+    { role: "system", content: `현재 서버 이름은 "${guildName}"입니다.` },
+    {
+      role: "user",
+      content: [
+        { type: "text", text: prompt },
+        {
+          type: "video_url",
+          video_url: { url: videoUrl },
+        },
+      ],
+    },
+  ];
+
+  return await nvidiaClient.chat.completions.create({
+    model: "nvidia/nemotron-nano-12b-v2-vl",
+    messages: messages,
+    max_completion_tokens: 4096,
+  });
+}
+
 function getClientForModel(model) {
+  if (model === "meta/llama-4-maverick-17b-128e-instruct") {
+    return nvidiaClient;
+  }
+  if (model === DEEPSEEK_CHAT_MODEL) {
+    return deepseekClient;
+  }
   if (model && model.startsWith("gemini-")) {
     return geminiClient;
   }
-  return aiClient;
+  return deepseekClient;
 }
 
 export function getChatModel(imageUrls) {
-  return imageUrls.length > 0 ? IMAGE_MODEL : HF_CHAT_MODEL;
+  return imageUrls.length > 0 ? "meta/llama-4-maverick-17b-128e-instruct" : DEEPSEEK_CHAT_MODEL;
 }
 
 export function getChatTask(imageUrls) {
@@ -46,12 +80,11 @@ export function getChatTask(imageUrls) {
 
 export function createApiUserMessage(userName, userPrompt, imageUrls) {
   const text = createUserMessageContent(userName, userPrompt, imageUrls);
-
-  if (imageUrls.length === 0) {
-    return {
-      role: "user",
+    if (imageUrls.length === 0) {
+  return {
+        role: "user",
       content: text,
-    };
+        };
   }
 
   return {
@@ -170,10 +203,10 @@ export async function classifyRequestIntent({ userPrompt, hasImageAttachment, lo
   logInfo("ai_call", {
     ...logContext,
     task: "intent_classification",
-    model: HF_CHAT_MODEL,
+    model: DEEPSEEK_CHAT_MODEL,
     hasImageAttachment,
     promptLength: userPrompt.length,
-  });
+    });
 
   const requestClassification = async (modelName) => {
     const client = getClientForModel(modelName);
@@ -202,7 +235,7 @@ export async function classifyRequestIntent({ userPrompt, hasImageAttachment, lo
   };
 
   try {
-    const content = await requestClassification(HF_CHAT_MODEL);
+    const content = await requestClassification(DEEPSEEK_CHAT_MODEL);
     return normalizeIntentResult(content, userPrompt);
   } catch (error) {
     logError("intent_classification_failed_trying_fallback", logContext.guildId, error, {
@@ -215,7 +248,7 @@ export async function classifyRequestIntent({ userPrompt, hasImageAttachment, lo
     } catch (fallbackError) {
       logError("intent_classification_fallback_failed", logContext.guildId, fallbackError, logContext);
       throw fallbackError;
-    }
+}
   }
 }
 
@@ -231,7 +264,6 @@ export async function createChatCompletion({
 }) {
   const model = getChatModel(imageUrls);
   const task = getChatTask(imageUrls);
-
   logInfo("ai_call", {
     ...logContext,
     task,
@@ -242,16 +274,19 @@ export async function createChatCompletion({
 
   const request = ({ model: requestModel }) => {
     const client = getClientForModel(requestModel);
-    const isGemini = requestModel.startsWith("gemini-");
     const options = {
       model: requestModel,
-      temperature: 0.6,
-      max_completion_tokens: 8192,
+      temperature: 1,
       top_p: 0.95,
+      max_completion_tokens: 16384,
       stream: false,
-      stop: null,
     };
-    if (!requestModel.includes("deepseek")) {
+
+    if (requestModel === DEEPSEEK_CHAT_MODEL) {
+        options.chat_template_kwargs = { "thinking": true, "reasoning_effort": "high" };
+    }
+
+    if (requestModel !== "meta/llama-4-maverick-17b-128e-instruct" && !requestModel.includes("deepseek")) {
       options.tools = AI_TOOLS;
     }
 
@@ -265,22 +300,13 @@ export async function createChatCompletion({
     return client.chat.completions.create({
       ...options,
       messages: [
-        {
-          role: "system",
-          content: SYSTEM_PROMPT,
-        },
-        {
-          role: "system",
-          content: `현재 응답해야 하는 유저 이름 변수 userName은 "${userName}"입니다. 답변에서 반드시 "${userName}"님이라고 불러주세요.`,
-        },
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "system", content: `현재 응답해야 하는 유저 이름 변수 userName은 "${userName}"입니다. 답변에서 반드시 "${userName}"님이라고 불러주세요.` },
         ...(guildName ? [{ role: "system", content: `현재 대화가 진행되는 서버의 이름은 "${guildName}"입니다.` }] : []),
         ...(guildId ? [{ role: "system", content: `현재 대화가 진행되는 서버의 ID는 "${guildId}"입니다.` }] : []),
         ...(serverContext ? [{ role: "system", content: serverContext }] : []),
         ...historyMessages,
-        {
-          role: currentApiUserMessage.role,
-          content: currentApiUserMessage.content,
-        },
+        { role: currentApiUserMessage.role, content: currentApiUserMessage.content },
       ],
     });
   };
@@ -288,18 +314,17 @@ export async function createChatCompletion({
   try {
     return await request({ model });
   } catch (error) {
-    if (imageUrls.length === 0 && model === HF_CHAT_MODEL) {
+    if (imageUrls.length === 0 && model === DEEPSEEK_CHAT_MODEL) {
       logError("chat_completion_fallback", logContext.guildId, error, {
         ...logContext,
         fallbackModel: GEMINI_CHAT_MODEL,
       });
-      
       return await request({ model: GEMINI_CHAT_MODEL });
     }
-
     throw error;
   }
 }
+
 export async function createChatCompletionStream({
   userName,
   historyMessages,
@@ -317,10 +342,8 @@ export async function createChatCompletionStream({
     historyMessageCount: historyMessages.length,
   });
 
-  // Groq 프리 티어 한도(6000토큰) 초과 방지를 위한 극단적 최적화
   const limitedHistory = historyMessages.slice(-1);
-  
-  // Groq 모델 호출 시에는 방대한 SYSTEM_PROMPT 대신 최소한의 페르소나만 전달
+
   const groqMessages = [
     { role: "system", content: "당신은 '먼지'라는 이름의 다정한 AI입니다. 한국어로 짧고 친절하게 답변하세요." },
     ...(guildName ? [{ role: "system", content: `서버: ${guildName} (${guildId})` }] : []),
@@ -332,8 +355,7 @@ export async function createChatCompletionStream({
   return groqClient.chat.completions.create({
     model: GROQ_CHAT_MODEL,
     messages: groqMessages,
-    temperature: 0.6,
-    max_completion_tokens: 1024, // 응답 길이를 제한하여 토큰 확보
+    max_completion_tokens: 1024,
     top_p: 0.95,
     stream: true,
   });
@@ -369,8 +391,8 @@ export async function shouldUseWebSearch({ userPrompt, logContext = {} }) {
         },
       ],
       temperature: 0,
-      max_completion_tokens: 32,
     });
+
 
     const content = completion.choices?.[0]?.message?.content?.trim() ?? "";
     const parsed = parseJsonObject(content);
@@ -475,13 +497,11 @@ export async function generateImage(prompt, logContext = {}) {
     model: selectedModel,
     promptLength: prompt.length,
   });
-
   const url = `https://gen.pollinations.ai/image/${encodeURIComponent(prompt)}?model=${encodeURIComponent(selectedModel)}&nologo=true&private=true`;
   let response;
   try {
     response = await fetch(url, {
       headers: {
-        "Authorization": `Bearer ${process.env.POLLINATIONS_API_KEY}`
       }
     });
   } catch (err) {
@@ -493,7 +513,7 @@ export async function generateImage(prompt, logContext = {}) {
       status: response?.status,
       statusText: response?.statusText,
     });
-    // Fallback to the free public tier without API key authorization
+
     response = await fetch(url);
   }
 
@@ -547,7 +567,7 @@ export async function matchServerMember({ guildName, targetText, candidates, log
   logInfo("ai_call", {
     ...logContext,
     task: "member_matching",
-    model: HF_CHAT_MODEL,
+    model: DEEPSEEK_CHAT_MODEL,
     targetText,
     candidateCount: candidates.length,
   });
@@ -559,13 +579,10 @@ export async function matchServerMember({ guildName, targetText, candidates, log
     tag: member.user.tag,
   }));
 
-  const completion = await aiClient.chat.completions.create({
-    model: HF_CHAT_MODEL,
+  const completion = await deepseekClient.chat.completions.create({
+    model: DEEPSEEK_CHAT_MODEL,
     messages: [
-      {
-        role: "system",
-        content: SYSTEM_PROMPT,
-      },
+      { role: "system", content: SYSTEM_PROMPT },
       {
         role: "system",
         content: [
@@ -599,27 +616,17 @@ export async function matchServerMember({ guildName, targetText, candidates, log
 
 function parseMemberMatchResult(content) {
   const parsed = parseJsonObject(content);
-  if (!parsed || typeof parsed.memberId !== "string") {
-    return { memberId: null };
-  }
-
-  return { memberId: parsed.memberId };
+  return parsed && typeof parsed.memberId === "string" ? { memberId: parsed.memberId } : { memberId: null };
 }
 
 function parseJsonObject(content) {
   try {
-    return JSON.parse(content);
-  } catch {
     const start = content.indexOf("{");
     const end = content.lastIndexOf("}");
-
     if (start < 0 || end <= start) return null;
-
-    try {
-      return JSON.parse(content.slice(start, end + 1));
+    return JSON.parse(content.substring(start, end + 1));
     } catch {
       return null;
-    }
   }
 }
 
@@ -629,7 +636,6 @@ export function stripReasoningTags(content) {
   while (true) {
     const lowerResult = result.toLowerCase();
     const start = lowerResult.indexOf("<think>");
-    if (start < 0) break;
 
     const end = lowerResult.indexOf("</think>", start + "<think>".length);
     if (end < 0) {
@@ -642,3 +648,39 @@ export function stripReasoningTags(content) {
 
   return result.trim();
 }
+
+export async function fetchChannelContext(message, limit = HISTORY_BATCH_SIZE) {
+  try {
+
+    const messages = await message.channel.messages.fetch({
+      limit: limit,
+      before: message.id,
+    });
+
+    return Array.from(messages.values())
+
+      .reverse()
+      .filter((msg) => {
+
+        if (msg.system || (!msg.content && msg.attachments.size === 0)) return false;
+        return true;
+      })
+      .map((msg) => {
+        const isBot = msg.author.id === message.client.user.id;
+        const authorName = msg.member?.displayName ?? msg.author.username;
+
+        return {
+          role: isBot ? "assistant" : "user",
+
+          content: isBot ? msg.content : `[${authorName}]: ${msg.content || "(이미지 또는 첨부파일)"}`,
+        };
+      });
+  } catch (error) {
+    logError("fetch_channel_context_failed", message.guildId, error, {
+      channelId: message.channelId,
+      userId: message.author.id,
+    });
+    return [];
+  }
+}
+
