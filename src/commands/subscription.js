@@ -132,7 +132,14 @@ export async function handleSubscriptionToolCall(message, intent, loadingMessage
       .setFooter({ text: `💡 등급 변경이나 토큰 구매는 "${PREFIX} 등급 구매"를 입력하세요.` })
       .setTimestamp();
 
-    await sendResponse({ content: null, embeds: [embed] });
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("open_model_selection")
+        .setLabel("모델 변경 (Premium)")
+        .setStyle(ButtonStyle.Secondary)
+    );
+
+    await sendResponse({ content: null, embeds: [embed], components: [row] });
     return true;
   }
 
@@ -316,7 +323,14 @@ export async function handleSubscriptionCommand(message, userPrompt, loadingMess
     replyText += `- 🎬 **비디오 판독**: ${usage.video_analysis || 0} / ${limits.video_analysis}회\n\n`;
     replyText += `*※ 등급을 변경하려면 \`${PREFIX} 등급 구매\`를 입력해보세요.*`;
 
-    await sendResponse(replyText);
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("open_model_selection")
+        .setLabel("모델 변경 (Premium)")
+        .setStyle(ButtonStyle.Secondary)
+    );
+
+    await sendResponse({ content: replyText, components: [row] });
     return true;
   }
 
@@ -440,4 +454,3 @@ export async function handleSubscriptionCommand(message, userPrompt, loadingMess
 
   return false;
 }
-

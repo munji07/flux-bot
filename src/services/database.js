@@ -61,5 +61,11 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS user_settings (
+    user_id TEXT PRIMARY KEY,
+    chat_model TEXT DEFAULT 'groq',
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
 `);
 

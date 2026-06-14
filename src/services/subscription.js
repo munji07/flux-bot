@@ -77,6 +77,10 @@ export function getUserSubscription(userId) {
   return { tier: row.tier, expires_at: row.expires_at };
 }
 
+export function getUserSubscriptionTier(userId) {
+  return getUserSubscription(userId).tier;
+}
+
 /**
  * 사용자의 등급을 수동으로 변경(부여)합니다. (개발자 어드민 기능)
  */

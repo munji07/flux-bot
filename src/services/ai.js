@@ -208,7 +208,7 @@ export async function classifyRequestIntent({ userPrompt, hasImageAttachment, ha
   logInfo("ai_call", {
     ...logContext,
     task: "intent_classification",
-    model: DEEPSEEK_CHAT_MODEL,
+    model: "meta/llama-3.1-8b-instruct",
     hasImageAttachment,
     hasVideoAttachment,
     promptLength: userPrompt.length,
@@ -218,7 +218,9 @@ export async function classifyRequestIntent({ userPrompt, hasImageAttachment, ha
     const client = getClientForModel(modelName);
     const completion = await client.chat.completions.create({
       model: modelName,
-      temperature: 0,
+      temperature: 0.2,
+      top_p: 0.7,
+      max_tokens: 1024,
     messages: [
       {
         role: "system",
@@ -243,7 +245,7 @@ export async function classifyRequestIntent({ userPrompt, hasImageAttachment, ha
         };
 
   try {
-    const content = await requestClassification(DEEPSEEK_CHAT_MODEL);
+    const content = await requestClassification("meta/llama-3.1-8b-instruct");
     return normalizeIntentResult(content, userPrompt);
   } catch (error) {
     logError("intent_classification_failed_trying_fallback", logContext.guildId, error, {
@@ -270,8 +272,9 @@ export async function createChatCompletion({
   serverContext = "",
   logContext = {},
 }) {
-  const model = getChatModel(imageUrls);
+  const model = "nvidia/nemotron-3-nano-30b-a3b";
   const task = getChatTask(imageUrls);
+
   logInfo("ai_call", {
     ...logContext,
     task,
@@ -280,36 +283,21 @@ export async function createChatCompletion({
     historyMessageCount: historyMessages.length,
   });
 
-  const request = ({ model: requestModel }) => {
-    const client = getClientForModel(requestModel);
+  const request = ({ requestModel }) => {
     const options = {
       model: requestModel,
-      temperature: 1,
+      temperature: 0.4, // 안정성을 위해 낮춤
       top_p: 0.95,
       max_completion_tokens: 16384,
       stream: false,
     };
 
-    if (requestModel === DEEPSEEK_CHAT_MODEL) {
-      options.chat_template_kwargs = { "thinking": true, "reasoning_effort": "high" };
-    }
-
-    if (requestModel !== "meta/llama-4-maverick-17b-128e-instruct" && !requestModel.includes("deepseek")) {
-      options.tools = AI_TOOLS;
-    }
-
     if (imageUrls.length === 0) {
-      return client.chat.completions.create({
+      return nvidiaClient.chat.completions.create({
         ...options,
-        messages: createTextChatMessages(userName, historyMessages, currentApiUserMessage, guildName, guildId, serverContext),
-      });
-    }
-
-    return client.chat.completions.create({
-      ...options,
       messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "system", content: `현재 응답해야 하는 유저 이름 변수 userName은 "${userName}"입니다. 답변에서 반드시 "${userName}"님이라고 불러주세요.` },
+          { role: "system", content: `${SYSTEM_PROMPT}\nSTRICT RULE: 반드시 오직 한국어로만 답변하십시오. 다른 언어나 알 수 없는 문자를 포함하지 마십시오.` },
+          { role: "system", content: `현재 응답해야 하는 유저 이름은 "${userName}"입니다. 답변에서 반드시 "${userName}"님이라고 불러주세요.` },
         ...(guildName ? [{ role: "system", content: `현재 대화가 진행되는 서버의 이름은 "${guildName}"입니다.` }] : []),
         ...(guildId ? [{ role: "system", content: `현재 대화가 진행되는 서버의 ID는 "${guildId}"입니다.` }] : []),
         ...(serverContext ? [{ role: "system", content: serverContext }] : []),
@@ -317,18 +305,28 @@ export async function createChatCompletion({
         { role: currentApiUserMessage.role, content: currentApiUserMessage.content },
       ],
     });
-  };
+    }
+  return nvidiaClient.chat.completions.create({
+      ...options,
+      messages: [
+        { role: "system", content: `${SYSTEM_PROMPT}\nSTRICT RULE: 반드시 오직 한국어로만 답변하십시오.` },
+        { role: "system", content: `현재 응답해야 하는 유저 이름은 "${userName}"입니다. 답변에서 반드시 "${userName}"님이라고 불러주세요.` },
+        ...(guildName ? [{ role: "system", content: `현재 대화가 진행되는 서버의 이름은 "${guildName}"입니다.` }] : []),
+        ...(guildId ? [{ role: "system", content: `현재 대화가 진행되는 서버의 ID는 "${guildId}"입니다.` }] : []),
+        ...(serverContext ? [{ role: "system", content: serverContext }] : []),
+    ...historyMessages,
+        { role: currentApiUserMessage.role, content: currentApiUserMessage.content },
+    ],
+  });
+        };
 
   try {
-    return await request({ model });
+    return await request({ requestModel: model });
   } catch (error) {
-    if (imageUrls.length === 0 && model === DEEPSEEK_CHAT_MODEL) {
-      logError("chat_completion_fallback", logContext.guildId, error, {
-        ...logContext,
-        fallbackModel: GEMINI_CHAT_MODEL,
-      });
-      return await request({ model: GEMINI_CHAT_MODEL });
-    }
+    logError("chat_completion_failed", logContext.guildId, error, {
+      ...logContext,
+      model,
+    });
     throw error;
   }
 }
@@ -342,32 +340,35 @@ export async function createChatCompletionStream({
   serverContext = "",
   logContext = {},
 }) {
+  const model = "nvidia/nemotron-3-nano-30b-a3b";
   logInfo("ai_call", {
     ...logContext,
     task: "chat_stream",
-    model: GROQ_CHAT_MODEL,
+    model: model,
     imageCount: 0,
     historyMessageCount: historyMessages.length,
   });
 
   const limitedHistory = historyMessages.slice(-1);
 
-  const groqMessages = [
-    { role: "system", content: "당신은 '먼지'라는 이름의 다정한 AI입니다. 한국어로 짧고 친절하게 답변하세요." },
+  const messages = [
+    { role: "system", content: "당신은 '먼지'라는 이름의 다정한 AI입니다. 반드시 한국어로만 답변하고, 다른 언어는 절대 사용하지 마세요." },
     ...(guildName ? [{ role: "system", content: `서버: ${guildName} (${guildId})` }] : []),
     ...(serverContext ? [{ role: "system", content: serverContext }] : []),
     ...limitedHistory,
     { role: currentApiUserMessage.role, content: String(currentApiUserMessage.content) }
   ];
 
-  return groqClient.chat.completions.create({
-    model: GROQ_CHAT_MODEL,
-    messages: groqMessages,
+  return nvidiaClient.chat.completions.create({
+    model: model,
+    messages: messages,
     max_completion_tokens: 1024,
+    temperature: 0.4, // 안정성을 위해 낮춤
     top_p: 0.95,
     stream: true,
   });
 }
+
 export async function shouldUseWebSearch({ userPrompt, logContext = {} }) {
   const prompt = userPrompt.trim();
   if (!prompt) return false;
@@ -418,22 +419,23 @@ export async function createLogSearchAnswer({
   requester,
   logContext = {},
 }) {
+  const model = "nvidia/nemotron-3-nano-30b-a3b";
   logInfo("ai_call", {
     ...logContext,
     task: "log_search_summary",
-    model: "qwen/qwen3-32b",
+    model: model,
     promptLength: userPrompt.length,
     logRecordCount: records.length,
   });
 
-  const completion = await groqClient.chat.completions.create({
-    model: "qwen/qwen3-32b",
+  const completion = await nvidiaClient.chat.completions.create({
+    model: model,
     messages: [
       {
         role: "system",
         content: [
           "당신은 관리자에게 Discord 봇 JSON 로그를 요약해 주는 도우미입니다.",
-          "한국어로 간결하고 자연스럽게 답변하세요.",
+          "반드시 한국어로만 간결하고 자연스럽게 답변하세요. 다른 언어는 절대 사용하지 마세요.",
           "STRICT RULE: 반드시 제공된 'records' 데이터에만 기반하여 답변하세요. 데이터에 없는 사건, 시간, 인물에 대해 절대 추측하거나 지어내지 마세요.",
           "각 기록에는 actor/action/target/object가 정규화된 cls 필드가 있습니다. 가능하면 원본 텍스트보다 cls 필드를 우선 사용하세요.",
           "사용자 질문과 관련된 기록만 선택하고, 관련 없는 기록은 무시하세요.",
@@ -454,7 +456,7 @@ export async function createLogSearchAnswer({
         }),
       },
     ],
-    temperature: 0.2,
+    temperature: 0.2, // 로그 분석은 낮은 온도 유지
     max_completion_tokens: 2048,
   });
 

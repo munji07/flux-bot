@@ -19,7 +19,7 @@ import { extractDiscordId, normalizeCommand, splitArgs } from "../utils/command.
 import { getDisplayName } from "../utils/message.js";
 import { matchServerMember } from "../services/ai.js";
 import { db } from "../services/database.js";
-import { updateUserSubscription, TIER_LIMITS } from "../services/subscription.js";
+import { updateUserSubscription, TIER_LIMITS, getUserSubscriptionTier } from "../services/subscription.js";
 
 const CONFIRMATION_TIMEOUT_MS = 30_000;
 const DANGEROUS_COMMANDS = new Set([
@@ -40,11 +40,11 @@ function getPendingConfirmationKey(message) {
 }
 
 function isConfirmTrigger(input) {
-  return ["확인", "ok", "예", "응", "ㅇㅇ"].includes(normalizeCommand(input));
+  return ["확인", "ok", "ㅇㅇ", "ㅇ", "응"].includes(normalizeCommand(input));
 }
 
 function isCancelTrigger(input) {
-  return ["취소", "cancel", "아니요", "아니"].includes(normalizeCommand(input));
+  return ["취소", "cancel", "아니", "ㄴㄴ"].includes(normalizeCommand(input));
 }
 
 function getConfirmationPrompt(command, args) {
@@ -109,6 +109,7 @@ const COMMANDS = {
   removeRole: "removeRole",
   addRolePermission: "addRolePermission",
   removeRolePermission: "removeRolePermission",
+  setModel: "setModel",
 };
 
 const COMMAND_ALIASES = {
@@ -182,6 +183,8 @@ const COMMAND_ALIASES = {
   권한제거: COMMANDS.removeRolePermission,
   removepermission: COMMANDS.removeRolePermission,
   removerolepermission: COMMANDS.removeRolePermission,
+  모델변경: COMMANDS.setModel,
+  모델설정: COMMANDS.setModel,
 };
 
 export async function handleManagementCommand(message, userPrompt, loadingMessage) {
@@ -460,6 +463,9 @@ async function executeCommand(message, command, args, userPrompt, loadingMessage
       break;
     case COMMANDS.removeRolePermission:
       await rolePermissionCommand(message, args, "remove", loadingMessage);
+      break;
+    case COMMANDS.setModel:
+      await setModelCommand(message, args, loadingMessage);
       break;
     default:
       throw new UserFacingError("알 수 없는 관리 명령이에요.");
@@ -891,6 +897,42 @@ async function rolePermissionCommand(message, args, action, loadingMessage) {
   await loadingMessage.edit(`${role.name} 역할에서 ${args[1]} 권한을 제거했어요.`);
 }
 
+async function setModelCommand(message, args, loadingMessage) {
+  await showModelSelectionUI(message);
+  if (loadingMessage) await loadingMessage.delete().catch(() => {});
+}
+
+export async function showModelSelectionUI(messageOrInteraction, isUpdate = false) {
+  const userId = messageOrInteraction.user?.id ?? messageOrInteraction.author?.id;
+  const tier = await getUserSubscriptionTier(userId);
+  
+  if (tier !== 'premium') {
+    const errorMsg = "❌ 모델 변경은 **Premium** 등급 유저만 사용할 수 있는 기능이에요.";
+    if (isUpdate) return messageOrInteraction.update({ content: errorMsg, components: [] });
+    return messageOrInteraction.reply({ content: errorMsg, ephemeral: true });
+  }
+
+  const models = [
+    { label: "DeepSeek Flash", value: "deepseek-ai/deepseek-v4-flash", style: ButtonStyle.Primary },
+    { label: "DeepSeek Pro", value: "deepseek-ai/deepseek-v4-pro", style: ButtonStyle.Success },
+    { label: "Llama 3.3", value: "meta/llama-3.3-70b-instruct", style: ButtonStyle.Secondary }
+  ];
+
+  const row = new ActionRowBuilder().addComponents(
+    models.map((m) => new ButtonBuilder().setCustomId(`set_model:${m.value}`).setLabel(m.label).setStyle(m.style))
+  );
+
+  const payload = {
+    content: "### 🤖 모델 설정\n대화에 사용할 AI 모델을 선택해주세요. 선택 즉시 적용됩니다.",
+    components: [row],
+    ephemeral: true,
+  };
+
+  if (isUpdate) return messageOrInteraction.update(payload);
+  if (messageOrInteraction.replied || messageOrInteraction.deferred) return messageOrInteraction.followUp(payload);
+  return messageOrInteraction.reply(payload);
+}
+
 async function resolveMember(message, token, missingMessage) {
   const id = extractDiscordId(token);
   if (id) {
@@ -1208,6 +1250,6 @@ function getManagementHelpText() {
     `\`${PREFIX} 뮤트 @유저 on/off\`, \`${PREFIX} 청각차단 @유저 on/off\`, \`${PREFIX} 이동 @유저 <음성채널>\`, \`${PREFIX} 연결끊기 @유저\``,
     `\`${PREFIX} 닉네임 @유저 새닉네임\`, \`${PREFIX} 오토모드 키워드 단어1,단어2\`, \`${PREFIX} 감사로그 5\`, \`${PREFIX} 보안수준 높음\``,
     `\`${PREFIX} 역할부여 @유저 @역할\`, \`${PREFIX} 역할제거 @유저 @역할\`, \`${PREFIX} 권한추가 @역할 ManageMessages\`, \`${PREFIX} 권한제거 @역할 ManageMessages\``,
+    `\`${PREFIX} 모델변경 <모델명>\` (프리미엄 전용) - 모델 목록: deepseek-ai/deepseek-v4-flash, deepseek-ai/deepseek-v4-pro, meta/llama-3.3-70b-instruct`,
   ].join("\n");
 }
-
