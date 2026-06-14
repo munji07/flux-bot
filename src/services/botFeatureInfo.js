@@ -242,7 +242,7 @@ async function createBotFeatureAnswer({ query, requesterName, relevantFiles, sou
       },
     ],
     temperature: 0.2,
-    max_completion_tokens: 900,
+    max_completion_tokens: 2048,
   });
 
   return stripReasoningTags(completion.choices?.[0]?.message?.content ?? "");
