@@ -176,16 +176,16 @@ const COMMAND_ALIASES = {
   removerolepermission: COMMANDS.removeRolePermission,
 };
 
-export async function handleManagementCommand(message, userPrompt) {
+export async function handleManagementCommand(message, userPrompt, loadingMessage) {
   const pendingKey = getPendingConfirmationKey(message);
   const pending = pendingConfirmations.get(pendingKey);
 
   if (pending && isConfirmTrigger(userPrompt)) {
     clearPendingConfirmation(pendingKey);
-    await message.reply("확인을 받았습니다. 위험한 작업을 실행합니다.");
+    if (loadingMessage) await loadingMessage.edit("확인을 받았습니다. 위험한 작업을 실행합니다.");
 
     try {
-      await executeCommand(message, pending.command, pending.args, userPrompt);
+      await executeCommand(message, pending.command, pending.args, userPrompt, loadingMessage);
       logInfo("management_command_completed", {
         guildId: message.guildId,
         guildName: message.guild.name,
@@ -211,6 +211,10 @@ export async function handleManagementCommand(message, userPrompt) {
           ? error.message
           : "위험한 작업을 실행하는 중 문제가 발생했어요. 권한이나 대상 상태를 확인해주세요.";
 
+      if (loadingMessage) {
+        await loadingMessage.edit(replyText).catch(() => message.reply(replyText));
+        return true;
+      }
       await message.reply(replyText).catch((replyError) => {
         logError("management_error_reply", message.guildId, replyError, {
           guildName: message.guild.name,
@@ -227,7 +231,7 @@ export async function handleManagementCommand(message, userPrompt) {
 
   if (pending && isCancelTrigger(userPrompt)) {
     clearPendingConfirmation(pendingKey);
-    await message.reply("위험한 작업을 취소했어요.");
+    if (loadingMessage) await loadingMessage.edit("위험한 작업을 취소했어요.");
     return true;
   }
 
@@ -260,12 +264,12 @@ export async function handleManagementCommand(message, userPrompt) {
       command,
       commandText: userPrompt,
     });
-    await message.reply(confirmationText);
+    if (loadingMessage) await loadingMessage.edit(confirmationText);
     return true;
   }
 
   try {
-    await executeCommand(message, command, args, userPrompt);
+    await executeCommand(message, command, args, userPrompt, loadingMessage);
     logInfo("management_command_completed", {
       guildId: message.guildId,
       guildName: message.guild.name,
@@ -291,6 +295,10 @@ export async function handleManagementCommand(message, userPrompt) {
         ? error.message
         : "관리 명령을 처리하는 중 문제가 발생했어요. 권한이나 대상 상태를 확인해주세요.";
 
+    if (loadingMessage) {
+      await loadingMessage.edit(replyText).catch(() => message.reply(replyText));
+      return true;
+    }
     await message.reply(replyText).catch((replyError) => {
       logError("management_error_reply", message.guildId, replyError, {
         guildName: message.guild.name,
@@ -305,15 +313,15 @@ export async function handleManagementCommand(message, userPrompt) {
   return true;
 }
 
-export async function handleManagementToolCall(message, intent, userPrompt) {
+export async function handleManagementToolCall(message, intent, userPrompt, loadingMessage) {
   const pendingKey = getPendingConfirmationKey(message);
   const pending = pendingConfirmations.get(pendingKey);
   const tool = intent?.tool;
 
   if (pending && tool === "confirm_management") {
     clearPendingConfirmation(pendingKey);
-    await message.reply("확인했어요. 위험 작업을 실행할게요.");
-    await executeCommand(message, pending.command, pending.args, userPrompt);
+    if (loadingMessage) await loadingMessage.edit("확인했어요. 위험 작업을 실행할게요.");
+    await executeCommand(message, pending.command, pending.args, userPrompt, loadingMessage);
     logInfo("management_command_completed", {
       guildId: message.guildId,
       guildName: message.guild.name,
@@ -329,7 +337,7 @@ export async function handleManagementToolCall(message, intent, userPrompt) {
 
   if (pending && tool === "cancel_management") {
     clearPendingConfirmation(pendingKey);
-    await message.reply("위험 작업을 취소했어요.");
+    if (loadingMessage) await loadingMessage.edit("위험 작업을 취소했어요.");
     return true;
   }
 
@@ -340,7 +348,7 @@ export async function handleManagementToolCall(message, intent, userPrompt) {
   const args = Array.isArray(argsObject.args) ? argsObject.args.map((arg) => String(arg)) : [];
 
   if (!Object.values(COMMANDS).includes(command)) {
-    await message.reply("관리 작업을 이해하지 못했어요. 조금 더 구체적으로 말해 주세요.");
+    if (loadingMessage) await loadingMessage.edit("관리 작업을 이해하지 못했어요. 조금 더 구체적으로 말해 주세요.");
     return true;
   }
 
@@ -368,11 +376,11 @@ export async function handleManagementToolCall(message, intent, userPrompt) {
       command,
       commandText: userPrompt,
     });
-    await message.reply(confirmationText);
+    if (loadingMessage) await loadingMessage.edit(confirmationText);
     return true;
   }
 
-  await executeCommand(message, command, args, userPrompt);
+  await executeCommand(message, command, args, userPrompt, loadingMessage);
   logInfo("management_command_completed", {
     guildId: message.guildId,
     guildName: message.guild.name,
@@ -386,64 +394,64 @@ export async function handleManagementToolCall(message, intent, userPrompt) {
   return true;
 }
 
-async function executeCommand(message, command, args, userPrompt) {
+async function executeCommand(message, command, args, userPrompt, loadingMessage) {
   switch (command) {
     case COMMANDS.help:
-      await message.reply(getManagementHelpText());
+      await loadingMessage.edit(getManagementHelpText());
       break;
     case COMMANDS.deleteMessage:
-      await deleteMessageCommand(message, args);
+      await deleteMessageCommand(message, args, loadingMessage);
       break;
     case COMMANDS.purgeMessages:
-      await purgeMessagesCommand(message, args);
+      await purgeMessagesCommand(message, args, loadingMessage);
       break;
     case COMMANDS.setSlowMode:
-      await slowModeCommand(message, args);
+      await slowModeCommand(message, args, loadingMessage);
       break;
     case COMMANDS.timeoutMember:
-      await timeoutCommand(message, args);
+      await timeoutCommand(message, args, loadingMessage);
       break;
     case COMMANDS.kickMember:
-      await kickCommand(message, args);
+      await kickCommand(message, args, loadingMessage);
       break;
     case COMMANDS.banMember:
-      await banCommand(message, args, false);
+      await banCommand(message, args, false, loadingMessage);
       break;
     case COMMANDS.muteMember:
-      await voiceMuteCommand(message, args);
+      await voiceMuteCommand(message, args, loadingMessage);
       break;
     case COMMANDS.deafenMember:
-      await voiceDeafenCommand(message, args);
+      await voiceDeafenCommand(message, args, loadingMessage);
       break;
     case COMMANDS.moveMember:
-      await moveMemberCommand(message, args);
+      await moveMemberCommand(message, args, loadingMessage);
       break;
     case COMMANDS.disconnectMember:
-      await disconnectMemberCommand(message, args);
+      await disconnectMemberCommand(message, args, loadingMessage);
       break;
     case COMMANDS.changeNickname:
-      await changeNicknameCommand(message, args);
+      await changeNicknameCommand(message, args, loadingMessage);
       break;
     case COMMANDS.autoMod:
-      await autoModCommand(message, args);
+      await autoModCommand(message, args, loadingMessage);
       break;
     case COMMANDS.auditLog:
-      await auditLogCommand(message, args);
+      await auditLogCommand(message, args, loadingMessage);
       break;
     case COMMANDS.setVerificationLevel:
-      await verificationLevelCommand(message, args);
+      await verificationLevelCommand(message, args, loadingMessage);
       break;
     case COMMANDS.addRole:
-      await roleMemberCommand(message, args, "add");
+      await roleMemberCommand(message, args, "add", loadingMessage);
       break;
     case COMMANDS.removeRole:
-      await roleMemberCommand(message, args, "remove");
+      await roleMemberCommand(message, args, "remove", loadingMessage);
       break;
     case COMMANDS.addRolePermission:
-      await rolePermissionCommand(message, args, "add");
+      await rolePermissionCommand(message, args, "add", loadingMessage);
       break;
     case COMMANDS.removeRolePermission:
-      await rolePermissionCommand(message, args, "remove");
+      await rolePermissionCommand(message, args, "remove", loadingMessage);
       break;
     default:
       throw new UserFacingError("알 수 없는 관리 명령이에요.");
@@ -551,7 +559,7 @@ async function assertGuildPermissions(message, userPermission, botPermission = u
   return botMember;
 }
 
-async function deleteMessageCommand(message, args) {
+async function deleteMessageCommand(message, args, loadingMessage) {
   await assertGuildPermissions(message, PermissionFlagsBits.ManageMessages);
 
   const messageId = args[0] ?? message.reference?.messageId;
@@ -565,10 +573,10 @@ async function deleteMessageCommand(message, args) {
   }
 
   await targetMessage.delete();
-  await message.reply("메시지를 삭제했어요.");
+  await loadingMessage.edit("메시지를 삭제했어요.");
 }
 
-async function purgeMessagesCommand(message, args) {
+async function purgeMessagesCommand(message, args, loadingMessage) {
   await assertGuildPermissions(message, PermissionFlagsBits.ManageMessages);
 
   const amount = Number.parseInt(args[0], 10);
@@ -581,10 +589,10 @@ async function purgeMessagesCommand(message, args) {
   }
 
   const deleted = await message.channel.bulkDelete(amount, true);
-  await message.channel.send(`최근 메시지 ${deleted.size}개를 정리했어요.`);
+  await loadingMessage.edit(`최근 메시지 ${deleted.size}개를 정리했어요.`);
 }
 
-async function slowModeCommand(message, args) {
+async function slowModeCommand(message, args, loadingMessage) {
   await assertGuildPermissions(message, PermissionFlagsBits.ManageMessages);
 
   const seconds = parseSlowModeSeconds(args[0]);
@@ -593,10 +601,10 @@ async function slowModeCommand(message, args) {
   }
 
   await message.channel.setRateLimitPerUser(seconds, createReason(message, "slow mode"));
-  await message.reply(seconds === 0 ? "저속 모드를 해제했어요." : `저속 모드를 ${seconds}초로 설정했어요.`);
+  await loadingMessage.edit(seconds === 0 ? "저속 모드를 해제했어요." : `저속 모드를 ${seconds}초로 설정했어요.`);
 }
 
-async function timeoutCommand(message, args) {
+async function timeoutCommand(message, args, loadingMessage) {
   await assertGuildPermissions(message, PermissionFlagsBits.ModerateMembers);
 
   const target = await resolveMember(message, args[0], "타임아웃할 유저를 멘션하거나 ID로 입력해주세요.");
@@ -622,10 +630,10 @@ async function timeoutCommand(message, args) {
     reason,
     commandText: args.join(" "),
   });
-  await message.reply(`${target}님을 ${formatDurationMs(durationMs)} 동안 타임아웃했어요.`);
+  await loadingMessage.edit(`${target}님을 ${formatDurationMs(durationMs)} 동안 타임아웃했어요.`);
 }
 
-async function kickCommand(message, args) {
+async function kickCommand(message, args, loadingMessage) {
   await assertGuildPermissions(message, PermissionFlagsBits.KickMembers);
 
   const target = await resolveMember(message, args[0], "추방할 유저를 멘션하거나 ID로 입력해주세요.");
@@ -636,10 +644,10 @@ async function kickCommand(message, args) {
   }
 
   await target.kick(reason);
-  await message.reply(`${target}님을 서버에서 추방했어요.`);
+  await loadingMessage.edit(`${target}님을 서버에서 추방했어요.`);
 }
 
-async function banCommand(message, args, isIpBanRequest) {
+async function banCommand(message, args, isIpBanRequest, loadingMessage) {
   await assertGuildPermissions(message, PermissionFlagsBits.BanMembers);
 
   let targetMember = null;
@@ -664,13 +672,13 @@ async function banCommand(message, args, isIpBanRequest) {
   });
 
   if (targetMember) {
-    await message.reply(
+    await loadingMessage.edit(
       isIpBanRequest
         ? `${targetMember}님을 차단했어요. 다만 Discord API는 봇에게 별도의 IP 차단 옵션을 제공하지 않아서 계정 차단으로 처리했어요.`
         : `${targetMember}님을 차단했어요.`,
     );
   } else {
-    await message.reply(
+    await loadingMessage.edit(
       isIpBanRequest
         ? "유저를 차단했어요. 다만 Discord API는 봇에게 별도의 IP 차단 옵션을 제공하지 않아서 계정 차단으로 처리했어요."
         : "유저를 차단했어요.",
@@ -678,7 +686,7 @@ async function banCommand(message, args, isIpBanRequest) {
   }
 }
 
-async function voiceMuteCommand(message, args) {
+async function voiceMuteCommand(message, args, loadingMessage) {
   await assertGuildPermissions(message, PermissionFlagsBits.MuteMembers);
 
   const target = await resolveMember(message, args[0], "서버 뮤트할 유저를 멘션하거나 ID로 입력해주세요.");
@@ -689,10 +697,10 @@ async function voiceMuteCommand(message, args) {
   }
 
   await target.voice.setMute(enabled, createReason(message, "server mute"));
-  await message.reply(`${target}님의 서버 뮤트를 ${enabled ? "적용" : "해제"}했어요.`);
+  await loadingMessage.edit(`${target}님의 서버 뮤트를 ${enabled ? "적용" : "해제"}했어요.`);
 }
 
-async function voiceDeafenCommand(message, args) {
+async function voiceDeafenCommand(message, args, loadingMessage) {
   await assertGuildPermissions(message, PermissionFlagsBits.DeafenMembers);
 
   const target = await resolveMember(message, args[0], "서버 청각 차단할 유저를 멘션하거나 ID로 입력해주세요.");
@@ -703,10 +711,10 @@ async function voiceDeafenCommand(message, args) {
   }
 
   await target.voice.setDeaf(enabled, createReason(message, "server deafen"));
-  await message.reply(`${target}님의 서버 청각 차단을 ${enabled ? "적용" : "해제"}했어요.`);
+  await loadingMessage.edit(`${target}님의 서버 청각 차단을 ${enabled ? "적용" : "해제"}했어요.`);
 }
 
-async function moveMemberCommand(message, args) {
+async function moveMemberCommand(message, args, loadingMessage) {
   await assertGuildPermissions(message, PermissionFlagsBits.MoveMembers);
 
   const target = await resolveMember(message, args[0], "이동할 유저를 멘션하거나 ID로 입력해주세요.");
@@ -717,10 +725,10 @@ async function moveMemberCommand(message, args) {
   }
 
   await target.voice.setChannel(channel, createReason(message, "move member"));
-  await message.reply(`${target}님을 ${channel.name} 채널로 이동했어요.`);
+  await loadingMessage.edit(`${target}님을 ${channel.name} 채널로 이동했어요.`);
 }
 
-async function disconnectMemberCommand(message, args) {
+async function disconnectMemberCommand(message, args, loadingMessage) {
   await assertGuildPermissions(message, PermissionFlagsBits.MoveMembers);
 
   const target = await resolveMember(message, args[0], "연결을 끊을 유저를 멘션하거나 ID로 입력해주세요.");
@@ -730,10 +738,10 @@ async function disconnectMemberCommand(message, args) {
   }
 
   await target.voice.disconnect(createReason(message, "disconnect member"));
-  await message.reply(`${target}님의 음성 연결을 끊었어요.`);
+  await loadingMessage.edit(`${target}님의 음성 연결을 끊었어요.`);
 }
 
-async function changeNicknameCommand(message, args) {
+async function changeNicknameCommand(message, args, loadingMessage) {
   await assertGuildPermissions(message, PermissionFlagsBits.ManageNicknames);
 
   const target = await resolveMember(message, args[0], "닉네임을 바꿀 유저를 멘션하거나 ID로 입력해주세요.");
@@ -778,7 +786,7 @@ async function autoModCommand(message, args) {
       ? [...rules.values()].slice(0, 10).map((rule) => `- ${rule.name} (${rule.enabled ? "켜짐" : "꺼짐"})`)
       : ["등록된 AutoMod 규칙이 없어요."];
 
-    await message.reply(lines.join("\n"));
+    await loadingMessage.edit(lines.join("\n"));
     return;
   }
 
@@ -817,10 +825,10 @@ async function autoModCommand(message, args) {
     reason: createReason(message, "create automod keyword rule"),
   });
 
-  await message.reply(`AutoMod 규칙 "${rule.name}"을 만들었어요.`);
+  await loadingMessage.edit(`AutoMod 규칙 "${rule.name}"을 만들었어요.`);
 }
 
-async function auditLogCommand(message, args) {
+async function auditLogCommand(message, args, loadingMessage) {
   await assertGuildPermissions(message, PermissionFlagsBits.ViewAuditLog);
 
   const limit = Math.min(Math.max(Number.parseInt(args[0] ?? "5", 10) || 5, 1), 10);
@@ -831,18 +839,18 @@ async function auditLogCommand(message, args) {
     return `- ${entry.action}: ${executor} -> ${target}`;
   });
 
-  await message.reply(lines.length > 0 ? lines.join("\n") : "감사 로그를 찾지 못했어요.");
+  await loadingMessage.edit(lines.length > 0 ? lines.join("\n") : "감사 로그를 찾지 못했어요.");
 }
 
-async function verificationLevelCommand(message, args) {
+async function verificationLevelCommand(message, args, loadingMessage) {
   await assertGuildPermissions(message, PermissionFlagsBits.ManageGuild);
 
   const level = resolveVerificationLevel(args[0]);
   await message.guild.setVerificationLevel(level, createReason(message, "set verification level"));
-  await message.reply(`서버 인증 단계를 ${GuildVerificationLevel[level]}(으)로 설정했어요.`);
+  await loadingMessage.edit(`서버 인증 단계를 ${GuildVerificationLevel[level]}(으)로 설정했어요.`);
 }
 
-async function roleMemberCommand(message, args, action) {
+async function roleMemberCommand(message, args, action, loadingMessage) {
   await assertGuildPermissions(message, PermissionFlagsBits.ManageRoles);
 
   const target = await resolveMember(message, args[0], "역할을 설정할 유저를 멘션하거나 ID로 입력해주세요.");
@@ -850,15 +858,15 @@ async function roleMemberCommand(message, args, action) {
 
   if (action === "add") {
     await target.roles.add(role, createReason(message, "add role"));
-    await message.reply(`${target}님에게 ${role.name} 역할을 부여했어요.`);
+    await loadingMessage.edit(`${target}님에게 ${role.name} 역할을 부여했어요.`);
     return;
   }
 
   await target.roles.remove(role, createReason(message, "remove role"));
-  await message.reply(`${target}님에게서 ${role.name} 역할을 제거했어요.`);
+  await loadingMessage.edit(`${target}님에게서 ${role.name} 역할을 제거했어요.`);
 }
 
-async function rolePermissionCommand(message, args, action) {
+async function rolePermissionCommand(message, args, action, loadingMessage) {
   await assertGuildPermissions(message, PermissionFlagsBits.ManageRoles);
 
   const role = await resolveRole(message, args[0]);
@@ -867,12 +875,12 @@ async function rolePermissionCommand(message, args, action) {
 
   if (action === "add") {
     await role.setPermissions(permissions.add(permission), createReason(message, "add role permission"));
-    await message.reply(`${role.name} 역할에 ${args[1]} 권한을 추가했어요.`);
+    await loadingMessage.edit(`${role.name} 역할에 ${args[1]} 권한을 추가했어요.`);
     return;
   }
 
   await role.setPermissions(permissions.remove(permission), createReason(message, "remove role permission"));
-  await message.reply(`${role.name} 역할에서 ${args[1]} 권한을 제거했어요.`);
+  await loadingMessage.edit(`${role.name} 역할에서 ${args[1]} 권한을 제거했어요.`);
 }
 
 async function resolveMember(message, token, missingMessage) {
