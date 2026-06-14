@@ -71,9 +71,8 @@ export async function handleMessageCreate(client, message) {
 
   // "등급" 관련 명령어도 즉시 반환
   if (["등급", "나의 등급", "나의등급", "등급 구매", "구매"].includes(userPrompt)) {
-    const handled = await handleSubscriptionCommand(message, userPrompt);
+    const handled = await handleSubscriptionCommand(message, userPrompt, loadingMessage);
     if (handled) {
-      await loadingMessage.delete().catch(() => {});
       return;
     }
   }
@@ -114,18 +113,14 @@ export async function handleMessageCreate(client, message) {
         userName,
       });
     } else {
-      if (loadingMessage) {
-        await loadingMessage.edit("요청 의도를 확인하는 중 문제가 발생했어요. 잠시 뒤 다시 시도해주세요.");
-      } else {
-        await message.reply("요청 의도를 확인하는 중 문제가 발생했어요. 잠시 뒤 다시 시도해주세요.");
-      }
+      await loadingMessage.edit("요청 의도를 확인하는 중 문제가 발생했어요. 잠시 뒤 다시 시도해주세요.").catch(() => {});
       return;
     }
   }
 
   if (["run_management", "confirm_management", "cancel_management"].includes(intent.tool)) {
     try {
-      const handled = await handleManagementToolCall(message, intent, userPrompt);
+      const handled = await handleManagementToolCall(message, intent, userPrompt, loadingMessage);
       if (handled) return;
     } catch (error) {
       logError("management_tool", message.guildId, error, {
@@ -335,11 +330,7 @@ export async function handleMessageCreate(client, message) {
   }
 
   if (intent.type === "image_read" && attachedImageUrls.length === 0) {
-    if (loadingMessage) {
-      await loadingMessage.edit("이미지 판독을 원하시면 분석할 이미지를 함께 첨부해주세요.");
-    } else {
-      await message.reply("이미지 판독을 원하시면 분석할 이미지를 함께 첨부해주세요.");
-    }
+    await loadingMessage.edit("이미지 판독을 원하시면 분석할 이미지를 함께 첨부해주세요.").catch(() => {});
     return;
   }
 
@@ -354,11 +345,7 @@ export async function handleMessageCreate(client, message) {
       `현재 ${message.author.username}님의 등급은 \`${limits.name}\`이며, 하루 ${usageTypeName} 제한량은 **${limitVal}**입니다.\n` +
       `오늘 제한량을 모두 소모하셨습니다. 내일 다시 시도하시거나, \`${PREFIX} 등급 구매\`를 통해 한도를 늘려보세요!`;
     
-    if (loadingMessage) {
-      await loadingMessage.edit(limitExceededMessage);
-    } else {
-      await message.reply(limitExceededMessage);
-    }
+    await loadingMessage.edit(limitExceededMessage).catch(() => {});
     return;
   }
 
@@ -413,11 +400,7 @@ export async function handleMessageCreate(client, message) {
     await message.channel.sendTyping();
 
     currentStep = "send_loading_message";
-    if (loadingMessage) {
-      await loadingMessage.edit(`-# <a:loading:1495336917326368829>DUST봇이 답변을 준비하고 있어요...`);
-    } else {
-      loadingMessage = await message.reply(`-# <a:loading:1495336917326368829> DUST봇이 답변을 준비하고 있어요...`);
-    }
+    await loadingMessage.edit(`-# <a:loading:1495336917326368829> DUST봇이 답변을 준비하고 있어요...`).catch(() => {});
 
     typingInterval = setInterval(() => {
       message.channel.sendTyping().catch((error) => {
