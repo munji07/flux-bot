@@ -772,10 +772,10 @@ async function changeNicknameCommand(message, args, loadingMessage) {
     newNickname,
     commandText: args.join(" "),
   });
-  await message.reply(`${target}님의 닉네임을 변경했어요.`);
+  await loadingMessage.edit(`${target}님의 닉네임을 변경했어요.`);
 }
 
-async function autoModCommand(message, args) {
+async function autoModCommand(message, args, loadingMessage) {
   await assertGuildPermissions(message, PermissionFlagsBits.ManageGuild);
 
   const subCommand = normalizeCommand(args[0] ?? "");

@@ -198,7 +198,12 @@ function extractRelevantExcerpt(source, keywords) {
 
 function isSafeProjectFile(resolvedPath) {
   const relativePath = relative(PROJECT_ROOT, resolvedPath);
-  if (!relativePath || relativePath.startsWith("..") || relativePath.includes(`..${sep}`)) {
+  
+  // 경로가 프로젝트 루트 바깥으로 나가는지 더 엄격하게 체크
+  const isOutside = !resolvedPath.startsWith(PROJECT_ROOT);
+  const hasParentTraversal = relativePath.split(sep).includes('..');
+
+  if (isOutside || hasParentTraversal) {
     return false;
   }
 

@@ -122,6 +122,12 @@ export function checkAndIncrementUsage(userId, type, guildId = null) {
   const sub = getUserSubscription(userId);
   const limits = TIER_LIMITS[sub.tier];
   const todayStr = getKstDateString();
+
+  // SQL Injection 방지를 위한 컬럼 이름 검증
+  const validTypes = ['ai_calls', 'image_generations', 'image_readings'];
+  if (!validTypes.includes(type)) {
+    throw new Error(`Invalid usage type: ${type}`);
+  }
   
   // 오늘 날짜의 레코드가 없는 경우 먼저 생성
   db.prepare(`
@@ -160,7 +166,7 @@ export function checkAndIncrementUsage(userId, type, guildId = null) {
   // 사용량 1 증가
   db.prepare(`
     UPDATE user_daily_usage
-    SET ${type} = ${type} + 1
+    SET ${type === 'ai_calls' ? 'ai_calls' : type === 'image_generations' ? 'image_generations' : 'image_readings'} = ${type === 'ai_calls' ? 'ai_calls' : type === 'image_generations' ? 'image_generations' : 'image_readings'} + 1
     WHERE user_id = ? AND usage_date = ?
   `).run(userId, todayStr);
   
@@ -180,10 +186,15 @@ export function checkAndIncrementUsage(userId, type, guildId = null) {
  */
 export function decrementUsage(userId, type) {
   const todayStr = getKstDateString();
+
+  const validTypes = ['ai_calls', 'image_generations', 'image_readings'];
+  if (!validTypes.includes(type)) return;
+
+  const column = type === 'ai_calls' ? 'ai_calls' : type === 'image_generations' ? 'image_generations' : 'image_readings';
   
   db.prepare(`
     UPDATE user_daily_usage
-    SET ${type} = CASE WHEN ${type} > 0 THEN ${type} - 1 ELSE 0 END
+    SET ${column} = CASE WHEN ${column} > 0 THEN ${column} - 1 ELSE 0 END
     WHERE user_id = ? AND usage_date = ?
   `).run(userId, todayStr);
 }

@@ -1,7 +1,8 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync, openSync, readSync, closeSync } from "node:fs";
 import { ADMIN_USER_ID } from "../config.js";
 import { UserFacingError } from "../errors.js";
 import { createLogSearchAnswer } from "./ai.js";
+import { decrementUsage } from "./subscription.js";
 
 const LOG_FILES = [
   new URL("../../logs/bot.log", import.meta.url),
@@ -51,14 +52,12 @@ export async function handleLogSearchRequest(message, userPrompt, loadingMessage
   try {
     answer = await createLogSearchAnswer(request);
   } catch (error) {
-    if (!isPayloadTooLargeError(error) || records.length <= 15) {
-      throw error;
+    if (isPayloadTooLargeError(error)) {
+      decrementUsage(message.author.id, "ai_calls");
+      await loadingMessage.edit("조회하려는 로그 데이터가 너무 많아 AI가 분석할 수 없습니다. 특정 서버 ID나 더 좁은 시간 범위(예: '10분 전', '오늘 오후 2시')를 지정해서 다시 질문해 주세요.");
+      return true;
     }
-
-    answer = await createLogSearchAnswer({
-      ...request,
-      records: records.slice(-15),
-    });
+    throw error;
   }
 
   await loadingMessage.edit(answer || "로그는 찾았는데 요약 답변을 만들지 못했어요.");
@@ -99,7 +98,17 @@ function readLogRecords() {
   for (const file of LOG_FILES) {
     if (!existsSync(file)) continue;
 
-    const lines = splitLines(readFileSync(file, "utf8"));
+    // 전체 파일을 읽는 대신 마지막 1MB만 읽도록 개선 (DoS 방지)
+    const stats = statSync(file);
+    const fileSize = stats.size;
+    const bufferSize = Math.min(fileSize, 1024 * 1024); // Max 1MB
+    const buffer = Buffer.alloc(bufferSize);
+    
+    const fd = openSync(file, 'r');
+    readSync(fd, buffer, 0, bufferSize, Math.max(0, fileSize - bufferSize));
+    closeSync(fd);
+
+    const lines = buffer.toString('utf8').split(/\r?\n/);
     for (const line of lines) {
       if (!line.trim()) continue;
 

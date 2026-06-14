@@ -263,10 +263,18 @@ export async function handleSubscriptionToolCall(message, intent, loadingMessage
  * 구독/등급 관련 채팅 명령어를 처리합니다.
  * @param {import("discord.js").Message} message 
  * @param {string} userPrompt 
+ * @param {import("discord.js").Message} [loadingMessage=null]
  * @returns {Promise<boolean>} 처리 여부
  */
-export async function handleSubscriptionCommand(message, userPrompt) {
+export async function handleSubscriptionCommand(message, userPrompt, loadingMessage = null) {
   const trimmed = userPrompt.trim();
+
+  // 응답 유틸리티: 로딩 메시지가 있으면 수정하고, 없으면 새로 답장합니다.
+  const sendResponse = async (payload) => {
+    const options = typeof payload === "string" ? { content: payload } : payload;
+    if (loadingMessage) return await loadingMessage.edit(options);
+    return await message.reply(options);
+  };
 
   // 1. 나의 등급 조회
   if (trimmed === "나의 등급" || trimmed === "나의등급" || trimmed === "등급") {
@@ -289,7 +297,7 @@ export async function handleSubscriptionCommand(message, userPrompt) {
     replyText += `- 🔍 **이미지 판독**: ${usage.image_readings} / ${limits.image_readings}회\n\n`;
     replyText += `*※ 등급을 변경하려면 \`${PREFIX} 등급 구매\`를 입력해보세요.*`;
 
-    await message.reply(replyText);
+    await sendResponse(replyText);
     return true;
   }
 
@@ -350,10 +358,10 @@ export async function handleSubscriptionCommand(message, userPrompt) {
         components: [row]
       });
 
-      await message.reply(`📩 ${message.author.username}님, 등급 구매 안내서를 **DM**으로 전송했습니다! DM을 확인하여 절차를 진행해 주세요.`);
+      await sendResponse(`📩 ${message.author.username}님, 등급 구매 안내서를 **DM**으로 전송했습니다! DM을 확인하여 절차를 진행해 주세요.`);
     } catch (error) {
       console.error("Failed to send DM to user:", error);
-      await message.reply(`❌ ${message.author.username}님에게 DM을 보낼 수 없습니다. 디스코드 설정에서 '서버 멤버가 보내는 개인 메시지 허용'이 켜져 있는지 확인해주세요.`);
+      await sendResponse(`❌ ${message.author.username}님에게 DM을 보낼 수 없습니다. 디스코드 설정에서 '서버 멤버가 보내는 개인 메시지 허용'이 켜져 있는지 확인해주세요.`);
     }
     return true;
   }
@@ -363,13 +371,13 @@ export async function handleSubscriptionCommand(message, userPrompt) {
   if (trimmed.startsWith("등급부여") || trimmed.startsWith("등급 부여")) {
     // 개발자 권한 체크
     if (message.author.id !== ADMIN_USER_ID) {
-      await message.reply("❌ 이 명령어는 개발자만 사용할 수 있습니다.");
+      await sendResponse("❌ 이 명령어는 개발자만 사용할 수 있습니다.");
       return true;
     }
 
     const args = trimmed.split(/\s+/).slice(1);
     if (args.length < 2) {
-      await message.reply(`⚠️ 사용법: \`${PREFIX} 등급부여 <유저ID> <free|basic|premium> [기간(일, 기본30일)]\``);
+      await sendResponse(`⚠️ 사용법: \`${PREFIX} 등급부여 <유저ID> <free|basic|premium> [기간(일, 기본30일)]\``);
       return true;
     }
 
@@ -378,12 +386,12 @@ export async function handleSubscriptionCommand(message, userPrompt) {
     const days = args[2] ? parseInt(args[2], 10) : 30;
 
     if (!["free", "basic", "premium"].includes(targetTier)) {
-      await message.reply("❌ 존재하지 않는 등급입니다. (선택형 등급: `free`, `basic`, `premium`)");
+      await sendResponse("❌ 존재하지 않는 등급입니다. (선택형 등급: `free`, `basic`, `premium`)");
       return true;
     }
 
     if (isNaN(days) || days <= 0) {
-      await message.reply("❌ 기간(일)은 양의 정수여야 합니다.");
+      await sendResponse("❌ 기간(일)은 양의 정수여야 합니다.");
       return true;
     }
 
@@ -391,7 +399,7 @@ export async function handleSubscriptionCommand(message, userPrompt) {
       const { tier, expiresAt } = updateUserSubscription(targetUserId, targetTier, days);
       const displayExpiry = expiresAt ? `${expiresAt} (KST)` : "무제한";
       
-      await message.reply(`✅ 성공적으로 등급이 변경되었습니다.\n- **대상 유저 ID**: ${targetUserId}\n- **부여된 등급**: \`${tier.toUpperCase()}\`\n- **만료 일자**: \`${displayExpiry}\``);
+      await sendResponse(`✅ 성공적으로 등급이 변경되었습니다.\n- **대상 유저 ID**: ${targetUserId}\n- **부여된 등급**: \`${tier.toUpperCase()}\`\n- **만료 일자**: \`${displayExpiry}\``);
       
       // 등급이 부여된 사용자에게 안내 DM 발송 시도
       try {
@@ -405,7 +413,7 @@ export async function handleSubscriptionCommand(message, userPrompt) {
 
     } catch (error) {
       console.error("Failed to update user subscription:", error);
-      await message.reply("❌ 등급 부여 중 데이터베이스 오류가 발생했습니다.");
+      await sendResponse("❌ 등급 부여 중 데이터베이스 오류가 발생했습니다.");
     }
     return true;
   }

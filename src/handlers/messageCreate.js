@@ -5,7 +5,7 @@ import { handleServerImageTokenPurchaseCommand, handleSubscriptionToolCall, hand
 import { handleImageGenerationRequest } from "./imageGeneration.js";
 import { handleBotFeatureInfoRequest, getGeneralHelpText } from "../services/botFeatureInfo.js";
 import { handleDeveloperDiagnosticsRequest } from "../services/developerDiagnostics.js";
-import { handleLogSearchRequest } from "../services/logSearch.js";
+import { handleLogSearchRequest, isPayloadTooLargeError } from "../services/logSearch.js";
 import { addServerImageToken, checkAndIncrementUsage, decrementUsage, TIER_LIMITS } from "../services/subscription.js";
 import { handleGoogleSearch } from "./googleSearch.js";
 import {
@@ -130,6 +130,13 @@ export async function handleMessageCreate(client, message) {
         userTag: message.author.tag,
         commandText: userPrompt,
       });
+
+      if (isPayloadTooLargeError(error)) {
+        decrementUsage(message.author.id, "ai_calls");
+        await loadingMessage.edit("진단하려는 로그나 소스 파일이 너무 큽니다. AI 분석을 위해 특정 서버 ID, 특정 파일 경로, 또는 더 좁은 시간 범위를 명시해서 다시 요청해 주세요.");
+        return;
+      }
+
       const replyText =
         error instanceof UserFacingError
           ? error.message
@@ -265,6 +272,13 @@ export async function handleMessageCreate(client, message) {
         userTag: message.author.tag,
         commandText: userPrompt,
       });
+
+      if (isPayloadTooLargeError(error)) {
+        decrementUsage(message.author.id, "ai_calls");
+        await loadingMessage.edit("진단하려는 로그나 소스 파일이 너무 큽니다. AI 분석을 위해 특정 서버 ID, 특정 파일 경로, 또는 더 좁은 시간 범위를 명시해서 다시 요청해 주세요.");
+        return;
+      }
+
       const replyText =
         error instanceof UserFacingError
           ? error.message
@@ -300,6 +314,12 @@ export async function handleMessageCreate(client, message) {
         userTag: message.author.tag,
         commandText: userPrompt,
       });
+
+      if (isPayloadTooLargeError(error)) {
+        decrementUsage(message.author.id, "ai_calls");
+        await loadingMessage.edit("조회하려는 로그 데이터가 너무 많아 AI가 분석할 수 없습니다. 특정 서버 ID나 더 좁은 시간 범위를 지정해서 다시 질문해 주세요.");
+        return;
+      }
 
       await loadingMessage.edit("로그를 검색하는 중 문제가 생겼어요. 잠시 뒤 다시 시도해 주세요.");
       decrementUsage(message.author.id, "ai_calls");
