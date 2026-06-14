@@ -185,30 +185,16 @@ export const INTENT_TOOL_NAMES = new Set([
 ]);
 
 const INTENT_ROUTER_PROMPT = [
-  "You are the first and only intent router for a Discord bot.",
-  "Do not use keyword rules. Infer the user's intent from meaning.",
-  "Return JSON only. No markdown, no prose, no code fences.",
+  "You are a fast intent classifier. Return ONLY JSON, no markdown, no prose.",
   'Schema: {"tool":"chat|image_read|video_analysis|generate_image|search_logs|google_search|run_management|subscription|bot_feature_info|pronunciation|developer_diagnostics|confirm_management|cancel_management","arguments":{...}}',
-  "",
-  "Tool meanings:",
-  "- chat: normal conversation or questions that do not require another tool.",
-  "- image_read: the user wants attached images/screenshots/photos analyzed.",
-  '- video_analysis: Use when the user attaches a video file and asks to analyze, summarize, or talk about the video content. arguments: {"prompt":"what to ask about the video"}',
-  '- generate_image: create a new image/drawing/banner/icon/profile picture/thumbnail. arguments: {"prompt":"detailed image prompt, preferably English"}.',
-  `- search_logs: owner-only. Use only when requester user id is ${ADMIN_USER_ID}. Search this bot/guild logs, errors, command history, AI call history, or admin action records. arguments: {"query":"natural language log query"}.`,
-  '- google_search: answer needs fresh external information such as current news, prices, schedules, versions, weather, laws, or live facts. arguments: {"query":"search query"}.',
-  '- run_management: perform Discord moderation/server-management. arguments: {"command":"help|deleteMessage|purgeMessages|setSlowMode|timeoutMember|kickMember|banMember|muteMember|deafenMember|moveMember|disconnectMember|changeNickname|autoMod|auditLog|setVerificationLevel|addRole|removeRole|addRolePermission|removeRolePermission","args":["..."]}. Put target/user/channel/role/duration/reason values in execution order.',
-  '- subscription: plan/tier/usage, purchase (tier or server tokens), or admin assignment. arguments: {"action":"status|purchase|grant","targetUserId":"","tier":"free|basic|premium","type":"tier|image_generations|image_readings","count":number,"days":30}. "type" must be "image_generations" for drawing tokens, or "image_readings" for analysis/reading tokens.',
-  '- bot_feature_info: answer questions about what this bot can do, available bot features, usage, limits, subscription, image generation/reading, web search, management commands, or which source file owns a feature. arguments: {"query":"user question about bot features"}.',
-  '- pronunciation: convert Korean pronunciation to romanization or English pronunciation to Hangul. arguments: {"text":"text to convert"}.',
-  '- developer_diagnostics: only when the requester is owner/developer user id 1269575955626725390 and asks to inspect internal source, console/bot logs, error logs, or recent failures. arguments: {"query":"what to investigate","files":["optional repo-relative source file paths"],"includeSource":true}.',
-  "- confirm_management: the user confirms a pending dangerous management action.",
-  "- cancel_management: the user cancels a pending dangerous management action.",
-  "",
-  "Important:",
-  "- Simple questions about users or server facts are chat unless the user explicitly asks to search logs/history.",
-  "- If an image is attached but the user asks to create a new image, use generate_image.",
-  "- For run_management, preserve raw IDs/mentions when present. For natural names, put the spoken target text as the first arg so member matching can resolve it.",
+  "Rules:",
+  "1. Infer intent from meaning, not keywords.",
+  "2. If uncertain, default to 'chat'.",
+  "3. 'generate_image' for any art/draw request.",
+  "4. 'run_management' for moderation/server tasks.",
+  `5. 'search_logs' for admin history checks (Owner ID: ${ADMIN_USER_ID}).`,
+  "6. 'video_analysis' only if video file attached.",
+  "7. 'image_read' only if image file attached and user asks for analysis.",
 ].join("\n");
 
 export async function classifyRequestIntent({ userPrompt, hasImageAttachment, hasVideoAttachment, logContext = {} }) {
@@ -225,28 +211,29 @@ export async function classifyRequestIntent({ userPrompt, hasImageAttachment, ha
     const client = getClientForModel(modelName);
     const completion = await client.chat.completions.create({
       model: modelName,
-      messages: [
-        {
-          role: "system",
-          content: SYSTEM_PROMPT,
-        },
-        {
-          role: "system",
+      temperature: 0,
+    messages: [
+      {
+        role: "system",
+      content: SYSTEM_PROMPT,
+    },
+    {
+      role: "system",
           content: INTENT_ROUTER_PROMPT,
-        },
-        {
-          role: "user",
-          content: JSON.stringify({
+    },
+    {
+        role: "user",
+        content: JSON.stringify({
             userPrompt,
             hasImageAttachment,
             hasVideoAttachment,
             videoInstructions: "If a video is attached (hasVideoAttachment: true), prefer using the 'video_analysis' tool if the user asks about the content.",
-          }),
-        },
-      ],
-    });
+        }),
+      },
+    ],
+  });
     return completion.choices?.[0]?.message?.content?.trim() ?? "";
-  };
+        };
 
   try {
     const content = await requestClassification(DEEPSEEK_CHAT_MODEL);
@@ -262,8 +249,8 @@ export async function classifyRequestIntent({ userPrompt, hasImageAttachment, ha
     } catch (fallbackError) {
       logError("intent_classification_fallback_failed", logContext.guildId, fallbackError, logContext);
       throw fallbackError;
-}
   }
+}
 }
 
 export async function createChatCompletion({
