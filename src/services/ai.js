@@ -1041,6 +1041,22 @@ function parseJsonObject(content) {
   }
 }
 
+export function stripCodeBlocks(content) {
+  let result = String(content).trim();
+
+  if (/^```\w*\r?\n/.test(result)) {
+    result = result.replace(/^```\w*\r?\n/, "");
+  } else if (result.startsWith("```")) {
+    result = result.slice(3);
+  }
+
+  if (result.endsWith("```")) {
+    result = result.slice(0, -3);
+  }
+
+  return result.trim();
+}
+
 export function stripReasoningTags(content) {
   let result = String(content);
 

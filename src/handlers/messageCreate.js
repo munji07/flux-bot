@@ -20,6 +20,7 @@ import {
   isGroqModel,
   isGroqRateLimitError,
   stripReasoningTags,
+  stripCodeBlocks,
 } from "../services/ai.js";
 import {
   appendConversationHistory,
@@ -527,7 +528,7 @@ export async function handleMessageCreate(client, message) {
         });
 
         currentStep = "parse_ai_answer";
-        answer = stripReasoningTags(chatCompletion.choices?.[0]?.message?.content ?? "");
+        answer = stripCodeBlocks(stripReasoningTags(chatCompletion.choices?.[0]?.message?.content ?? ""));
 
         // 답변이 비어있다면 에러를 던져 catch 블록의 폴백(Groq)이 실행되도록 함
         if (!answer || answer.trim().length === 0) {
@@ -567,7 +568,7 @@ export async function handleMessageCreate(client, message) {
             });
 
             currentStep = "parse_nvidia_fallback_answer";
-            answer = stripReasoningTags(fallbackCompletion.choices?.[0]?.message?.content ?? "");
+            answer = stripCodeBlocks(stripReasoningTags(fallbackCompletion.choices?.[0]?.message?.content ?? ""));
             if (!answer || answer.trim().length === 0) {
               throw new Error("NVIDIA fallback returned empty content");
             }
@@ -618,7 +619,7 @@ export async function handleMessageCreate(client, message) {
       });
 
       currentStep = "parse_ai_answer";
-      answer = stripReasoningTags(chatCompletion.choices?.[0]?.message?.content ?? "");
+      answer = stripCodeBlocks(stripReasoningTags(chatCompletion.choices?.[0]?.message?.content ?? ""));
     }
 
     if (!answer) {
@@ -736,10 +737,9 @@ async function sendStreamingAnswer(message, loadingMessage, stream, usedModel, i
       if (!delta) continue;
 
       fullAnswer += delta;
-      const visible = stripReasoningTags(fullAnswer);
+      const visible = stripCodeBlocks(stripReasoningTags(fullAnswer));
       let currentChunk = visible.slice(sentText.length);
 
-      // 디스코드 메시지 길이 제한(약 2000자)을 넘는 경우 분할 처리
       while (currentChunk.length > SAFE_MESSAGE_LIMIT) {
         const toSend = currentChunk.slice(0, SAFE_MESSAGE_LIMIT);
         if (currentMessage) {
@@ -749,11 +749,10 @@ async function sendStreamingAnswer(message, loadingMessage, stream, usedModel, i
         }
         sentText += toSend;
         currentChunk = visible.slice(sentText.length);
-        currentMessage = null; // 다음 조각은 새 메시지로 전송
+        currentMessage = null;
         lastEditAt = Date.now();
       }
 
-      // API 레이트 리밋 방지를 위해 1.2초마다 편집 업데이트
       if (currentChunk.trim() && Date.now() - lastEditAt >= 1200) {
         if (currentMessage) {
           await currentMessage.edit(currentChunk).catch(async () => {
@@ -769,25 +768,22 @@ async function sendStreamingAnswer(message, loadingMessage, stream, usedModel, i
     logError("streaming_process_error", message.guildId, error);
   }
 
-  // 스트리밍 종료 후 남은 마지막 텍스트 처리
-  const finalVisible = stripReasoningTags(fullAnswer);
+  const finalVisible = stripCodeBlocks(stripReasoningTags(fullAnswer));
   const finalRemaining = finalVisible.slice(sentText.length).trim();
-  const firstTalkFooter = isFirstConversation 
-    ? `\n\n👋 처음 대화하시는 것이라 **${displayName}**님이라고 부를게요. 이름을 바꾸고 싶으시다면 \`${PREFIX} 이름변경 [새이름]\`을 입력해주세요!`
+  const firstTalkFooter = isFirstConversation
+    ? `\n\n-# 👋 처음 대화하시는 것이라 **${displayName}**님이라고 부를게요. 이름을 바꾸고 싶으시다면 \`${PREFIX} 이름변경 [새이름]\`을 입력해주세요!`
     : "";
-  const footer = `${firstTalkFooter}\n\n`;
 
   if (finalRemaining) {
-    const textToSend = finalRemaining + footer;
+    const textToSend = finalRemaining + firstTalkFooter;
     if (currentMessage) {
       await currentMessage.edit(textToSend).catch(() => message.channel.send(textToSend));
     } else {
       await message.channel.send(textToSend);
     }
-  } else if (currentMessage) {
-    // 남은 텍스트는 없지만 모델 푸터는 달아야 하는 경우
+  } else if (currentMessage && isFirstConversation) {
     const lastContent = (await currentMessage.fetch()).content;
-    await currentMessage.edit(lastContent + footer).catch(() => {});
+    await currentMessage.edit(lastContent + firstTalkFooter).catch(() => {});
   }
 
   return finalVisible;

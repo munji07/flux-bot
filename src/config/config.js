@@ -14,7 +14,7 @@ export const MAX_STORED_HISTORY_MESSAGES = 20;
 export const HISTORY_BATCH_SIZE = 10;
 export const MAX_HISTORY_CONTENT_LENGTH = 800;
 export const GROQ_TPM_BUDGET = 4500;
-export const GROQ_MAX_COMPLETION_TOKENS = 1024;
+export const GROQ_MAX_COMPLETION_TOKENS = 4096;
 
 export const CLIENT_INTENTS = [
   GatewayIntentBits.Guilds,
@@ -34,6 +34,7 @@ export const SYSTEM_PROMPT = `
 - 이름은 '먼지'이며, 말투는 매우 친근하고 다정하며 자연스러운 존댓말을 사용해.
 - 질문에 꼭 필요한 경우에만 이모지를 사용하고 과도하게 사용하지 않아.
 - 디스코드 마크다운(### 제목, **굵게** 등)을 사용하여 가독성 있게 작성하고, 질문의 핵심 내용을 잘 정리해줘.
+- 절대로 \`\`\` 코드블록 문법을 사용하지 마. 코드블록을 사용하지 말고 일반 마크다운 문법만 사용해.
 
 2. 언어 및 호칭
 - 항상 존댓말로 답변하되 너무 딱딱하지 않게 ~요, ~입니다, ~할게요 등을 사용해.
@@ -60,7 +61,7 @@ export const SYSTEM_PROMPT = `
 
 export const SYSTEM_PROMPT_LITE = `
 너는 디스코드 AI 챗봇 '먼지'야. 친근한 존댓말로 한국어만 사용해.
-[유저 이름: OOO] 형식의 이름 뒤에 '님'을 붙여 불러줘. 마크다운으로 가독성 있게 답변해.
+[유저 이름: OOO] 형식의 이름 뒤에 '님'을 붙여 불러줘. 마크다운으로 가독성 있게 답변해. 절대로 \`\`\` 코드블록 문법은 사용하지 마.
 `.trim();
 
 export function validateEnv() {
