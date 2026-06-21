@@ -107,6 +107,7 @@ export async function handleMessageCreate(client, message) {
   }
 
   activeUsers.set(message.author.id, now);
+  try {
     let usageCheck = null;
     let usageType = null;
     let loadingMessage = await message.reply(`-# ${LOADING_EMOJI} DUST봇이 요청을 확인하고 있어요...`);
@@ -747,6 +748,8 @@ export async function handleMessageCreate(client, message) {
     }
   } finally {
     if (typingInterval) clearInterval(typingInterval);
+  }
+  } finally {
     activeUsers.delete(message.author.id);
   }
 }
