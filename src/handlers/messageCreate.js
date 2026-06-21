@@ -1,20 +1,24 @@
-import { ADMIN_USER_ID, PREFIX, SAFE_MESSAGE_LIMIT, HISTORY_BATCH_SIZE, GEMINI_SEARCH_MODEL } from "../config.js";
+﻿import { ADMIN_USER_ID, PREFIX, SAFE_MESSAGE_LIMIT, HISTORY_BATCH_SIZE, GEMINI_SEARCH_MODEL, DEEPSEEK_CHAT_MODEL } from "../config/config.js";
 import { UserFacingError } from "../errors.js";
-import { handleManagementToolCall } from "../commands/management.js";
-import { handleServerImageTokenPurchaseCommand, handleSubscriptionToolCall, handleSubscriptionCommand } from "../commands/subscription.js";
+import { handleManagementToolCall, getManagementHelpText } from "../commands/management.js";
+import { handleScheduleFromIntent } from "../commands/scheduler.js";
+import { handleSubscriptionToolCall } from "../commands/subscription.js";
 import { handleImageGenerationRequest } from "./imageGeneration.js";
-import { handleBotFeatureInfoRequest, getGeneralHelpText } from "../services/botFeatureInfo.js";
+import { handleBotFeatureInfoRequest } from "../services/botFeatureInfo.js";
 import { handleDeveloperDiagnosticsRequest } from "../services/developerDiagnostics.js";
 import { handleLogSearchRequest, isPayloadTooLargeError } from "../services/logSearch.js";
 import { addServerImageToken, checkAndIncrementUsage, decrementUsage, TIER_LIMITS, getUserSubscription, getUserChatModel } from "../services/subscription.js";
 import { handleGoogleSearch } from "./googleSearch.js";
 import { handleVideoAnalysis } from "./video.js";
+import { db } from '../services/database.js';
 import {
   classifyRequestIntent,
   createApiUserMessage,
   createChatCompletion,
   createChatCompletionStream,
   fetchChannelContext,
+  isGroqModel,
+  isGroqRateLimitError,
   stripReasoningTags,
 } from "../services/ai.js";
 import {
@@ -35,7 +39,30 @@ import { getPronunciationReply } from "../utils/phonetics.js";
 
 const activeUsers = new Set();
 
+const insertChannelMessage = db.prepare(`
+  INSERT OR IGNORE INTO channel_messages (message_id, guild_id, channel_id, user_id, user_tag, user_name, is_bot, content, created_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+`);
+
 export async function handleMessageCreate(client, message) {
+  if (message.inGuild()) {
+    try {
+      insertChannelMessage.run(
+        message.id,
+        message.guildId,
+        message.channelId,
+        message.author.id,
+        message.author.tag,
+        message.member?.displayName || message.author.displayName,
+        message.author.bot ? 1 : 0,
+        message.content || null,
+        new Date(message.createdTimestamp).toISOString(),
+      );
+    } catch (e) {
+      logError("store_channel_message", message.guildId, e);
+    }
+  }
+
   if (message.author.bot || !message.inGuild()) return;
   if (!message.content.startsWith(PREFIX)) return;
 
@@ -53,29 +80,37 @@ export async function handleMessageCreate(client, message) {
     return;
   }
 
+  // 도움말은 AI 분류 없이 바로 응답
+  if (userPrompt === "도움말") {
+    await message.reply(getManagementHelpText());
+    return;
+  }
+
   activeUsers.add(message.author.id);
   try {
     let usageCheck = null;
     let usageType = null;
-    let loadingMessage = await message.reply("-# <a:loading:1495336917326368829> DUST봇이 요청을 확인하고 있어요...");
-    const userName = getDisplayName(message);
+    let loadingMessage = await message.reply("-# <a:load:1516064965751214110>DUST봇이 요청을 확인하고 있어요...");
+
+    // 유저 이름 설정 여부 체크 및 자동 저장 (첫 대화)
+    let isFirstConversation = false;
+    let displayName = null;
+    const userSettingsRow = db.prepare("SELECT display_name FROM user_settings WHERE user_id = ?").get(message.author.id);
+    if (!userSettingsRow || !userSettingsRow.display_name) {
+      displayName = message.author.username;
+      db.prepare(`
+        INSERT INTO user_settings (user_id, display_name, updated_at)
+        VALUES (?, ?, datetime('now'))
+        ON CONFLICT(user_id) DO UPDATE SET
+          display_name = excluded.display_name,
+          updated_at = excluded.updated_at
+      `).run(message.author.id, displayName);
+      isFirstConversation = true;
+    } else {
+      displayName = userSettingsRow.display_name;
+    }
+    const userName = displayName;
     let intent;
-
-    if (await handleServerImageTokenPurchaseCommand(message, userPrompt, loadingMessage)) {
-      return;
-    }
-
-    // "도움말"과 정확히 일치하는 경우 AI를 거치지 않고 즉시 반환
-    if (userPrompt === "도움말") {
-      await loadingMessage.edit(getGeneralHelpText(PREFIX));
-      return;
-    }
-
-    // "등급" 관련 명령어도 즉시 반환
-    if (["등급", "나의 등급", "나의등급", "등급 구매", "구매"].includes(userPrompt)) {
-      const handled = await handleSubscriptionCommand(message, userPrompt, loadingMessage);
-      if (handled) return;
-    }
 
     try {
       intent = await classifyRequestIntent({
@@ -188,6 +223,11 @@ export async function handleMessageCreate(client, message) {
       await loadingMessage.edit(errorMessage);
     }
     return;
+  }
+
+  if (intent.tool === "schedule") {
+    const handled = await handleScheduleFromIntent(message, intent.arguments, loadingMessage);
+    if (handled) return;
   }
 
   if (intent.tool === "video_analysis") {
@@ -412,7 +452,7 @@ export async function handleMessageCreate(client, message) {
 
   // 의도 파악(classifyRequestIntent)은 내부적으로 이미 llama-3.1-8b-instruct를 사용 중임
   // 실제 답변 생성에 쓰일 모델 결정
-  const usedModel = chatModel || (attachedImageUrls.length > 0 ? "meta/llama-4-maverick-17b-128e-instruct" : "nvidia/nemotron-3-nano-30b-a3b");
+  const usedModel = chatModel || (attachedImageUrls.length > 0 ? "meta/llama-4-maverick-17b-128e-instruct" : "qwen/qwen3-32b");
 
   try {
     const historyKey = getHistoryKey(message); // 로깅 및 DB 저장을 위해 유지
@@ -451,19 +491,13 @@ export async function handleMessageCreate(client, message) {
       imageCount: imageUrls.length,
     });
 
-    // 유저/멤버 관련 질문인 경우 서버 컨텍스트 생성 (토큰 절약을 위해 50명 제한)
-    const needsServerInfo = /유저|멤버|누구|사람|명|있어|존재/.test(userPrompt);
     let serverContext = "";
-    if (needsServerInfo) {
-      const cachedMembers = message.guild.members.cache.first(50).map(m => m.displayName).join(", ");
-      serverContext = `현재 서버 멤버 목록(일부): ${cachedMembers}`;
-    }
 
     currentStep = "send_typing";
     await message.channel.sendTyping();
 
     currentStep = "send_loading_message";
-    await loadingMessage.edit(`-# <a:loading:1495336917326368829> DUST봇이 답변을 준비하고 있어요...`).catch(() => {});
+    await loadingMessage.edit(`-# <a:load:1516064965751214110> DUST봇이 답변을 준비하고 있어요...`).catch(() => {});
 
     typingInterval = setInterval(() => {
       message.channel.sendTyping().catch((error) => {
@@ -508,26 +542,67 @@ export async function handleMessageCreate(client, message) {
           errorDetail: primaryError.message
         });
 
-        currentStep = "request_groq_fallback_stream";
-        await loadingMessage.edit("-# <a:loading:1495336917326368829> DUST봇이 다른 모델로 답변을 이어서 준비하고 있어요...");
+        const groqLimitHit = isGroqModel(usedModel) && (isPayloadTooLargeError(primaryError) || isGroqRateLimitError(primaryError));
 
-        const chatCompletion = await createChatCompletionStream({
-          userName,
-          historyMessages,
-          currentApiUserMessage,
-          guildName: message.guild.name,
-          guildId: message.guildId,
-          serverContext,
-          logContext: {
-            ...logContext,
-            fallbackFrom: "deepseek",
-          },
-          model: usedModel,
-        });
+        if (groqLimitHit) {
+          currentStep = "request_nvidia_fallback";
+          await loadingMessage.edit("-# <a:load:1516064965751214110> DUST봇이 다른 모델로 답변을 이어서 준비하고 있어요...");
 
-        currentStep = "stream_groq_fallback_answer";
-        answer = await sendStreamingAnswer(message, loadingMessage, chatCompletion, usedModel);
-        answerAlreadySent = true;
+          try {
+            const fallbackCompletion = await createChatCompletion({
+              userName,
+              historyMessages,
+              currentApiUserMessage,
+              imageUrls,
+              guildName: message.guild.name,
+              guildId: message.guildId,
+              serverContext,
+              logContext: {
+                ...logContext,
+                fallbackFrom: usedModel,
+                fallbackTo: DEEPSEEK_CHAT_MODEL,
+              },
+              intent: intent.type,
+              model: DEEPSEEK_CHAT_MODEL,
+            });
+
+            currentStep = "parse_nvidia_fallback_answer";
+            answer = stripReasoningTags(fallbackCompletion.choices?.[0]?.message?.content ?? "");
+            if (!answer || answer.trim().length === 0) {
+              throw new Error("NVIDIA fallback returned empty content");
+            }
+          } catch (fallbackError) {
+            if (isPayloadTooLargeError(fallbackError) || isGroqRateLimitError(fallbackError)) {
+              decrementUsage(message.author.id, usageType);
+              await loadingMessage.edit("대화 내용이 너무 길어 AI가 처리할 수 없어요. 채널 히스토리가 짧은 곳에서 다시 시도하거나 질문을 짧게 입력해 주세요.");
+              return;
+            }
+            throw fallbackError;
+          }
+        } else {
+          currentStep = "request_stream_fallback";
+          await loadingMessage.edit("-# <a:load:1516064965751214110> DUST봇이 다른 모델로 답변을 이어서 준비하고 있어요...");
+
+          const streamModel = isGroqModel(usedModel) ? DEEPSEEK_CHAT_MODEL : usedModel;
+          const chatCompletion = await createChatCompletionStream({
+            userName,
+            historyMessages,
+            currentApiUserMessage,
+            guildName: message.guild.name,
+            guildId: message.guildId,
+            serverContext,
+            logContext: {
+              ...logContext,
+              fallbackFrom: usedModel,
+              fallbackTo: streamModel,
+            },
+            model: streamModel,
+          });
+
+          currentStep = "stream_fallback_answer";
+          answer = await sendStreamingAnswer(message, loadingMessage, chatCompletion, streamModel, isFirstConversation, displayName);
+          answerAlreadySent = true;
+        }
       }
     } else {
       const chatCompletion = await createChatCompletion({
@@ -561,7 +636,10 @@ export async function handleMessageCreate(client, message) {
 
     currentStep = "send_ai_answer";
     if (!answerAlreadySent) {
-      await sendChunkedAnswer(message, loadingMessage, `${answer}\n\n-# 🤖 모델: ${usedModel}`);
+      const firstTalkFooter = isFirstConversation 
+        ? `\n\n-#👋 처음 대화하시는 것이라 **${displayName}**님이라고 부를게요. 이름을 바꾸고 싶으시다면 \`${PREFIX} 이름변경 [새이름]\`을 입력해주세요!`
+        : "";
+      await sendChunkedAnswer(message, loadingMessage, `${answer}${firstTalkFooter}`);
     }
 
     appendConversationHistory(
@@ -606,7 +684,9 @@ export async function handleMessageCreate(client, message) {
     const errorMessage =
       error instanceof UserFacingError
         ? error.message
-        : "답변을 생성하는 중 문제가 발생했어요. 잠시 뒤 다시 시도해주세요.";
+        : isPayloadTooLargeError(error) || isGroqRateLimitError(error)
+          ? "대화 내용이 너무 길어 AI가 처리할 수 없어요. 채널 히스토리가 짧은 곳에서 다시 시도하거나 질문을 짧게 입력해 주세요."
+          : "답변을 생성하는 중 문제가 발생했어요. 잠시 뒤 다시 시도해주세요.";
 
     if (loadingMessage) {
       await loadingMessage.edit(errorMessage).catch((editError) => {
@@ -644,7 +724,7 @@ export async function handleMessageCreate(client, message) {
   }
 }
 
-async function sendStreamingAnswer(message, loadingMessage, stream, usedModel) {
+async function sendStreamingAnswer(message, loadingMessage, stream, usedModel, isFirstConversation = false, displayName = "") {
   let fullAnswer = "";
   let sentText = "";
   let currentMessage = loadingMessage;
@@ -692,7 +772,10 @@ async function sendStreamingAnswer(message, loadingMessage, stream, usedModel) {
   // 스트리밍 종료 후 남은 마지막 텍스트 처리
   const finalVisible = stripReasoningTags(fullAnswer);
   const finalRemaining = finalVisible.slice(sentText.length).trim();
-  const footer = `\n\n-# 🤖 모델: ${usedModel}`;
+  const firstTalkFooter = isFirstConversation 
+    ? `\n\n👋 처음 대화하시는 것이라 **${displayName}**님이라고 부를게요. 이름을 바꾸고 싶으시다면 \`${PREFIX} 이름변경 [새이름]\`을 입력해주세요!`
+    : "";
+  const footer = `${firstTalkFooter}\n\n`;
 
   if (finalRemaining) {
     const textToSend = finalRemaining + footer;
@@ -709,3 +792,4 @@ async function sendStreamingAnswer(message, loadingMessage, stream, usedModel) {
 
   return finalVisible;
 }
+

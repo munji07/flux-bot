@@ -1,6 +1,6 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from "discord.js";
-import { ADMIN_USER_ID, PREFIX } from "../config.js";
-import { getUserSubscription, updateUserSubscription, getDailyUsage, getServerImageTokens, TIER_LIMITS, getKstNow } from "../services/subscription.js";
+import { ADMIN_USER_ID, PREFIX } from "../config/config.js";
+import { getUserSubscription, updateUserSubscription, getDailyUsage, getServerImageTokens, getServerSubscriptionTier, TIER_LIMITS, getKstNow } from "../services/subscription.js";
 
 const SERVER_IMAGE_TOKEN_PRODUCTS = {
   "서버 이미지 검토 토큰 구매": {
@@ -144,21 +144,7 @@ export async function handleSubscriptionToolCall(message, intent, loadingMessage
   }
 
   if (action === "purchase") {
-    let type = args.type || "tier";
-    const userQuery = message.content.toLowerCase();
-
-    // 보정 로직: AI가 type을 잘못 뽑았더라도 텍스트에 '토큰'이 포함되어 있으면 분석/생성/판독 토큰으로 전환
-    if (type === "tier" && (userQuery.includes("토큰") || userQuery.includes("token"))) {
-      if (userQuery.includes("생성") || userQuery.includes("그림") || userQuery.includes("그리기")) {
-        type = "image_generations";
-      } else if (userQuery.includes("분석") || userQuery.includes("검토") || userQuery.includes("판독") || userQuery.includes("읽기")) {
-        if (userQuery.includes("비디오")) {
-          type = "video_analysis";
-        } else {
-          type = "image_readings";
-        }
-      }
-    }
+    const type = args.type || "tier";
 
     // 1. 서버 이미지 토큰 구매 요청인 경우 (AI가 type을 분류했을 때)
     if (type === "image_generations" || type === "image_readings" || type === "video_analysis") {
@@ -215,12 +201,60 @@ export async function handleSubscriptionToolCall(message, intent, loadingMessage
       return true;
     }
 
-    // 2. 일반 등급(Tier) 구매 요청인 경우
+    // 2. 플래티넘 서버 구매 요청인 경우 (AI가 type을 'platinum'으로 분류)
+    if (type === "platinum") {
+      if (message.guildId) {
+        const serverTier = getServerSubscriptionTier(message.guildId);
+        if (serverTier === "platinum") {
+          await sendResponse(`⚠️ 이 서버에는 이미 **Platinum 서버**가 등록되어 있어 추가 구매할 수 없습니다.`);
+          return true;
+        }
+      }
+
+      const now = getKstNow();
+      const hours = String(now.getHours()).padStart(2, "0");
+      const minutes = String(now.getMinutes()).padStart(2, "0");
+      const timeStr = `${hours}${minutes}`;
+      const depositName = `${timeStr}-plat-${message.guildId ? message.guildId.slice(-4) : "dm"}`;
+
+      const dmContent = [
+        "## Platinum 서버 구매 안내",
+        `${message.author.username}님, 아래 계좌로 4,000원을 입금한 뒤 버튼을 눌러 주세요.`,
+        "",
+        "**입금 계좌**",
+        "- 토스뱅크",
+        "- `1908-8961-3017`",
+        "- 예금주: 전민재",
+        "",
+        "**상품**",
+        "- Platinum 서버 (4,000원 / 30일)",
+        "- 예약 메시지, 서버/채널 분석 기능 제공",
+        "",
+        `입금자명: \`${depositName}\``,
+      ].join("\n");
+
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`sub_complete:platinum:${message.author.id}:${timeStr}:${message.guildId || "dm"}`)
+          .setLabel("Platinum 서버 (4,000원) 송금완료")
+          .setStyle(ButtonStyle.Danger)
+      );
+
+      await message.author.send({ content: dmContent, components: [row] });
+      await sendResponse(`${message.author.username}님, Platinum 서버 구매 안내를 DM으로 보냈어요.`);
+      return true;
+    }
+
+    // 3. 일반 등급(Tier) 구매 요청인 경우
     const now = getKstNow();
     const hours = String(now.getHours()).padStart(2, "0");
     const minutes = String(now.getMinutes()).padStart(2, "0");
     const timeStr = `${hours}${minutes}`;
     const depositName = `${timeStr}-${message.author.id}`;
+
+    const userSub = getUserSubscription(message.author.id);
+    const hasUserTier = userSub.tier === "premium" || userSub.tier === "basic";
+    const serverHasPlatinum = message.guildId && getServerSubscriptionTier(message.guildId) === "platinum";
 
     const dmContent = [
       "## DUST봇 등급 구매 안내",
@@ -232,22 +266,43 @@ export async function handleSubscriptionToolCall(message, intent, loadingMessage
       "- 예금주: 전민재",
       "",
       "**등급**",
-      "- Basic: 3,000원 / 30일",
-      "- Premium: 5,000원 / 30일",
+      ...(!hasUserTier ? ["- Basic: 3,000원 / 30일", "- Premium: 5,000원 / 30일"] : []),
+      ...(!serverHasPlatinum ? ["- Platinum 서버: 4,000원 / 30일"] : []),
       "",
       `입금자명: \`${depositName}\``,
     ].join("\n");
 
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`sub_complete:basic:${message.author.id}:${timeStr}`)
-        .setLabel("Basic 입금완료")
-        .setStyle(ButtonStyle.Primary),
-      new ButtonBuilder()
-        .setCustomId(`sub_complete:premium:${message.author.id}:${timeStr}`)
-        .setLabel("Premium 입금완료")
-        .setStyle(ButtonStyle.Success),
-    );
+    const buttons = [];
+
+    if (!hasUserTier) {
+      buttons.push(
+        new ButtonBuilder()
+          .setCustomId(`sub_complete:basic:${message.author.id}:${timeStr}`)
+          .setLabel("Basic 입금완료")
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId(`sub_complete:premium:${message.author.id}:${timeStr}`)
+          .setLabel("Premium 입금완료")
+          .setStyle(ButtonStyle.Success),
+      );
+    }
+
+    if (!serverHasPlatinum) {
+      buttons.push(
+        new ButtonBuilder()
+          .setCustomId(`sub_complete:platinum:${message.author.id}:${timeStr}:${message.guildId || "dm"}`)
+          .setLabel("Platinum 서버 (4,000원) 송금완료")
+          .setStyle(ButtonStyle.Danger)
+      );
+    }
+
+    if (buttons.length === 0) {
+      const tierLabel = userSub.tier === "premium" ? "Premium" : userSub.tier === "basic" ? "Basic" : "";
+      await sendResponse(`${message.author.username}님, 이미 **${tierLabel}** 등급을 보유 중이셔서 추가로 구매할 수 있는 항목이 없어요.`);
+      return true;
+    }
+
+    const row = new ActionRowBuilder().addComponents(buttons);
 
     await message.author.send({ content: dmContent, components: [row] });
     await sendResponse(`${message.author.username}님, 등급 구매 안내를 DM으로 보냈어요.`);
@@ -335,7 +390,7 @@ export async function handleSubscriptionCommand(message, userPrompt, loadingMess
   }
 
   // 2. 등급 구매 안내
-  if (trimmed === "등급 구매" || trimmed === "등급구매" || trimmed === "구매") {
+  if (trimmed === "등급 구매" || trimmed === "등급구매" || trimmed === "구매" || trimmed.includes("플래티넘 서버 구매") || trimmed.includes("플래티넘서버구매")) {
     const now = getKstNow();
     const hours = String(now.getHours()).padStart(2, "0");
     const minutes = String(now.getMinutes()).padStart(2, "0");
@@ -343,6 +398,12 @@ export async function handleSubscriptionCommand(message, userPrompt, loadingMess
     
     const depositNameBasic = `${timeStr}-${message.author.id}`;
     const depositNamePremium = `${timeStr}-${message.author.id}`;
+    const depositNamePlatinum = `${timeStr}-plat-${message.guildId ? message.guildId.slice(-4) : "dm"}`;
+
+    // 사용자 등급 / 서버 플래티넘 상태 확인
+    const userSub = getUserSubscription(message.author.id);
+    const hasUserTier = userSub.tier === "premium" || userSub.tier === "basic";
+    const serverHasPlatinum = message.guildId && getServerSubscriptionTier(message.guildId) === "platinum";
 
     // DM 내용 구성
     let dmContent = `## ✨ DUST봇 등급 구매 안내서\n\n`;
@@ -355,36 +416,66 @@ export async function handleSubscriptionCommand(message, userPrompt, loadingMess
     dmContent += `* **예금주**: 전민재 (개발자)\n\n`;
 
     dmContent += `### 🏷️ 등급별 요금 정보\n`;
-    dmContent += `1. **Basic 등급 (3,000원 / 30일)**\n`;
-    dmContent += `   - 하루 이미지 생성 6회\n`;
-    dmContent += `   - 하루 이미지 판독 10회\n`;
-    dmContent += `   - 하루 AI 호출량 30회\n\n`;
-    dmContent += `2. **Premium 등급 (5,000원 / 30일)**\n`;
-    dmContent += `   - 하루 이미지 생성 15회\n`;
-    dmContent += `   - 하루 이미지 판독 30회\n`;
-    dmContent += `   - 하루 비디오 판독 3회\n`;
-    dmContent += `   - 하루 AI 호출량 **무제한**\n\n`;
-    dmContent += `   - Premium 등급은 AI 모델 선택 기능 혜택이 포함되어 있습니다.\n\n`;
+    if (!hasUserTier) {
+      dmContent += `1. **Basic 등급 (3,000원 / 30일)**\n`;
+      dmContent += `   - 하루 이미지 생성 6회\n`;
+      dmContent += `   - 하루 이미지 판독 10회\n`;
+      dmContent += `   - 하루 AI 호출량 30회\n\n`;
+      dmContent += `2. **Premium 등급 (5,000원 / 30일)**\n`;
+      dmContent += `   - 하루 이미지 생성 15회\n`;
+      dmContent += `   - 하루 이미지 판독 30회\n`;
+      dmContent += `   - 하루 비디오 판독 3회\n`;
+      dmContent += `   - 하루 AI 호출량 **무제한**\n\n`;
+      dmContent += `   - Premium 등급은 AI 모델 선택 기능 혜택이 포함되어 있습니다.\n\n`;
+    }
+    if (!serverHasPlatinum) {
+      dmContent += `${hasUserTier ? "" : "3. "}**Platinum 서버 (4,000원 / 30일)**\n`;
+      dmContent += `   - 서버(길드) 단위 구독 상품\n`;
+      dmContent += `   - 예약 메시지 기능\n`;
+      dmContent += `   - 서버/채널 분석 기능\n\n`;
+    }
 
     dmContent += `### ⚠️ 중요: 입금자명 설정 안내\n`;
     dmContent += `정확하고 빠른 확인을 위해 입금하실 때 **입금자명**을 반드시 아래와 같이 정확하게 설정해 주세요.\n\n`;
     
     dmContent += `* **Basic 구매 시 입금자명**: \`${depositNameBasic}\`\n`;
-    dmContent += `* **Premium 구매 시 입금자명**: \`${depositNamePremium}\`\n\n`;
-    
+    dmContent += `* **Premium 구매 시 입금자명**: \`${depositNamePremium}\`\n`;
+    dmContent += `* **Platinum 서버 구매 시 입금자명**: \`${depositNamePlatinum}\`\n\n`;
+
     dmContent += `입금이 완료되면 아래 해당하는 등급의 **[송금완료]** 버튼을 눌러주세요. 개발자가 확인 후 등급을 부여해 드립니다.`;
 
     // 송금 완료 버튼 배치
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`sub_complete:basic:${message.author.id}:${timeStr}`)
-        .setLabel("Basic (3,000원) 송금완료")
-        .setStyle(ButtonStyle.Primary),
-      new ButtonBuilder()
-        .setCustomId(`sub_complete:premium:${message.author.id}:${timeStr}`)
-        .setLabel("Premium (5,000원) 송금완료")
-        .setStyle(ButtonStyle.Success)
-    );
+    const buttons = [];
+
+    if (!hasUserTier) {
+      buttons.push(
+        new ButtonBuilder()
+          .setCustomId(`sub_complete:basic:${message.author.id}:${timeStr}`)
+          .setLabel("Basic (3,000원) 송금완료")
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId(`sub_complete:premium:${message.author.id}:${timeStr}`)
+          .setLabel("Premium (5,000원) 송금완료")
+          .setStyle(ButtonStyle.Success),
+      );
+    }
+
+    if (!serverHasPlatinum) {
+      buttons.push(
+        new ButtonBuilder()
+          .setCustomId(`sub_complete:platinum:${message.author.id}:${timeStr}:${message.guildId || "dm"}`)
+          .setLabel("Platinum 서버 (4,000원) 송금완료")
+          .setStyle(ButtonStyle.Danger)
+      );
+    }
+
+    if (buttons.length === 0) {
+      const tierLabel = userSub.tier === "premium" ? "Premium" : userSub.tier === "basic" ? "Basic" : "";
+      await sendResponse(`${message.author.username}님, 이미 **${tierLabel}** 등급을 보유 중이셔서 추가로 구매할 수 있는 항목이 없어요.`);
+      return true;
+    }
+
+    const row = new ActionRowBuilder().addComponents(buttons);
 
     try {
       // DM 발송
@@ -403,6 +494,47 @@ export async function handleSubscriptionCommand(message, userPrompt, loadingMess
 
   // 3. 등급 부여 (개발자 전용)
   // 형식: !먼지야 등급부여 <유저ID> <free|basic|premium> [기간(일)]
+  // 4. 서버 등급 부여 (개발자 전용)
+  // 형식: !먼지야 서버등급부여 <길드ID> <free|platinum> [기간(일)]
+  if (trimmed.startsWith("서버등급부여") || trimmed.startsWith("서버 등급 부여")) {
+    if (message.author.id !== ADMIN_USER_ID) {
+      await sendResponse("❌ 이 명령어는 개발자만 사용할 수 있습니다.");
+      return true;
+    }
+
+    const args = trimmed.split(/\s+/).slice(1);
+    if (args.length < 2) {
+      await sendResponse(`⚠️ 사용법: \`${PREFIX} 서버등급부여 <길드ID> <free|platinum> [기간(일, 기본30일)]\``);
+      return true;
+    }
+
+    const targetGuildId = args[0].trim();
+    const targetTier = args[1].toLowerCase();
+    const days = args[2] ? parseInt(args[2], 10) : 30;
+
+    if (!["free", "platinum"].includes(targetTier)) {
+      await sendResponse("❌ 존재하지 않는 서버 등급입니다. (선택형 등급: `free`, `platinum`)");
+      return true;
+    }
+
+    if (isNaN(days) || days <= 0) {
+      await sendResponse("❌ 기간(일)은 양의 정수여야 합니다.");
+      return true;
+    }
+
+    try {
+      const { updateServerSubscription } = await import("../services/subscription.js");
+      const { tier, expiresAt } = updateServerSubscription(targetGuildId, targetTier, days);
+      const displayExpiry = expiresAt ? `${expiresAt} (KST)` : "무제한";
+      
+      await sendResponse(`✅ 성공적으로 서버 등급이 변경되었습니다.\n- **대상 길드 ID**: ${targetGuildId}\n- **부여된 등급**: \`${tier.toUpperCase()}\`\n- **만료 일자**: \`${displayExpiry}\``);
+    } catch (error) {
+      console.error("Failed to update server subscription:", error);
+      await sendResponse("❌ 서버 등급 부여 중 데이터베이스 오류가 발생했습니다.");
+    }
+    return true;
+  }
+
   if (trimmed.startsWith("등급부여") || trimmed.startsWith("등급 부여")) {
     // 개발자 권한 체크
     if (message.author.id !== ADMIN_USER_ID) {

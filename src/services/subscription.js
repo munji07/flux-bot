@@ -87,7 +87,7 @@ export function getUserSubscriptionTier(userId) {
 export function getUserChatModel(userId) {
   const row = db.prepare("SELECT chat_model FROM user_settings WHERE user_id = ?").get(userId);
   if (!row) return null;
-  if (row.chat_model === 'groq') return 'nvidia/nemotron-3-nano-30b-a3b';
+  if (row.chat_model === 'groq') return 'qwen/qwen3-32b';
   return row.chat_model;
 }
 
@@ -115,24 +115,24 @@ export function updateUserSubscription(userId, tier, days = 30) {
  */
 export function getDailyUsage(userId) {
   const todayStr = getKstDateString();
-  
+
   const row = db.prepare(`
     SELECT ai_calls, image_generations, image_readings, video_analysis
-    FROM user_daily_usage 
+    FROM user_daily_usage
     WHERE user_id = ? AND usage_date = ?
   `).get(userId, todayStr);
-  
+
   if (!row) {
     return { ai_calls: 0, image_generations: 0, image_readings: 0, video_analysis: 0 };
   }
-  
+
   return row;
 }
 
 /**
  * 사용량을 체크하고, 한도를 초과하지 않았다면 사용량을 1 증가시킵니다.
- * @param {string} userId 
- * @param {'ai_calls' | 'image_generations' | 'image_readings' | 'video_analysis'} type 
+ * @param {string} userId
+ * @param {'ai_calls' | 'image_generations' | 'image_readings' | 'video_analysis'} type
  * @returns {{allowed: boolean, current: number, limit: number, tier: string}}
  */
 export function checkAndIncrementUsage(userId, type, guildId = null) {
@@ -145,22 +145,22 @@ export function checkAndIncrementUsage(userId, type, guildId = null) {
   if (!validTypes.includes(type)) {
     throw new Error(`Invalid usage type: ${type}`);
   }
-  
+
   // 오늘 날짜의 레코드가 없는 경우 먼저 생성
   db.prepare(`
     INSERT OR IGNORE INTO user_daily_usage (user_id, usage_date, ai_calls, image_generations, image_readings, video_analysis)
     VALUES (?, ?, 0, 0, 0, 0)
   `).run(userId, todayStr);
-  
+
   const usage = db.prepare(`
-    SELECT ai_calls, image_generations, image_readings, video_analysis 
-    FROM user_daily_usage 
+    SELECT ai_calls, image_generations, image_readings, video_analysis
+    FROM user_daily_usage
     WHERE user_id = ? AND usage_date = ?
   `).get(userId, todayStr);
-  
+
   const currentCount = usage[type];
   const maxLimit = limits[type];
-  
+
   if (currentCount >= maxLimit) {
     if (guildId && consumeServerImageToken(guildId, type)) {
       return {
@@ -179,15 +179,15 @@ export function checkAndIncrementUsage(userId, type, guildId = null) {
       tier: sub.tier,
     };
   }
-  
+
   const column = type;
-  
+
   db.prepare(`
     UPDATE user_daily_usage
     SET ${column} = ${column} + 1
     WHERE user_id = ? AND usage_date = ?
   `).run(userId, todayStr);
-  
+
   return {
     allowed: true,
     current: currentCount + 1,
@@ -199,8 +199,8 @@ export function checkAndIncrementUsage(userId, type, guildId = null) {
 
 /**
  * 사용량을 1 감소시킵니다. (오류 발생 시 롤백용)
- * @param {string} userId 
- * @param {'ai_calls' | 'image_generations' | 'image_readings' | 'video_analysis'} type 
+ * @param {string} userId
+ * @param {'ai_calls' | 'image_generations' | 'image_readings' | 'video_analysis'} type
  */
 export function decrementUsage(userId, type) {
   const todayStr = getKstDateString();
@@ -209,7 +209,7 @@ export function decrementUsage(userId, type) {
   if (!validTypes.includes(type)) return;
 
   const column = type;
-  
+
   db.prepare(`
     UPDATE user_daily_usage
     SET ${column} = CASE WHEN ${column} > 0 THEN ${column} - 1 ELSE 0 END
@@ -262,3 +262,54 @@ export function consumeServerImageToken(guildId, type) {
 
   return result.changes > 0;
 }
+
+/**
+ * 서버의 구독 정보를 조회합니다. 만료일이 지난 경우 자동으로 free 등급으로 업데이트합니다.
+ */
+export function getServerSubscription(guildId) {
+  if (!guildId) return { tier: "free", expires_at: null };
+  const row = db.prepare("SELECT tier, expires_at FROM server_subscriptions WHERE guild_id = ?").get(guildId);
+
+  if (!row) {
+    return { tier: "free", expires_at: null };
+  }
+
+  // 만료일 체크
+  if (row.expires_at) {
+    const nowStr = getKstDateTimeString();
+    if (row.expires_at < nowStr) {
+      db.prepare(`
+        UPDATE server_subscriptions
+        SET tier = 'free', expires_at = NULL, updated_at = ?
+        WHERE guild_id = ?
+      `).run(getKstDateTimeString(), guildId);
+      return { tier: "free", expires_at: null };
+    }
+  }
+
+  return { tier: row.tier, expires_at: row.expires_at };
+}
+
+export function getServerSubscriptionTier(guildId) {
+  return getServerSubscription(guildId).tier;
+}
+
+/**
+ * 서버의 등급을 수동으로 변경(부여)합니다. (개발자 어드민 기능)
+ */
+export function updateServerSubscription(guildId, tier, days = 30) {
+  const kstNow = getKstDateTimeString();
+  const expiresAt = tier === "free" ? null : getExpiryKstDateTimeString(days);
+
+  db.prepare(`
+    INSERT INTO server_subscriptions (guild_id, tier, expires_at, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(guild_id) DO UPDATE SET
+      tier = excluded.tier,
+      expires_at = excluded.expires_at,
+      updated_at = excluded.updated_at
+  `).run(guildId, tier, expiresAt, kstNow, kstNow);
+
+  return { tier, expiresAt };
+}
+

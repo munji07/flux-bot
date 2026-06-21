@@ -1,5 +1,6 @@
 import {
   ActionRowBuilder,
+  ChannelSelectMenuBuilder,
   StringSelectMenuBuilder,
   StringSelectMenuOptionBuilder,
   ButtonBuilder,
@@ -8,18 +9,19 @@ import {
   AutoModerationActionType,
   AutoModerationRuleEventType,
   AutoModerationRuleTriggerType,
+  AuditLogEvent,
   ChannelType,
   GuildVerificationLevel,
   PermissionFlagsBits,
 } from "discord.js";
-import { PREFIX, ADMIN_USER_ID } from "../config.js";
+import { PREFIX, ADMIN_USER_ID } from "../config/config.js";
 import { UserFacingError } from "../errors.js";
 import { logError, logInfo } from "../logger.js";
 import { extractDiscordId, normalizeCommand, splitArgs } from "../utils/command.js";
 import { getDisplayName } from "../utils/message.js";
-import { matchServerMember } from "../services/ai.js";
+import { matchServerMember, matchServerChannel, matchServerRole } from "../services/ai.js";
 import { db } from "../services/database.js";
-import { updateUserSubscription, TIER_LIMITS, getUserSubscriptionTier } from "../services/subscription.js";
+import { updateUserSubscription, TIER_LIMITS, getUserSubscriptionTier, getServerSubscriptionTier } from "../services/subscription.js";
 
 const CONFIRMATION_TIMEOUT_MS = 30_000;
 const DANGEROUS_COMMANDS = new Set([
@@ -110,6 +112,27 @@ const COMMANDS = {
   addRolePermission: "addRolePermission",
   removeRolePermission: "removeRolePermission",
   setModel: "setModel",
+  serverAnalysis: "serverAnalysis",
+  channelAnalysis: "channelAnalysis",
+  changeGuildName: "changeGuildName",
+  changeGuildIcon: "changeGuildIcon",
+  changeGuildBanner: "changeGuildBanner",
+  changeGuildDescription: "changeGuildDescription",
+  setAfkChannel: "setAfkChannel",
+  clearAfkChannel: "clearAfkChannel",
+  setAfkTimeout: "setAfkTimeout",
+  setSystemChannel: "setSystemChannel",
+  createChannel: "createChannel",
+  deleteChannel: "deleteChannel",
+  createRole: "createRole",
+  deleteRole: "deleteRole",
+  unbanMember: "unbanMember",
+  untimeoutMember: "untimeoutMember",
+  pinMessage: "pinMessage",
+  unpinMessage: "unpinMessage",
+  getGuildInfo: "getGuildInfo",
+  getChannelInfo: "getChannelInfo",
+  getMemberInfo: "getMemberInfo",
 };
 
 const COMMAND_ALIASES = {
@@ -117,6 +140,7 @@ const COMMAND_ALIASES = {
   서버관리도움말: COMMANDS.help,
   help: COMMANDS.help,
   modhelp: COMMANDS.help,
+  도움말: COMMANDS.help,
   삭제: COMMANDS.deleteMessage,
   메시지삭제: COMMANDS.deleteMessage,
   deletemessage: COMMANDS.deleteMessage,
@@ -185,6 +209,13 @@ const COMMAND_ALIASES = {
   removerolepermission: COMMANDS.removeRolePermission,
   모델변경: COMMANDS.setModel,
   모델설정: COMMANDS.setModel,
+  서버분석: COMMANDS.serverAnalysis,
+  서버분석보고서: COMMANDS.serverAnalysis,
+  serveranalysis: COMMANDS.serverAnalysis,
+  채널분석: COMMANDS.channelAnalysis,
+  채널활동량: COMMANDS.channelAnalysis,
+  채널통계: COMMANDS.channelAnalysis,
+  channelanalysis: COMMANDS.channelAnalysis,
 };
 
 export async function handleManagementCommand(message, userPrompt, loadingMessage) {
@@ -467,6 +498,177 @@ async function executeCommand(message, command, args, userPrompt, loadingMessage
     case COMMANDS.setModel:
       await setModelCommand(message, args, loadingMessage);
       break;
+    case COMMANDS.serverAnalysis:
+      await serverAnalysisCommand(message, args, loadingMessage);
+      break;
+    case COMMANDS.channelAnalysis:
+      await channelAnalysisCommand(message, args, loadingMessage);
+      break;
+    case COMMANDS.changeGuildName:
+      await assertGuildPermissions(message, PermissionFlagsBits.ManageGuild);
+      await message.guild.setName(args[0]);
+      await loadingMessage.edit("서버 이름을 " + args[0] + "(으)로 변경했어요.");
+      break;
+    case COMMANDS.changeGuildIcon:
+      await assertGuildPermissions(message, PermissionFlagsBits.ManageGuild);
+      await message.guild.setIcon(args[0]);
+      await loadingMessage.edit("서버 아이콘을 변경했어요.");
+      break;
+    case COMMANDS.changeGuildBanner:
+      await assertGuildPermissions(message, PermissionFlagsBits.ManageGuild);
+      await message.guild.setBanner(args[0]);
+      await loadingMessage.edit("서버 배너를 변경했어요.");
+      break;
+    case COMMANDS.changeGuildDescription:
+      await assertGuildPermissions(message, PermissionFlagsBits.ManageGuild);
+      await message.guild.setDescription(args[0]);
+      await loadingMessage.edit("서버 설명을 변경했어요.");
+      break;
+    case COMMANDS.setAfkChannel:
+      await assertGuildPermissions(message, PermissionFlagsBits.ManageGuild);
+      {
+        const chan = await resolveChannel(message, args.join(" "), [ChannelType.GuildVoice]);
+        if (!chan) throw new UserFacingError("AFK 채널을 찾지 못했어요. 채널 ID 또는 이름을 확인해주세요.");
+        await message.guild.setAFKChannel(chan);
+        await loadingMessage.edit(`AFK 채널을 ${chan}(으)로 설정했어요.`);
+      }
+      break;
+    case COMMANDS.clearAfkChannel:
+      await assertGuildPermissions(message, PermissionFlagsBits.ManageGuild);
+      await message.guild.setAFKChannel(null);
+      await loadingMessage.edit("AFK 채널을 해제했어요.");
+      break;
+    case COMMANDS.setAfkTimeout:
+      await assertGuildPermissions(message, PermissionFlagsBits.ManageGuild);
+      await message.guild.setAFKTimeout(parseInt(args[0], 10));
+      await loadingMessage.edit("AFK 대기 시간을 설정했어요.");
+      break;
+    case COMMANDS.setSystemChannel:
+      await assertGuildPermissions(message, PermissionFlagsBits.ManageGuild);
+      {
+        const chan = await resolveChannel(message, args.join(" "), [ChannelType.GuildText]);
+        if (!chan) throw new UserFacingError("시스템 메시지 채널을 찾지 못했어요. 채널 ID 또는 이름을 확인해주세요.");
+        await message.guild.setSystemChannel(chan);
+        await loadingMessage.edit(`시스템 메시지 채널을 ${chan}(으)로 설정했어요.`);
+      }
+      break;
+    case COMMANDS.createChannel:
+      await assertGuildPermissions(message, PermissionFlagsBits.ManageChannels);
+      {
+        const name = args[0] || "새-채널";
+        const typeStr = args[1] || "text";
+        let cType = ChannelType.GuildText;
+        if (typeStr.toLowerCase() === "voice") cType = ChannelType.GuildVoice;
+        if (typeStr.toLowerCase() === "category") cType = ChannelType.GuildCategory;
+        const newChan = await message.guild.channels.create({ name, type: cType });
+        await loadingMessage.edit(`새로운 채널 ${newChan}을 생성했어요.`);
+      }
+      break;
+    case COMMANDS.deleteChannel:
+      await assertGuildPermissions(message, PermissionFlagsBits.ManageChannels);
+      {
+        const chan = await resolveChannel(message, args.join(" "));
+        if (!chan) throw new UserFacingError("채널을 찾지 못했어요.");
+        await chan.delete();
+        await loadingMessage.edit("채널 " + chan.name + "을 삭제했어요.");
+      }
+      break;
+    case COMMANDS.createRole:
+      await assertGuildPermissions(message, PermissionFlagsBits.ManageRoles);
+      {
+        const name = args[0] || "새역할";
+        const color = args[1] || "Default";
+        const newRole = await message.guild.roles.create({ name, color });
+        await loadingMessage.edit(`역할 ${newRole}을 생성했어요.`);
+      }
+      break;
+    case COMMANDS.deleteRole:
+      await assertGuildPermissions(message, PermissionFlagsBits.ManageRoles);
+      {
+        const roleId = extractDiscordId(args[0]) || args[0];
+        const role = message.guild.roles.cache.get(roleId);
+        if (!role) throw new UserFacingError("역할을 찾지 못했어요.");
+        await role.delete();
+        await loadingMessage.edit("역할 " + role.name + "을 삭제했어요.");
+      }
+      break;
+    case COMMANDS.unbanMember:
+      await assertGuildPermissions(message, PermissionFlagsBits.BanMembers);
+      {
+        const userId = extractDiscordId(args[0]) || args[0];
+        await message.guild.members.unban(userId);
+        await loadingMessage.edit("유저 ID " + userId + "의 차단을 해제했어요.");
+      }
+      break;
+    case COMMANDS.untimeoutMember:
+      await assertGuildPermissions(message, PermissionFlagsBits.ModerateMembers);
+      {
+        const target = await resolveMember(message, args[0], "타임아웃을 해제할 멤버를 지정해 주세요.");
+        await target.timeout(null);
+        await loadingMessage.edit("" + target + "님의 타임아웃을 해제했어요.");
+      }
+      break;
+    case COMMANDS.pinMessage:
+      await assertGuildPermissions(message, PermissionFlagsBits.ManageMessages);
+      {
+        const msgId = args[0];
+        const msg = await message.channel.messages.fetch(msgId);
+        if (!msg) throw new UserFacingError("메시지를 찾지 못했어요.");
+        await msg.pin();
+        await loadingMessage.edit("메시지를 고정했어요.");
+      }
+      break;
+    case COMMANDS.unpinMessage:
+      await assertGuildPermissions(message, PermissionFlagsBits.ManageMessages);
+      {
+        const msgId = args[0];
+        const msg = await message.channel.messages.fetch(msgId);
+        if (!msg) throw new UserFacingError("메시지를 찾지 못했어요.");
+        await msg.unpin();
+        await loadingMessage.edit("메시지 고정을 해제했어요.");
+      }
+      break;
+    case COMMANDS.getGuildInfo:
+      {
+        const g = message.guild;
+        const info = [
+          `**📊 ${g.name} 서버 정보**`,
+          `- 서버 ID: \`${g.id}\``,
+          `- 생성일: ${g.createdAt.toLocaleDateString()}`,
+          `- 멤버 수: ${g.memberCount}명`,
+          `- 보안 등급: ${g.verificationLevel}`,
+        ].join("\n");
+        await loadingMessage.edit(info);
+      }
+      break;
+    case COMMANDS.getChannelInfo:
+      {
+        const chanId = extractDiscordId(args[0]) || args[0] || message.channel.id;
+        const chan = message.guild.channels.cache.get(chanId);
+        if (!chan) throw new UserFacingError("채널을 찾지 못했어요.");
+        const info = [
+          `**📁 채널 정보**`,
+          `- 채널명: #${chan.name}`,
+          `- ID: \`${chan.id}\``,
+          `- 유형: ${chan.type}`,
+        ].join("\n");
+        await loadingMessage.edit(info);
+      }
+      break;
+    case COMMANDS.getMemberInfo:
+      {
+        const target = await resolveMember(message, args[0] || message.author.id, "멤버를 지정해 주세요.");
+        const info = [
+          `**👤 멤버 정보**`,
+          `- 유저명: ${target.user.username}`,
+          `- 닉네임: ${target.displayName}`,
+          `- ID: \`${target.id}\``,
+          `- 가입일: ${target.user.createdAt.toLocaleDateString()}`,
+          `- 서버 입장일: ${target.joinedAt.toLocaleDateString()}`,
+        ].join("\n");
+        await loadingMessage.edit(info);
+      }
+      break;
     default:
       throw new UserFacingError("알 수 없는 관리 명령이에요.");
   }
@@ -626,7 +828,7 @@ async function timeoutCommand(message, args, loadingMessage) {
   const reason = args.slice(2).join(" ") || createReason(message, "timeout");
 
   if (!target.moderatable) {
-    throw new UserFacingError("먼지가 해당 멤버를 타임아웃할 수 없어요. 역할 순서를 확인해주세요.");
+    throw new UserFacingError(getUnmoderatableReason(message, target, "타임아웃"));
   }
 
   await target.timeout(durationMs, reason);
@@ -654,7 +856,7 @@ async function kickCommand(message, args, loadingMessage) {
   const reason = args.slice(1).join(" ") || createReason(message, "kick");
 
   if (!target.kickable) {
-    throw new UserFacingError("먼지가 해당 멤버를 추방할 수 없어요. 역할 순서를 확인해주세요.");
+    throw new UserFacingError(getUnmoderatableReason(message, target, "추방"));
   }
 
   await target.kick(reason);
@@ -674,7 +876,7 @@ async function banCommand(message, args, isIpBanRequest, loadingMessage) {
   }
 
   if (targetMember && !targetMember.bannable) {
-    throw new UserFacingError("먼지가 해당 멤버를 차단할 수 없어요. 역할 순서를 확인해주세요.");
+    throw new UserFacingError(getUnmoderatableReason(message, targetMember, "차단"));
   }
 
   const reasonPrefix = isIpBanRequest ? "IP ban requested; Discord API supports account ban only. " : "";
@@ -763,7 +965,7 @@ async function changeNicknameCommand(message, args, loadingMessage) {
   const oldNickname = target.nickname ?? target.displayName ?? target.user.username;
 
   if (!target.manageable) {
-    throw new UserFacingError("먼지가 해당 멤버의 닉네임을 변경할 수 없어요. 역할 순서를 확인해주세요.");
+    throw new UserFacingError(getUnmoderatableReason(message, target, "닉네임 변경"));
   }
 
   if (!nickname) {
@@ -842,18 +1044,104 @@ async function autoModCommand(message, args, loadingMessage) {
   await loadingMessage.edit(`AutoMod 규칙 "${rule.name}"을 만들었어요.`);
 }
 
+const AUDIT_LOG_LABELS = {
+  GuildUpdate: "서버 설정 변경",
+  ChannelCreate: "채널 생성",
+  ChannelUpdate: "채널 수정",
+  ChannelDelete: "채널 삭제",
+  ChannelOverwriteCreate: "채널 권한 추가",
+  ChannelOverwriteUpdate: "채널 권한 수정",
+  ChannelOverwriteDelete: "채널 권한 제거",
+  MemberKick: "멤버 추방",
+  MemberPrune: "멤버 정리",
+  MemberBanAdd: "멤버 차단",
+  MemberBanRemove: "멤버 차단 해제",
+  MemberUpdate: "멤버 정보 변경",
+  MemberRoleUpdate: "멤버 역할 변경",
+  MemberMove: "멤버 이동",
+  MemberDisconnect: "멤버 연결 끊기",
+  BotAdd: "봇 추가",
+  RoleCreate: "역할 생성",
+  RoleUpdate: "역할 수정",
+  RoleDelete: "역할 삭제",
+  InviteCreate: "초대 생성",
+  InviteUpdate: "초대 수정",
+  InviteDelete: "초대 삭제",
+  WebhookCreate: "웹후크 생성",
+  WebhookUpdate: "웹후크 수정",
+  WebhookDelete: "웹후크 삭제",
+  EmojiCreate: "이모지 생성",
+  EmojiUpdate: "이모지 수정",
+  EmojiDelete: "이모지 삭제",
+  MessageDelete: "메시지 삭제",
+  MessageBulkDelete: "메시지 대량 삭제",
+  MessagePin: "메시지 고정",
+  MessageUnpin: "메시지 고정 해제",
+  IntegrationCreate: "통합 생성",
+  IntegrationUpdate: "통합 수정",
+  IntegrationDelete: "통합 삭제",
+  ThreadCreate: "스레드 생성",
+  ThreadUpdate: "스레드 수정",
+  ThreadDelete: "스레드 삭제",
+  AutoModerationRuleCreate: "오토모드 규칙 생성",
+  AutoModerationRuleUpdate: "오토모드 규칙 수정",
+  AutoModerationRuleDelete: "오토모드 규칙 삭제",
+  AutoModerationBlockMessage: "오토모드 메시지 차단",
+  AutoModerationFlagToChannel: "오토모드 관리 채널 전송",
+  AutoModerationUserCommunicationDisabled: "오토모드 타임아웃",
+  AutoModerationQuarantineUser: "오토모드 격리",
+  StageInstanceCreate: "스테이지 생성",
+  StageInstanceUpdate: "스테이지 수정",
+  StageInstanceDelete: "스테이지 삭제",
+  StickerCreate: "스티커 생성",
+  StickerUpdate: "스티커 수정",
+  StickerDelete: "스티커 삭제",
+  GuildScheduledEventCreate: "이벤트 생성",
+  GuildScheduledEventUpdate: "이벤트 수정",
+  GuildScheduledEventDelete: "이벤트 삭제",
+};
+
+function formatAuditLogChange(change) {
+  const oldVal = change.old !== undefined ? `\`${change.old}\`` : null;
+  const newVal = change.new !== undefined ? `\`${change.new}\`` : null;
+  if (oldVal !== null && newVal !== null) return `${change.key}: ${oldVal} → ${newVal}`;
+  if (newVal !== null) return `${change.key}: ${newVal}`;
+  if (oldVal !== null) return `${change.key}: ${oldVal} (제거됨)`;
+  return null;
+}
+
 async function auditLogCommand(message, args, loadingMessage) {
   await assertGuildPermissions(message, PermissionFlagsBits.ViewAuditLog);
 
   const limit = Math.min(Math.max(Number.parseInt(args[0] ?? "5", 10) || 5, 1), 10);
   const auditLogs = await message.guild.fetchAuditLogs({ limit });
-  const lines = [...auditLogs.entries.values()].map((entry) => {
+  const entries = [...auditLogs.entries.values()];
+
+  if (entries.length === 0) {
+    await loadingMessage.edit("감사 로그를 찾지 못했어요.");
+    return;
+  }
+
+  const lines = entries.map((entry) => {
+    const actionKey = AuditLogEvent[entry.action] ?? `UNKNOWN`;
+    const label = AUDIT_LOG_LABELS[actionKey] ?? actionKey;
     const executor = entry.executor?.tag ?? entry.executorId ?? "알 수 없음";
-    const target = entry.target?.tag ?? entry.target?.name ?? entry.targetId ?? "알 수 없음";
-    return `- ${entry.action}: ${executor} -> ${target}`;
+    const target = entry.target?.tag ?? entry.target?.name ?? entry.targetId ?? "";
+    const timestamp = `<t:${Math.floor(entry.createdTimestamp / 1000)}:R>`;
+    const reason = entry.reason ? ` - ${entry.reason}` : "";
+    const changes = entry.changes?.length
+      ? "\n  " + entry.changes.map(formatAuditLogChange).filter(Boolean).join("\n  ")
+      : "";
+
+    return `**${label}** ${timestamp}\n┣ ${executor}${target ? ` → ${target}` : ""}${reason}${changes}`;
   });
 
-  await loadingMessage.edit(lines.length > 0 ? lines.join("\n") : "감사 로그를 찾지 못했어요.");
+  const output = lines.join("\n");
+  if (output.length > 1900) {
+    await loadingMessage.edit(output.slice(0, 1900) + "\n\n*...일부가 생략되었어요*");
+  } else {
+    await loadingMessage.edit(output);
+  }
 }
 
 async function verificationLevelCommand(message, args, loadingMessage) {
@@ -916,7 +1204,7 @@ export async function showModelSelectionUI(messageOrInteraction, isUpdate = fals
     { label: "DeepSeek Flash", value: "deepseek-ai/deepseek-v4-flash", style: ButtonStyle.Primary },
     { label: "DeepSeek Pro", value: "deepseek-ai/deepseek-v4-pro", style: ButtonStyle.Success },
     { label: "Llama 3.3", value: "meta/llama-3.3-70b-instruct", style: ButtonStyle.Secondary },
-    { label: "Nemotron Chat", value: "nvidia/nemotron-3-nano-30b-a3b", style: ButtonStyle.Secondary }
+    { label: "Qwen 3 Chat (Groq)", value: "qwen/qwen3-32b", style: ButtonStyle.Secondary }
   ];
 
   const row = new ActionRowBuilder().addComponents(
@@ -1100,28 +1388,132 @@ function levenshteinDistance(a, b) {
 
 async function resolveVoiceChannel(message, input) {
   const id = extractDiscordId(input);
-  const channel =
-    (id ? await message.guild.channels.fetch(id).catch(() => null) : null) ??
-    message.guild.channels.cache.find((guildChannel) => guildChannel.name === input);
-
-  if (![ChannelType.GuildVoice, ChannelType.GuildStageVoice].includes(channel?.type)) {
-    throw new UserFacingError("이동할 음성 채널을 멘션, ID, 또는 정확한 이름으로 입력해주세요.");
+  if (id) {
+    const channel = await message.guild.channels.fetch(id).catch(() => null);
+    if (channel && [ChannelType.GuildVoice, ChannelType.GuildStageVoice].includes(channel.type)) return channel;
+    throw new UserFacingError("이동할 음성 채널을 찾지 못했어요.");
   }
 
+  const channel = await resolveChannel(message, input, [ChannelType.GuildVoice, ChannelType.GuildStageVoice]);
+  if (!channel) throw new UserFacingError("이동할 음성 채널을 멘션, ID, 또는 이름으로 입력해주세요.");
   return channel;
+}
+
+async function resolveChannel(message, input, allowedTypes = null) {
+  const id = extractDiscordId(input);
+  if (id) {
+    const channel = await message.guild.channels.fetch(id).catch(() => null);
+    if (channel && (!allowedTypes || allowedTypes.includes(channel.type))) return channel;
+    return null;
+  }
+
+  const normalizedInput = normalizeName(input);
+  const exactChannel = message.guild.channels.cache.find((c) => {
+    if (allowedTypes && !allowedTypes.includes(c.type)) return false;
+    return normalizeName(c.name) === normalizedInput;
+  });
+  if (exactChannel) return exactChannel;
+
+  const fuzzyChannel = findBestChannelMatch(message, normalizedInput, allowedTypes);
+  if (fuzzyChannel) return fuzzyChannel;
+
+  const aiChannel = await findAiChannelMatch(message, input, normalizedInput, allowedTypes);
+  if (aiChannel) return aiChannel;
+
+  return null;
+}
+
+async function findBestChannelMatch(message, normalizedInput, allowedTypes) {
+  const candidates = [...message.guild.channels.cache.values()]
+    .filter((c) => !allowedTypes || allowedTypes.includes(c.type))
+    .map((channel) => ({
+      channel,
+      score: getNameSimilarity(normalizedInput, normalizeName(channel.name)),
+    }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score);
+
+  const best = candidates.find((item) => item.score >= 0.4);
+  return best?.channel ?? null;
+}
+
+async function findAiChannelMatch(message, input, normalizedInput, allowedTypes) {
+  const allChannels = [...message.guild.channels.cache.values()]
+    .filter((c) => !allowedTypes || allowedTypes.includes(c.type))
+    .slice(0, 50);
+
+  if (allChannels.length === 0) return null;
+
+  const match = await matchServerChannel({
+    guildName: message.guild.name,
+    targetText: input,
+    candidates: allChannels,
+    logContext: {
+      guildId: message.guildId,
+      userId: message.author.id,
+      userName: getDisplayName(message),
+    },
+  });
+
+  if (!match?.channelId) return null;
+  const channel = message.guild.channels.cache.get(match.channelId);
+  if (channel && (!allowedTypes || allowedTypes.includes(channel.type))) return channel;
+  return null;
 }
 
 async function resolveRole(message, input) {
   const id = extractDiscordId(input);
-  const role =
-    (id ? await message.guild.roles.fetch(id).catch(() => null) : null) ??
-    message.guild.roles.cache.find((guildRole) => guildRole.name === input);
-
-  if (!role) {
-    throw new UserFacingError("역할을 멘션, ID, 또는 정확한 이름으로 입력해주세요.");
+  if (id) {
+    const role = await message.guild.roles.fetch(id).catch(() => null);
+    if (role) return role;
   }
 
-  return role;
+  const normalizedInput = normalizeName(input);
+  const exactRole = message.guild.roles.cache.find((r) => normalizeName(r.name) === normalizedInput);
+  if (exactRole) return exactRole;
+
+  const fuzzyRole = findBestRoleMatch(message, normalizedInput);
+  if (fuzzyRole) return fuzzyRole;
+
+  const aiRole = await findAiRoleMatch(message, input, normalizedInput);
+  if (aiRole) return aiRole;
+
+  throw new UserFacingError("역할을 멘션, ID, 또는 이름으로 입력해주세요.");
+}
+
+async function findBestRoleMatch(message, normalizedInput) {
+  const candidates = [...message.guild.roles.cache.values()]
+    .map((role) => ({
+      role,
+      score: getNameSimilarity(normalizedInput, normalizeName(role.name)),
+    }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score);
+
+  const best = candidates.find((item) => item.score >= 0.4);
+  return best?.role ?? null;
+}
+
+async function findAiRoleMatch(message, input, normalizedInput) {
+  const allRoles = [...message.guild.roles.cache.values()]
+    .sort((a, b) => b.position - a.position)
+    .slice(0, 50);
+
+  if (allRoles.length === 0) return null;
+
+  const match = await matchServerRole({
+    guildName: message.guild.name,
+    targetText: input,
+    candidates: allRoles,
+    logContext: {
+      guildId: message.guildId,
+      userId: message.author.id,
+      userName: getDisplayName(message),
+    },
+  });
+
+  if (!match?.roleId) return null;
+  return message.guild.roles.cache.get(match.roleId) ?? null;
 }
 
 function parseSlowModeSeconds(value) {
@@ -1242,16 +1634,336 @@ function createReason(message, action) {
   return `${action} by ${message.author.tag} (${message.author.id})`;
 }
 
-function getManagementHelpText() {
+export function getManagementHelpText() {
   return [
-    "**먼지 관리 명령 도움말**",
-    `\`${PREFIX} 삭제 <메시지ID>\` 또는 답장 후 \`${PREFIX} 삭제\``,
-    `\`${PREFIX} 청소 <1~100>\`, \`${PREFIX} 저속모드 <초>\``,
-    `\`${PREFIX} 타임아웃 @유저 10m 사유\`, \`${PREFIX} 추방 @유저 사유\`, \`${PREFIX} 차단 @유저 사유\``,
-    `\`${PREFIX} 뮤트 @유저 on/off\`, \`${PREFIX} 청각차단 @유저 on/off\`, \`${PREFIX} 이동 @유저 <음성채널>\`, \`${PREFIX} 연결끊기 @유저\``,
-    `\`${PREFIX} 닉네임 @유저 새닉네임\`, \`${PREFIX} 오토모드 키워드 단어1,단어2\`, \`${PREFIX} 감사로그 5\`, \`${PREFIX} 보안수준 높음\``,
-    `\`${PREFIX} 역할부여 @유저 @역할\`, \`${PREFIX} 역할제거 @유저 @역할\`, \`${PREFIX} 권한추가 @역할 ManageMessages\`, \`${PREFIX} 권한제거 @역할 ManageMessages\``,
-    `\`${PREFIX} 모델변경 <모델명>\` (프리미엄 전용) - 모델 목록: deepseek-ai/deepseek-v4-flash, deepseek-ai/deepseek-v4-pro, meta/llama-3.3-70b-instruct, nvidia/nemotron-3-nano-30b-a3b`,
+    "# 📋 먼지 관리 명령어",
+    "",
+    "## 📝 메시지",
+    `\`${PREFIX} 삭제\` — 메시지 ID 지정 또는 답장 후 사용`,
+    `\`${PREFIX} 청소 <1~100>\` — 메시지 일괄 삭제`,
+    `\`${PREFIX} 저속모드 <초>\` — 슬로우모드 설정`,
+    "",
+    "## 👤 멤버 제재",
+    `\`${PREFIX} 타임아웃 @유저 <시간> [사유]\``,
+    `\`${PREFIX} 추방 @유저 [사유]\``,
+    `\`${PREFIX} 차단 @유저 [사유]\``,
+    `\`${PREFIX} 닉네임 @유저 <새닉네임>\``,
+    "",
+    "## 🔇 음성",
+    `\`${PREFIX} 뮤트 @유저 on/off\``,
+    `\`${PREFIX} 청각차단 @유저 on/off\``,
+    `\`${PREFIX} 이동 @유저 <음성채널>\``,
+    `\`${PREFIX} 연결끊기 @유저\``,
+    "",
+    "## 🔐 역할 · 권한",
+    `\`${PREFIX} 역할부여 @유저 @역할\``,
+    `\`${PREFIX} 역할제거 @유저 @역할\``,
+    `\`${PREFIX} 권한추가 @역할 <권한명>\``,
+    `\`${PREFIX} 권한제거 @역할 <권한명>\``,
+    "",
+    "## ⚙️ 서버 설정",
+    `\`${PREFIX} 오토모드 키워드 단어1,단어2\` — 욕설 필터`,
+    `\`${PREFIX} 감사로그 <개수>\` — 최근 관리 내역`,
+    `\`${PREFIX} 보안수준 <단계>\` — none/low/medium/high/highest`,
+    "",
+    "## 📊 분석 (플래티넘)",
+    `\`${PREFIX} 서버분석\` — 서버 활동량 리포트`,
+    `\`${PREFIX} 채널분석 [#채널/ID]\` — 채널 활동 통계`,
+    "",
+    "## 🤖 모델 (프리미엄)",
+    `\`${PREFIX} 모델변경 <모델명>\``,
+    `모델 목록: deepseek-ai/deepseek-v4-flash, deepseek-ai/deepseek-v4-pro, meta/llama-3.3-70b-instruct, qwen/qwen3-32b`,
   ].join("\n");
 }
+
+async function serverAnalysisCommand(message, args, loadingMessage) {
+  const tier = getServerSubscriptionTier(message.guildId);
+  if (tier !== "platinum") {
+    await loadingMessage.edit("❌ 서버 분석 기능은 **플래티넘 서버(유료)** 전용 기능입니다.\n이 서버는 현재 플래티넘 라이선스가 없습니다. `!먼지야 플래티넘 서버 구매`를 입력해 등급을 업그레이드해 보세요!");
+    return;
+  }
+
+  // 1. 채널 정보 수집
+  const textChannels = message.guild.channels.cache.filter(c => c.type === ChannelType.GuildText);
+  const totalChannelsCount = textChannels.size;
+
+  // 2. DB에서 활동 통계 가져오기
+  const channelStats = db.prepare(`
+    SELECT channel_id, COUNT(*) as cnt 
+    FROM channel_messages 
+    WHERE guild_id = ? 
+    GROUP BY channel_id 
+    ORDER BY cnt DESC
+  `).all(message.guildId);
+
+  const userStats = db.prepare(`
+    SELECT user_id, user_name, user_tag, COUNT(*) as cnt 
+    FROM channel_messages 
+    WHERE guild_id = ? AND is_bot = 0
+    GROUP BY user_id 
+    ORDER BY cnt DESC 
+    LIMIT 5
+  `).all(message.guildId);
+
+  // 3. 미사용 채널 식별 (기록이 하나도 없는 채널)
+  const activeChannelIds = new Set(channelStats.map(s => s.channel_id));
+  const unusedChannels = [];
+  
+  for (const [channelId, channel] of textChannels) {
+    if (!activeChannelIds.has(channelId)) {
+      unusedChannels.push(channel);
+    }
+  }
+
+  // 4. 유저가 없는 역할 확인
+  const emptyRoles = message.guild.roles.cache.filter(
+    r => r.members.size === 0 && !r.managed && r.name !== "@everyone"
+  );
+
+  // 5. 전체 메시지 통계 (서버 생성일 기준 일 평균)
+  const totalMsgCount = db.prepare(`
+    SELECT COUNT(*) as cnt
+    FROM channel_messages
+    WHERE guild_id = ?
+  `).get(message.guildId);
+
+  // 6. 리포트 텍스트 작성
+  let report = `## 📊 ${message.guild.name} 서버 분석 보고서 (플래티넘)\n\n`;
+
+  report += `### 📈 서버 메시지 통계\n`;
+  if (totalMsgCount.cnt > 0) {
+    const days = Math.max(1, Math.ceil((Date.now() - message.guild.createdAt) / (1000 * 60 * 60 * 24)));
+    const dailyAvg = (totalMsgCount.cnt / days).toFixed(1);
+    report += `- 전체 메시지: \`${totalMsgCount.cnt}회\`\n`;
+    report += `- 일 평균: \`${dailyAvg}회/일\` (서버 생성일 기준)\n\n`;
+  } else {
+    report += `- 아직 기록된 메시지가 없어요.\n\n`;
+  }
+
+  report += `### 💬 채널별 메시지량\n`;
+  if (channelStats.length === 0) {
+    report += `- 아직 기록된 메시지가 없어요.\n`;
+  } else {
+    for (const stat of channelStats) {
+      const channel = message.guild.channels.cache.get(stat.channel_id);
+      const name = channel ? `#${channel.name}` : `<#${stat.channel_id}>`;
+      report += `- **${name}**: \`${stat.cnt}회\`\n`;
+    }
+  }
+  report += `\n`;
+
+  report += `### 💤 기록 없는 텍스트 채널\n`;
+  if (unusedChannels.length === 0) {
+    report += `- 모든 채널에 메시지 기록이 있습니다.\n`;
+  } else {
+    const listLimit = unusedChannels.slice(0, 10);
+    const displayList = listLimit.map(c => `<#${c.id}>`).join(", ");
+    report += `- ${displayList}${unusedChannels.length > 10 ? ` 외 ${unusedChannels.length - 10}개` : ""}\n`;
+  }
+  report += `\n`;
+
+  report += `### 👑 주 활동 유저 TOP 5\n`;
+  if (userStats.length === 0) {
+    report += `- 활동 유저 데이터가 아직 없어요.\n`;
+  } else {
+    let rank = 1;
+    for (const u of userStats) {
+      const name = u.user_name || u.user_tag || u.user_id;
+      report += `${rank}. <@${u.user_id}> (${name}): \`${u.cnt}회\`\n`;
+      rank++;
+    }
+  }
+  report += `\n`;
+
+  report += `### 👥 유저가 없는 역할\n`;
+  if (emptyRoles.size === 0) {
+    report += `- 모든 역할에 최소 1명 이상의 멤버가 있습니다.\n`;
+  } else {
+    const limited = [...emptyRoles.values()].slice(0, 15);
+    report += limited.map(r => `- <@&${r.id}> (\`${r.name}\`)`).join("\n");
+    if (emptyRoles.size > 15) report += `\n- 외 ${emptyRoles.size - 15}개`;
+    report += `\n`;
+  }
+
+  await loadingMessage.edit(report);
+}
+
+async function channelAnalysisCommand(message, args, loadingMessage) {
+  const tier = getServerSubscriptionTier(message.guildId);
+  if (tier !== "platinum") {
+    await loadingMessage.edit("❌ 채널 분석 기능은 **플래티넘 서버(유료)** 전용 기능입니다.\n이 서버는 현재 플래티넘 라이선스가 없습니다. `!먼지야 플래티넘 서버 구매`를 입력해 등급을 업그레이드해 보세요!");
+    return;
+  }
+
+  // 대상 채널 결정
+  const targetInput = args.join(" ").trim();
+  let targetChannel = null;
+
+  // 1) AI가 추출한 args로 먼저 시도
+  if (targetInput) {
+    targetChannel = await resolveChannel(message, targetInput, [ChannelType.GuildText, ChannelType.GuildAnnouncement, ChannelType.PublicThread, ChannelType.PrivateThread]);
+  }
+
+  // 2) AI가 args를 제대로 못 뽑았으면 원본 메시지에서 ID 직접 추출
+  if (!targetChannel) {
+    const rawId = message.content.match(/\b\d{16,22}\b/)?.[0] || extractDiscordId(targetInput);
+    if (rawId) {
+      targetChannel = await resolveChannel(message, rawId, [ChannelType.GuildText, ChannelType.GuildAnnouncement, ChannelType.PublicThread, ChannelType.PrivateThread]);
+    }
+  }
+
+  // 3) 그래도 없으면 채널 선택 메뉴 표시
+  if (!targetChannel) {
+    const selectMenu = new ChannelSelectMenuBuilder()
+      .setCustomId("channel_analysis_select")
+      .setPlaceholder("분석할 채널을 선택하세요")
+      .setChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement, ChannelType.PublicThread, ChannelType.PrivateThread)
+      .setMaxValues(1);
+
+    const row = new ActionRowBuilder().addComponents(selectMenu);
+    await loadingMessage.edit({ content: "분석할 채널을 선택해주세요.", components: [row] });
+
+    try {
+      const interaction = await loadingMessage.awaitMessageComponent({
+        filter: i => i.user.id === message.author.id && i.customId === "channel_analysis_select",
+        time: 30_000,
+      });
+      targetChannel = interaction.guild.channels.cache.get(interaction.values[0]);
+      await interaction.update({ content: `선택된 채널: #${targetChannel.name}`, components: [] });
+    } catch {
+      await loadingMessage.edit({ content: "채널 선택 시간이 초과되었어요. 다시 시도해주세요.", components: [] });
+      return;
+    }
+  }
+
+  const channelId = targetChannel.id;
+  const channelName = targetChannel.name;
+
+  // DB에서 해당 채널의 전체 메시지 통계
+  const channelStats = db.prepare(`
+    SELECT COUNT(*) as total_messages,
+           COUNT(DISTINCT CASE WHEN is_bot = 0 THEN user_id END) as unique_users,
+           MIN(created_at) as first_message_at
+    FROM channel_messages
+    WHERE guild_id = ? AND channel_id = ?
+  `).get(message.guildId, channelId);
+
+  const userMsgCount = db.prepare(`
+    SELECT COUNT(*) as cnt
+    FROM channel_messages
+    WHERE guild_id = ? AND channel_id = ? AND is_bot = 0
+  `).get(message.guildId, channelId);
+
+  const botMsgCount = db.prepare(`
+    SELECT COUNT(*) as cnt
+    FROM channel_messages
+    WHERE guild_id = ? AND channel_id = ? AND is_bot = 1
+  `).get(message.guildId, channelId);
+
+  const topUsers = db.prepare(`
+    SELECT user_id, user_name, user_tag, COUNT(*) as cnt
+    FROM channel_messages
+    WHERE guild_id = ? AND channel_id = ? AND is_bot = 0
+    GROUP BY user_id
+    ORDER BY cnt DESC
+    LIMIT 5
+  `).all(message.guildId, channelId);
+
+  // 최근 활동 시간
+  const lastActivity = db.prepare(`
+    SELECT MAX(created_at) as last_message_at
+    FROM channel_messages
+    WHERE guild_id = ? AND channel_id = ?
+  `).get(message.guildId, channelId);
+
+  // 시간대별 활동량 (KST 기준)
+  const hourlyStats = db.prepare(`
+    SELECT CAST(strftime('%H', created_at, '+9 hours') AS INTEGER) as hour, COUNT(*) as cnt
+    FROM channel_messages
+    WHERE guild_id = ? AND channel_id = ?
+    GROUP BY hour
+    ORDER BY cnt DESC
+  `).all(message.guildId, channelId);
+
+  // Discord 실시간 정보
+  const discordChannel = targetChannel;
+  const channelCreatedAt = discordChannel.createdAt;
+  const channelTopic = discordChannel.topic;
+  const memberCount = message.guild.members.cache.filter(m => m.permissionsIn(discordChannel).has("ViewChannel")).size;
+
+  // 일 평균 (채널 생성일 기준)
+  let dailyAvg = "데이터 부족";
+  if (channelStats.total_messages > 0) {
+    const days = Math.max(1, Math.ceil((Date.now() - channelCreatedAt) / (1000 * 60 * 60 * 24)));
+    dailyAvg = (channelStats.total_messages / days).toFixed(1) + "회/일";
+  }
+
+  // 리포트 작성
+  let report = `## 📊 채널 분석 보고서: #${channelName}\n\n`;
+
+  report += `**📋 기본 정보**\n`;
+  report += `- ID: \`${channelId}\`\n`;
+  report += `- 생성일: ${channelCreatedAt.toLocaleDateString("ko-KR")}\n`;
+  report += `- 주제: ${channelTopic ? channelTopic.slice(0, 100) : "설정되지 않음"}\n`;
+  report += `- 접근 가능 멤버: ${memberCount}명\n\n`;
+
+  report += `**💬 채널 전체 메시지**\n`;
+  report += `- 총 메시지: \`${channelStats.total_messages}회\`\n`;
+  report += `- 유저 메시지: \`${userMsgCount.cnt}회\` | 봇 메시지: \`${botMsgCount.cnt}회\`\n`;
+  report += `- 일 평균: \`${dailyAvg}\`\n`;
+  report += `- 대화한 유저 수: \`${channelStats.unique_users}명\`\n`;
+  if (lastActivity.last_message_at) {
+    const lastActive = new Date(lastActivity.last_message_at).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" });
+    report += `- 마지막 메시지: \`${lastActive}\`\n`;
+  } else {
+    report += `- 아직 기록된 메시지가 없어요.\n`;
+  }
+  report += `\n`;
+
+  report += `**⏰ 주 활동 시간대 TOP 3**\n`;
+  if (hourlyStats.length === 0) {
+    report += `- 데이터가 없어요.\n`;
+  } else {
+    const topHours = hourlyStats.slice(0, 3);
+    for (const h of topHours) {
+      report += `- \`${String(h.hour).padStart(2, "0")}:00 ~ ${String(h.hour).padStart(2, "0")}:59\`: ${h.cnt}회\n`;
+    }
+  }
+  report += `\n`;
+
+  report += `**👑 활동 TOP 5**\n`;
+  if (topUsers.length === 0) {
+    report += `- 아직 활동한 유저가 없어요.\n`;
+  } else {
+    let rank = 1;
+    for (const u of topUsers) {
+      const name = u.user_name || u.user_tag || u.user_id;
+      report += `${rank}. <@${u.user_id}>: \`${u.cnt}회\`\n`;
+      rank++;
+    }
+  }
+
+  await loadingMessage.edit(report);
+}
+
+function getUnmoderatableReason(message, target, actionName) {
+  const botMember = message.guild.members.me;
+  const targetHighestRole = target.roles?.highest;
+  const botHighestRole = botMember?.roles?.highest;
+
+  if (target.id === message.guild.ownerId) {
+    return `서버 소유주이므로 ${actionName}할 수 없어요.`;
+  }
+
+  if (target.permissions?.has(PermissionFlagsBits.Administrator)) {
+    return `해당 멤버는 **관리자** 권한을 가지고 있어 ${actionName}할 수 없어요.`;
+  }
+
+  if (targetHighestRole && botHighestRole && targetHighestRole.position >= botHighestRole.position) {
+    return `먼지의 역할(${botHighestRole.name})보다 **${targetHighestRole.name}** 역할의 순위가 더 높아 ${actionName}할 수 없어요.\n서버 설정 → 역할에서 먼지의 역할을 대상 멤버의 역할보다 **위**로 올려주세요.`;
+  }
+
+  return `알 수 없는 이유로 ${actionName}할 수 없어요. 봇의 권한과 역할 순서를 확인해주세요.`;
+}
+
 

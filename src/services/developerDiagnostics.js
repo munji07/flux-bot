@@ -1,13 +1,13 @@
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { extname, relative, resolve, sep } from "node:path";
-import { ADMIN_USER_ID } from "../config.js";
+import { ADMIN_USER_ID } from "../config/config.js";
 import { nvidiaClient, stripReasoningTags } from "./ai.js";
 
 const PROJECT_ROOT = resolve(fileURLToPath(new URL("../../", import.meta.url)));
 const LOG_FILES = [
-  { label: "bot.log", url: new URL("../../logs/bot.log", import.meta.url) },
-  { label: "error.log", url: new URL("../../logs/error.log", import.meta.url) },
+  { label: "bot.log", path: fileURLToPath(new URL("../../logs/bot.log", import.meta.url)) },
+  { label: "error.log", path: fileURLToPath(new URL("../../logs/error.log", import.meta.url)) },
 ];
 const DEFAULT_SOURCE_FILES = [
   "src/handlers/messageCreate.js",
@@ -49,11 +49,11 @@ export async function handleDeveloperDiagnosticsRequest(message, intent, loading
 
 function readRecentLogs() {
   return LOG_FILES.map((file) => {
-    if (!existsSync(file.url)) {
+    if (!existsSync(file.path)) {
       return { file: file.label, lines: [] };
     }
 
-    const lines = readFileSync(file.url, "utf8")
+    const lines = readFileSync(file.path, "utf8")
       .split(/\r?\n/)
       .filter(Boolean)
       .slice(-MAX_LOG_LINES_PER_FILE)

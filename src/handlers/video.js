@@ -1,5 +1,5 @@
 import { createVideoAnalysis } from "../services/ai.js";
-import { checkAndIncrementUsage, decrementUsage } from "../services/subscription.js";
+import { addServerImageToken, checkAndIncrementUsage, decrementUsage } from "../services/subscription.js";
 import { logError, logInfo } from "../logger.js";
 import { getDisplayName } from "../utils/message.js";
 

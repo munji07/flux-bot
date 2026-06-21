@@ -1,12 +1,13 @@
 import { existsSync, readFileSync, statSync, openSync, readSync, closeSync } from "node:fs";
-import { ADMIN_USER_ID } from "../config.js";
+import { fileURLToPath } from "node:url";
+import { ADMIN_USER_ID } from "../config/config.js";
 import { UserFacingError } from "../errors.js";
 import { createLogSearchAnswer } from "./ai.js";
 import { decrementUsage } from "./subscription.js";
 
 const LOG_FILES = [
-  new URL("../../logs/bot.log", import.meta.url),
-  new URL("../../logs/error.log", import.meta.url),
+  fileURLToPath(new URL("../../logs/bot.log", import.meta.url)),
+  fileURLToPath(new URL("../../logs/error.log", import.meta.url)),
 ];
 const DEFAULT_LOOKBACK_DAYS = 7;
 const MAX_CANDIDATE_RECORDS = 250;

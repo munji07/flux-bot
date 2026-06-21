@@ -2,7 +2,7 @@ import {
   HISTORY_BATCH_SIZE,
   MAX_HISTORY_CONTENT_LENGTH,
   MAX_STORED_HISTORY_MESSAGES,
-} from "../config.js";
+} from "../config/config.js";
 import { db } from "./database.js";
 
 const selectRecentHistory = db.prepare(`

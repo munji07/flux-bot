@@ -1,7 +1,6 @@
 import { ShardingManager } from "discord.js";
-import { validateEnv } from "./config.js";
+import { validateEnv } from "./config/config.js";
 import { logError, logInfo } from "./logger.js";
-import { Client, GatewayIntentBits, ActivityType } from 'discord.js';
 
 validateEnv();
 

@@ -22,9 +22,9 @@ export async function handleImageGenerationRequest(client, message, imagePrompt,
 
     await message.channel.sendTyping();
     if (loadingMessage) {
-      await loadingMessage.edit(`-# <a:loading:1495336917326368829> 이미지를 그리고 있어요...`);
+      await loadingMessage.edit(`-# <a:load:1516064965751214110> 이미지를 그리고 있어요...`);
     } else {
-      loadingMessage = await message.reply(`-# <a:loading:1495336917326368829> 이미지를 그리고 있어요...`);
+      loadingMessage = await message.reply(`-# <a:load:1516064965751214110> 이미지를 그리고 있어요...`);
     }
 
     typingInterval = setInterval(() => {

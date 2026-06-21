@@ -1,7 +1,9 @@
-import { DISCORD_MESSAGE_LIMIT, SAFE_MESSAGE_LIMIT } from "../config.js";
+import { DISCORD_MESSAGE_LIMIT, SAFE_MESSAGE_LIMIT } from "../config/config.js";
+import { getUserDisplayName } from "../services/userSettings.js";
 
 export function getDisplayName(message) {
   const name =
+    getUserDisplayName(message.author.id) ||
     message.member?.displayName ||
     message.author.globalName ||
     message.author.username ||
