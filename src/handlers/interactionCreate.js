@@ -45,8 +45,9 @@ export async function handleInteractionCreate(client, interaction) {
       return;
     }
 
-    const storedChannelId = scheduleChannelMap.get(interaction.user.id);
+    const stored = scheduleChannelMap.get(interaction.user.id);
     scheduleChannelMap.delete(interaction.user.id);
+    const storedChannelId = stored?.channelId;
 
     let channelTextInput;
     try { channelTextInput = interaction.fields.getTextInputValue("schedule_channel")?.trim(); } catch { channelTextInput = null; }
@@ -92,7 +93,7 @@ export async function handleInteractionCreate(client, interaction) {
   // 채널 선택 메뉴 처리 (예약 메시지)
   if (interaction.isChannelSelectMenu() && interaction.customId === "schedule_channel_select") {
     const channelId = interaction.values[0];
-    scheduleChannelMap.set(interaction.user.id, channelId);
+    scheduleChannelMap.set(interaction.user.id, { channelId, timestamp: Date.now() });
 
     const modal = new ModalBuilder()
       .setCustomId("schedule_create_modal")

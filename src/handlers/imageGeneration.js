@@ -2,6 +2,7 @@ import { AttachmentBuilder } from "discord.js";
 import { generateImage } from "../services/ai.js";
 import { logError, logInfo } from "../logger.js";
 import { getDisplayName } from "../utils/message.js";
+import { LOADING_EMOJI } from "../config/config.js";
 
 
 export async function handleImageGenerationRequest(client, message, imagePrompt, loadingMessage = null) {
@@ -22,9 +23,9 @@ export async function handleImageGenerationRequest(client, message, imagePrompt,
 
     await message.channel.sendTyping();
     if (loadingMessage) {
-      await loadingMessage.edit(`-# <a:load:1516064965751214110> 이미지를 그리고 있어요...`);
+      await loadingMessage.edit(`-# ${LOADING_EMOJI} 이미지를 그리고 있어요...`);
     } else {
-      loadingMessage = await message.reply(`-# <a:load:1516064965751214110> 이미지를 그리고 있어요...`);
+      loadingMessage = await message.reply(`-# ${LOADING_EMOJI} 이미지를 그리고 있어요...`);
     }
 
     typingInterval = setInterval(() => {

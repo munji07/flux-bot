@@ -19,6 +19,14 @@ export function startScheduler(client) {
       logError("scheduler_tick_failed", null, error);
     });
   }, SCHEDULER_INTERVAL_MS);
+
+  return () => {
+    if (schedulerTimer) {
+      clearInterval(schedulerTimer);
+      schedulerTimer = null;
+      logInfo("scheduler_stopped");
+    }
+  };
 }
 
 export function createScheduledMessage({ guildId, channelId, userId, content, executeAt }) {

@@ -2,6 +2,7 @@ import { createVideoAnalysis } from "../services/ai.js";
 import { addServerImageToken, checkAndIncrementUsage, decrementUsage } from "../services/subscription.js";
 import { logError, logInfo } from "../logger.js";
 import { getDisplayName } from "../utils/message.js";
+import { LOADING_EMOJI } from "../config/config.js";
 
 export async function handleVideoAnalysis(message, userPrompt, loadingMessage) {
   const videoAttachment = message.attachments.find(a => 
@@ -17,7 +18,7 @@ export async function handleVideoAnalysis(message, userPrompt, loadingMessage) {
   const userName = getDisplayName(message);
   
   let usageCheck = null;
-  await loadingMessage.edit("-# <a:loading:1495336917326368829> DUST봇이 영상을 분석 중이에요... 잠시만 기다려 주세요!");
+  await loadingMessage.edit(`-# ${LOADING_EMOJI} DUST봇이 영상을 분석 중이에요... 잠시만 기다려 주세요!`);
 
   try {
     // 사용량 체크

@@ -15,6 +15,7 @@ export const HISTORY_BATCH_SIZE = 10;
 export const MAX_HISTORY_CONTENT_LENGTH = 800;
 export const GROQ_TPM_BUDGET = 4500;
 export const GROQ_MAX_COMPLETION_TOKENS = 4096;
+export const LOADING_EMOJI = "⏳";
 
 export const CLIENT_INTENTS = [
   GatewayIntentBits.Guilds,
@@ -46,6 +47,17 @@ export const SYSTEM_PROMPT = `
 - 개인정보를 물어보거나 요청하는 일은 절대 하지 마.
 - 욕설/폭력/성적인 표현을 사용하는 말은 사용하지 말아.
 - 다른 봇의 명령어는 !먼지야가 아니야.
+- 허위 명령어를 절대 알려주지 마. 아래 실제 존재하는 명령어만 안내해:
+  - 일반 대화: \`!먼지야 [할말]\` - 자유로운 대화
+  - 이미지 생성: \`!먼지야 이미지 생성 [설명]\`
+  - 이미지 분석: 사진 첨부 후 \`!먼지야 [질문]\`
+  - 등급/토큰: \`!먼지야 등급\`, \`!먼지야 등급 구매\`
+  - 이름변경: \`!먼지야 이름변경 [새이름]\`
+  - 서버 관리: \`!먼지야 관리 도움말\`
+  - 예약메시지: \`!먼지야 예약\`
+  - 모델변경 (프리미엄): \`!먼지야 모델변경 <모델명>\`
+  - 발음 변환: \`!먼지야 발음 [문장]\`
+  - !음식, !namechange, !도움말 등은 존재하지 않는 명령어야. 절대 추천하지 마.
 
 4. 개발자 및 최고 관리자
 - 사용자 ID 1269575955626725390이 현재 개발자이며 최고 관리자야.

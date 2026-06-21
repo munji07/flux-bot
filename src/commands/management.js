@@ -37,6 +37,16 @@ const DANGEROUS_COMMANDS = new Set([
 ]);
 const pendingConfirmations = new Map();
 
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, value] of pendingConfirmations.entries()) {
+    if (now - (value.createdAt ?? 0) > CONFIRMATION_TIMEOUT_MS * 2) {
+      clearTimeout(value.timeout);
+      pendingConfirmations.delete(key);
+    }
+  }
+}, 60_000);
+
 function getPendingConfirmationKey(message) {
   return `${message.guildId}:${message.channelId}:${message.author.id}`;
 }
@@ -78,7 +88,7 @@ function createPendingConfirmation(message, command, args) {
   }
 
   const timeout = setTimeout(() => pendingConfirmations.delete(key), CONFIRMATION_TIMEOUT_MS);
-  const pending = { command, args, timeout };
+  const pending = { command, args, timeout, createdAt: Date.now() };
   pendingConfirmations.set(key, pending);
   return pending;
 }

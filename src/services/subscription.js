@@ -129,37 +129,74 @@ export function getDailyUsage(userId) {
   return row;
 }
 
+const USAGE_COLUMNS = {
+  ai_calls: 'ai_calls',
+  image_generations: 'image_generations',
+  image_readings: 'image_readings',
+  video_analysis: 'video_analysis',
+};
+
+const checkAndIncrementUsageStmt = db.prepare(`
+  INSERT INTO user_daily_usage (user_id, usage_date, ai_calls, image_generations, image_readings, video_analysis)
+  VALUES (?, ?, 0, 0, 0, 0)
+  ON CONFLICT(user_id, usage_date) DO NOTHING
+`);
+
+const incrementUsageStmt = db.prepare(`
+  UPDATE user_daily_usage
+  SET ai_calls = ai_calls + CASE WHEN ? = 'ai_calls' THEN 1 ELSE 0 END,
+      image_generations = image_generations + CASE WHEN ? = 'image_generations' THEN 1 ELSE 0 END,
+      image_readings = image_readings + CASE WHEN ? = 'image_readings' THEN 1 ELSE 0 END,
+      video_analysis = video_analysis + CASE WHEN ? = 'video_analysis' THEN 1 ELSE 0 END
+  WHERE user_id = ? AND usage_date = ?
+    AND (
+      (? = 'ai_calls' AND ai_calls < ?) OR
+      (? = 'image_generations' AND image_generations < ?) OR
+      (? = 'image_readings' AND image_readings < ?) OR
+      (? = 'video_analysis' AND video_analysis < ?)
+    )
+`);
+
+const getUsageStmt = db.prepare(`
+  SELECT ai_calls, image_generations, image_readings, video_analysis
+  FROM user_daily_usage
+  WHERE user_id = ? AND usage_date = ?
+`);
+
 /**
- * 사용량을 체크하고, 한도를 초과하지 않았다면 사용량을 1 증가시킵니다.
+ * 사용량을 체크하고, 한도를 초과하지 않았다면 사용량을 1 증가시킵니다. (원자적 연산)
  * @param {string} userId
  * @param {'ai_calls' | 'image_generations' | 'image_readings' | 'video_analysis'} type
- * @returns {{allowed: boolean, current: number, limit: number, tier: string}}
+ * @returns {{allowed: boolean, current: number, limit: number, tier: string, usedServerToken?: boolean}}
  */
 export function checkAndIncrementUsage(userId, type, guildId = null) {
   const sub = getUserSubscription(userId);
   const limits = TIER_LIMITS[sub.tier];
   const todayStr = getKstDateString();
 
-  // SQL Injection 방지를 위한 컬럼 이름 검증
-  const validTypes = ['ai_calls', 'image_generations', 'image_readings', 'video_analysis'];
-  if (!validTypes.includes(type)) {
+  if (!USAGE_COLUMNS[type]) {
     throw new Error(`Invalid usage type: ${type}`);
   }
 
-  // 오늘 날짜의 레코드가 없는 경우 먼저 생성
-  db.prepare(`
-    INSERT OR IGNORE INTO user_daily_usage (user_id, usage_date, ai_calls, image_generations, image_readings, video_analysis)
-    VALUES (?, ?, 0, 0, 0, 0)
-  `).run(userId, todayStr);
-
-  const usage = db.prepare(`
-    SELECT ai_calls, image_generations, image_readings, video_analysis
-    FROM user_daily_usage
-    WHERE user_id = ? AND usage_date = ?
-  `).get(userId, todayStr);
-
-  const currentCount = usage[type];
   const maxLimit = limits[type];
+
+  checkAndIncrementUsageStmt.run(userId, todayStr);
+
+  const result = incrementUsageStmt.run(type, type, type, type, userId, todayStr, type, maxLimit, type, maxLimit, type, maxLimit, type, maxLimit);
+
+  if (result.changes > 0) {
+    const usage = getUsageStmt.get(userId, todayStr);
+    return {
+      allowed: true,
+      current: usage[type],
+      limit: maxLimit,
+      tier: sub.tier,
+      usedServerToken: false,
+    };
+  }
+
+  const usage = getUsageStmt.get(userId, todayStr);
+  const currentCount = usage?.[type] ?? 0;
 
   if (currentCount >= maxLimit) {
     if (guildId && consumeServerImageToken(guildId, type)) {
@@ -180,14 +217,6 @@ export function checkAndIncrementUsage(userId, type, guildId = null) {
     };
   }
 
-  const column = type;
-
-  db.prepare(`
-    UPDATE user_daily_usage
-    SET ${column} = ${column} + 1
-    WHERE user_id = ? AND usage_date = ?
-  `).run(userId, todayStr);
-
   return {
     allowed: true,
     current: currentCount + 1,
@@ -197,6 +226,15 @@ export function checkAndIncrementUsage(userId, type, guildId = null) {
   };
 }
 
+const decrementUsageStmt = db.prepare(`
+  UPDATE user_daily_usage
+  SET ai_calls = CASE WHEN ? = 'ai_calls' AND ai_calls > 0 THEN ai_calls - 1 ELSE ai_calls END,
+      image_generations = CASE WHEN ? = 'image_generations' AND image_generations > 0 THEN image_generations - 1 ELSE image_generations END,
+      image_readings = CASE WHEN ? = 'image_readings' AND image_readings > 0 THEN image_readings - 1 ELSE image_readings END,
+      video_analysis = CASE WHEN ? = 'video_analysis' AND video_analysis > 0 THEN video_analysis - 1 ELSE video_analysis END
+  WHERE user_id = ? AND usage_date = ?
+`);
+
 /**
  * 사용량을 1 감소시킵니다. (오류 발생 시 롤백용)
  * @param {string} userId
@@ -205,16 +243,9 @@ export function checkAndIncrementUsage(userId, type, guildId = null) {
 export function decrementUsage(userId, type) {
   const todayStr = getKstDateString();
 
-  const validTypes = ['ai_calls', 'image_generations', 'image_readings', 'video_analysis'];
-  if (!validTypes.includes(type)) return;
+  if (!USAGE_COLUMNS[type]) return;
 
-  const column = type;
-
-  db.prepare(`
-    UPDATE user_daily_usage
-    SET ${column} = CASE WHEN ${column} > 0 THEN ${column} - 1 ELSE 0 END
-    WHERE user_id = ? AND usage_date = ?
-  `).run(userId, todayStr);
+  decrementUsageStmt.run(type, type, type, type, userId, todayStr);
 }
 
 export function getServerImageTokens(guildId) {
@@ -231,34 +262,53 @@ export function getServerImageTokens(guildId) {
   return row;
 }
 
+const SERVER_TOKEN_COLUMNS = {
+  image_generations: 'image_generations',
+  image_readings: 'image_readings',
+  video_analysis: 'video_analysis',
+};
+
+const addServerTokenStmt = db.prepare(`
+  INSERT INTO server_image_tokens (guild_id, image_generations, image_readings, video_analysis, created_at, updated_at)
+  VALUES (?, 0, 0, 0, ?, ?)
+  ON CONFLICT(guild_id) DO UPDATE SET
+    image_generations = image_generations + CASE WHEN ? = 'image_generations' THEN ? ELSE 0 END,
+    image_readings = image_readings + CASE WHEN ? = 'image_readings' THEN ? ELSE 0 END,
+    video_analysis = video_analysis + CASE WHEN ? = 'video_analysis' THEN ? ELSE 0 END,
+    updated_at = excluded.updated_at
+`);
+
 export function addServerImageToken(guildId, type, amount = 1) {
-  if (!["image_generations", "image_readings", "video_analysis"].includes(type)) {
+  if (!SERVER_TOKEN_COLUMNS[type]) {
     throw new Error(`Unsupported server image token type: ${type}`);
   }
 
   const kstNow = getKstDateTimeString();
-  db.prepare(`
-    INSERT INTO server_image_tokens (guild_id, ${type}, created_at, updated_at)
-    VALUES (?, ?, ?, ?)
-    ON CONFLICT(guild_id) DO UPDATE SET
-      ${type} = ${type} + excluded.${type},
-      updated_at = excluded.updated_at
-  `).run(guildId, amount, kstNow, kstNow);
+  addServerTokenStmt.run(guildId, kstNow, kstNow, type, amount, type, amount, type, amount);
 
   return getServerImageTokens(guildId);
 }
 
+const consumeServerTokenStmt = db.prepare(`
+  UPDATE server_image_tokens
+  SET image_generations = CASE WHEN ? = 'image_generations' AND image_generations > 0 THEN image_generations - 1 ELSE image_generations END,
+      image_readings = CASE WHEN ? = 'image_readings' AND image_readings > 0 THEN image_readings - 1 ELSE image_readings END,
+      video_analysis = CASE WHEN ? = 'video_analysis' AND video_analysis > 0 THEN video_analysis - 1 ELSE video_analysis END,
+      updated_at = ?
+  WHERE guild_id = ? AND (
+    (? = 'image_generations' AND image_generations > 0) OR
+    (? = 'image_readings' AND image_readings > 0) OR
+    (? = 'video_analysis' AND video_analysis > 0)
+  )
+`);
+
 export function consumeServerImageToken(guildId, type) {
-  if (!["image_generations", "image_readings", "video_analysis"].includes(type)) {
+  if (!SERVER_TOKEN_COLUMNS[type]) {
     return false;
   }
 
-  const result = db.prepare(`
-    UPDATE server_image_tokens
-    SET ${type} = ${type} - 1,
-        updated_at = ?
-    WHERE guild_id = ? AND ${type} > 0
-  `).run(getKstDateTimeString(), guildId);
+  const kstNow = getKstDateTimeString();
+  const result = consumeServerTokenStmt.run(type, type, type, kstNow, guildId, type, type, type);
 
   return result.changes > 0;
 }

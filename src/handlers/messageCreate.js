@@ -1,9 +1,10 @@
-﻿import { ADMIN_USER_ID, PREFIX, SAFE_MESSAGE_LIMIT, HISTORY_BATCH_SIZE, GEMINI_SEARCH_MODEL, DEEPSEEK_CHAT_MODEL } from "../config/config.js";
+﻿import { ADMIN_USER_ID, PREFIX, SAFE_MESSAGE_LIMIT, HISTORY_BATCH_SIZE, GEMINI_SEARCH_MODEL, DEEPSEEK_CHAT_MODEL, LOADING_EMOJI } from "../config/config.js";
 import { UserFacingError } from "../errors.js";
-import { handleManagementToolCall, getManagementHelpText } from "../commands/management.js";
+import { handleManagementToolCall, getManagementHelpText, showModelSelectionUI } from "../commands/management.js";
 import { handleScheduleFromIntent } from "../commands/scheduler.js";
 import { handleSubscriptionToolCall } from "../commands/subscription.js";
 import { handleImageGenerationRequest } from "./imageGeneration.js";
+import { handleUserSettingsCommand } from "../commands/userSettings.js";
 import { handleBotFeatureInfoRequest } from "../services/botFeatureInfo.js";
 import { handleDeveloperDiagnosticsRequest } from "../services/developerDiagnostics.js";
 import { handleLogSearchRequest, isPayloadTooLargeError } from "../services/logSearch.js";
@@ -38,7 +39,24 @@ import {
 } from "../utils/message.js";
 import { getPronunciationReply } from "../utils/phonetics.js";
 
-const activeUsers = new Set();
+function createLimitExceededMessage(username, tierName, usageTypeName, limit, prefix) {
+  const limitText = limit === Infinity ? "무제한" : `${limit}회`;
+  return `❌ **${usageTypeName} 한도 초과**\n` +
+    `현재 ${username}님의 등급은 \`${tierName}\`이며, 하루 ${usageTypeName} 제한량은 **${limitText}**입니다.\n` +
+    `오늘 제한량을 모두 소모하셨습니다. 내일 다시 시도하시거나, \`${prefix} 등급 구매\`를 통해 한도를 늘려보세요!`;
+}
+
+const activeUsers = new Map();
+const ACTIVE_USER_TIMEOUT_MS = 5 * 60 * 1000;
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [userId, timestamp] of activeUsers.entries()) {
+    if (now - timestamp > ACTIVE_USER_TIMEOUT_MS) {
+      activeUsers.delete(userId);
+    }
+  }
+}, 60_000);
 
 const insertChannelMessage = db.prepare(`
   INSERT OR IGNORE INTO channel_messages (message_id, guild_id, channel_id, user_id, user_tag, user_name, is_bot, content, created_at)
@@ -76,6 +94,7 @@ export async function handleMessageCreate(client, message) {
     return;
   }
 
+  const now = Date.now();
   if (activeUsers.has(message.author.id)) {
     await message.reply("먼지가 이미 답변을 작성하고 있어요. 답변이 완료된 후 다시 질문해주세요!");
     return;
@@ -87,11 +106,10 @@ export async function handleMessageCreate(client, message) {
     return;
   }
 
-  activeUsers.add(message.author.id);
-  try {
+  activeUsers.set(message.author.id, now);
     let usageCheck = null;
     let usageType = null;
-    let loadingMessage = await message.reply("-# <a:load:1516064965751214110>DUST봇이 요청을 확인하고 있어요...");
+    let loadingMessage = await message.reply(`-# ${LOADING_EMOJI} DUST봇이 요청을 확인하고 있어요...`);
 
     // 유저 이름 설정 여부 체크 및 자동 저장 (첫 대화)
     let isFirstConversation = false;
@@ -112,6 +130,12 @@ export async function handleMessageCreate(client, message) {
     }
     const userName = displayName;
     let intent;
+
+    // 이름변경은 AI 분류 없이 바로 처리
+    if (userPrompt.startsWith("이름변경") || /^이름(?:초기화|삭제|리셋)$/i.test(userPrompt)) {
+      const handled = await handleUserSettingsCommand(message, userPrompt, loadingMessage);
+      if (handled) return;
+    }
 
     try {
       intent = await classifyRequestIntent({
@@ -226,6 +250,24 @@ export async function handleMessageCreate(client, message) {
     return;
   }
 
+  if (intent.tool === "change_model") {
+    try {
+      await showModelSelectionUI(message);
+      if (loadingMessage) await loadingMessage.delete().catch(() => {});
+    } catch (error) {
+      logError("change_model", message.guildId, error, {
+        guildName: message.guild.name,
+        channelId: message.channelId,
+        userId: message.author.id,
+        userTag: message.author.tag,
+        commandText: userPrompt,
+      });
+      const errorMessage = error instanceof UserFacingError ? error.message : "모델 변경 UI를 표시하는 중 문제가 생겼어요.";
+      await loadingMessage.edit(errorMessage).catch(() => {});
+    }
+    return;
+  }
+
   if (intent.tool === "schedule") {
     const handled = await handleScheduleFromIntent(message, intent.arguments, loadingMessage);
     if (handled) return;
@@ -245,10 +287,7 @@ export async function handleMessageCreate(client, message) {
       usageCheck = checkAndIncrementUsage(message.author.id, "ai_calls", message.guildId);
       if (!usageCheck.allowed) {
         const limits = TIER_LIMITS[usageCheck.tier];
-        const limitExceededMessage = `❌ **AI 호출 한도 초과**\n` +
-          `현재 ${message.author.username}님의 등급은 \`${limits.name}\`이며, 하루 AI 호출 제한량은 **${limits.ai_calls === Infinity ? "무제한" : `${limits.ai_calls}회`}**입니다.\n` +
-          `오늘 제한량을 모두 소모하셨습니다. 내일 다시 시도하시거나, \`${PREFIX} 등급 구매\`를 통해 한도를 늘려보세요!`;
-        await loadingMessage.edit(limitExceededMessage);
+        await loadingMessage.edit(createLimitExceededMessage(message.author.username, limits.name, "AI 호출", limits.ai_calls, PREFIX));
         return;
       }
 
@@ -267,7 +306,7 @@ export async function handleMessageCreate(client, message) {
 
       const searchResult = await handleGoogleSearch(query);
       if (searchResult) {
-        const answerWithFooter = `${searchResult}\n\n-# 🤖 모델: ${GEMINI_SEARCH_MODEL}`;
+        const answerWithFooter = `${stripModelFooter(searchResult)}\n\n-# 🤖 모델: ${GEMINI_SEARCH_MODEL}`;
         await sendChunkedAnswer(message, loadingMessage, answerWithFooter);
 
         // 결과 전송 로그 기록
@@ -301,10 +340,7 @@ export async function handleMessageCreate(client, message) {
       usageCheck = checkAndIncrementUsage(message.author.id, "ai_calls", message.guildId);
       if (!usageCheck.allowed) {
         const limits = TIER_LIMITS[usageCheck.tier];
-        const limitExceededMessage = `❌ **AI 호출 한도 초과**\n` +
-          `현재 ${message.author.username}님의 등급은 \`${limits.name}\`이며, 하루 AI 호출 제한량은 **${limits.ai_calls === Infinity ? "무제한" : `${limits.ai_calls}회`}**입니다.\n` +
-          `오늘 제한량을 모두 소모하셨습니다. 내일 다시 시도하시거나, \`${PREFIX} 등급 구매\`를 통해 한도를 늘려보세요!`;
-        await loadingMessage.edit(limitExceededMessage);
+        await loadingMessage.edit(createLimitExceededMessage(message.author.username, limits.name, "AI 호출", limits.ai_calls, PREFIX));
         return;
       }
 
@@ -328,10 +364,7 @@ export async function handleMessageCreate(client, message) {
       usageCheck = checkAndIncrementUsage(message.author.id, "ai_calls", message.guildId);
       if (!usageCheck.allowed) {
         const limits = TIER_LIMITS[usageCheck.tier];
-        const limitExceededMessage = `❌ **AI 호출 한도 초과**\n` +
-          `현재 ${message.author.username}님의 등급은 \`${limits.name}\`이며, 하루 AI 호출 제한량은 **${limits.ai_calls === Infinity ? "무제한" : `${limits.ai_calls}회`}**입니다.\n` +
-          `오늘 제한량을 모두 소모하셨습니다. 내일 다시 시도하시거나, \`${PREFIX} 등급 구매\`를 통해 한도를 늘려보세요!`;
-        await loadingMessage.edit(limitExceededMessage);
+        await loadingMessage.edit(createLimitExceededMessage(message.author.username, limits.name, "AI 호출", limits.ai_calls, PREFIX));
         return;
       }
 
@@ -369,10 +402,7 @@ export async function handleMessageCreate(client, message) {
     usageCheck = checkAndIncrementUsage(message.author.id, "ai_calls", message.guildId);
     if (!usageCheck.allowed) {
       const limits = TIER_LIMITS[usageCheck.tier];
-      const limitExceededMessage = `❌ **AI 호출 한도 초과**\n` +
-        `현재 ${message.author.username}님의 등급은 \`${limits.name}\`이며, 하루 AI 호출 제한량은 **${limits.ai_calls === Infinity ? "무제한" : `${limits.ai_calls}회`}**입니다.\n` +
-        `오늘 제한량을 모두 소모하셨습니다. 내일 다시 시도하시거나, \`${PREFIX} 등급 구매\`를 통해 한도를 늘려보세요!`;
-      await loadingMessage.edit(limitExceededMessage);
+      await loadingMessage.edit(createLimitExceededMessage(message.author.username, limits.name, "AI 호출", limits.ai_calls, PREFIX));
       return;
     }
 
@@ -403,10 +433,7 @@ export async function handleMessageCreate(client, message) {
     usageCheck = checkAndIncrementUsage(message.author.id, "image_generations", message.guildId);
     if (!usageCheck.allowed) {
       const limits = TIER_LIMITS[usageCheck.tier];
-      const limitExceededMessage = `❌ **이미지 생성 한도 초과**\n` +
-        `현재 ${message.author.username}님의 등급은 \`${limits.name}\`이며, 하루 이미지 생성 제한량은 **${limits.image_generations}회**입니다.\n` +
-        `오늘 제한량을 모두 소모하셨습니다. 내일 다시 시도하시거나, \`${PREFIX} 등급 구매\`를 통해 한도를 늘려보세요!`;
-      await loadingMessage.edit(limitExceededMessage);
+      await loadingMessage.edit(createLimitExceededMessage(message.author.username, limits.name, "이미지 생성", limits.image_generations, PREFIX));
       return;
     }
 
@@ -432,12 +459,7 @@ export async function handleMessageCreate(client, message) {
   usageCheck = checkAndIncrementUsage(message.author.id, usageType, message.guildId);
   if (!usageCheck.allowed) {
     const limits = TIER_LIMITS[usageCheck.tier];
-    const limitVal = limits[usageType] === Infinity ? "무제한" : `${limits[usageType]}회`;
-    const limitExceededMessage = `❌ **${usageTypeName} 한도 초과**\n` +
-      `현재 ${message.author.username}님의 등급은 \`${limits.name}\`이며, 하루 ${usageTypeName} 제한량은 **${limitVal}**입니다.\n` +
-      `오늘 제한량을 모두 소모하셨습니다. 내일 다시 시도하시거나, \`${PREFIX} 등급 구매\`를 통해 한도를 늘려보세요!`;
-
-    await loadingMessage.edit(limitExceededMessage).catch(() => {});
+    await loadingMessage.edit(createLimitExceededMessage(message.author.username, limits.name, usageTypeName, limits[usageType], PREFIX)).catch(() => {});
     return;
   }
 
@@ -498,7 +520,7 @@ export async function handleMessageCreate(client, message) {
     await message.channel.sendTyping();
 
     currentStep = "send_loading_message";
-    await loadingMessage.edit(`-# <a:load:1516064965751214110> DUST봇이 답변을 준비하고 있어요...`).catch(() => {});
+    await loadingMessage.edit(`-# ${LOADING_EMOJI} DUST봇이 답변을 준비하고 있어요...`).catch(() => {});
 
     typingInterval = setInterval(() => {
       message.channel.sendTyping().catch((error) => {
@@ -529,6 +551,7 @@ export async function handleMessageCreate(client, message) {
 
         currentStep = "parse_ai_answer";
         answer = stripCodeBlocks(stripReasoningTags(chatCompletion.choices?.[0]?.message?.content ?? ""));
+        answer = stripModelFooter(answer);
 
         // 답변이 비어있다면 에러를 던져 catch 블록의 폴백(Groq)이 실행되도록 함
         if (!answer || answer.trim().length === 0) {
@@ -547,7 +570,7 @@ export async function handleMessageCreate(client, message) {
 
         if (groqLimitHit) {
           currentStep = "request_nvidia_fallback";
-          await loadingMessage.edit("-# <a:load:1516064965751214110> DUST봇이 다른 모델로 답변을 이어서 준비하고 있어요...");
+          await loadingMessage.edit(`-# ${LOADING_EMOJI} DUST봇이 다른 모델로 답변을 이어서 준비하고 있어요...`);
 
           try {
             const fallbackCompletion = await createChatCompletion({
@@ -569,6 +592,7 @@ export async function handleMessageCreate(client, message) {
 
             currentStep = "parse_nvidia_fallback_answer";
             answer = stripCodeBlocks(stripReasoningTags(fallbackCompletion.choices?.[0]?.message?.content ?? ""));
+            answer = stripModelFooter(answer);
             if (!answer || answer.trim().length === 0) {
               throw new Error("NVIDIA fallback returned empty content");
             }
@@ -582,7 +606,7 @@ export async function handleMessageCreate(client, message) {
           }
         } else {
           currentStep = "request_stream_fallback";
-          await loadingMessage.edit("-# <a:load:1516064965751214110> DUST봇이 다른 모델로 답변을 이어서 준비하고 있어요...");
+          await loadingMessage.edit(`-# ${LOADING_EMOJI} DUST봇이 다른 모델로 답변을 이어서 준비하고 있어요...`);
 
           const streamModel = isGroqModel(usedModel) ? DEEPSEEK_CHAT_MODEL : usedModel;
           const chatCompletion = await createChatCompletionStream({
@@ -620,6 +644,7 @@ export async function handleMessageCreate(client, message) {
 
       currentStep = "parse_ai_answer";
       answer = stripCodeBlocks(stripReasoningTags(chatCompletion.choices?.[0]?.message?.content ?? ""));
+      answer = stripModelFooter(answer);
     }
 
     if (!answer) {
@@ -637,10 +662,11 @@ export async function handleMessageCreate(client, message) {
 
     currentStep = "send_ai_answer";
     if (!answerAlreadySent) {
+      const modelFooter = `\n\n-# 🤖 모델: ${getModelDisplayName(usedModel)}`;
       const firstTalkFooter = isFirstConversation 
-        ? `\n\n-#👋 처음 대화하시는 것이라 **${displayName}**님이라고 부를게요. 이름을 바꾸고 싶으시다면 \`${PREFIX} 이름변경 [새이름]\`을 입력해주세요!`
+        ? `\n\n-# 👋 처음 대화하시는 것이라 **${displayName}**님이라고 부를게요. 이름을 바꾸고 싶으시다면 \`${PREFIX} 이름변경 [새이름]\`을 입력해주세요!`
         : "";
-      await sendChunkedAnswer(message, loadingMessage, `${answer}${firstTalkFooter}`);
+      await sendChunkedAnswer(message, loadingMessage, `${answer}${modelFooter}${firstTalkFooter}`);
     }
 
     appendConversationHistory(
@@ -669,10 +695,12 @@ export async function handleMessageCreate(client, message) {
       storedHistoryMessageCount: getStoredHistoryLength(historyKey),
     });
   } catch (error) {
-    if (usageCheck?.usedServerToken) {
-      addServerImageToken(message.guildId, usageType);
-    } else {
-      decrementUsage(message.author.id, usageType);
+    if (usageCheck && usageType) {
+      if (usageCheck.usedServerToken) {
+        addServerImageToken(message.guildId, usageType);
+      } else {
+        decrementUsage(message.author.id, usageType);
+      }
     }
 
     logError(currentStep, message.guildId, error, {
@@ -719,10 +747,25 @@ export async function handleMessageCreate(client, message) {
     }
   } finally {
     if (typingInterval) clearInterval(typingInterval);
-  }
-  } finally {
     activeUsers.delete(message.author.id);
   }
+}
+
+function stripModelFooter(text) {
+  return text.replace(/\n\n-? ?#? ?🤖 모델: .*$/gm, "").trim();
+}
+
+function getModelDisplayName(model) {
+  const map = {
+    "qwen/qwen3-32b": "Qwen3 32B",
+    "meta/llama-4-maverick-17b-128e-instruct": "Llama 4 Maverick",
+    "deepseek-ai/deepseek-v4-flash": "DeepSeek V4 Flash",
+    "deepseek-ai/deepseek-v4-pro": "DeepSeek V4 Pro",
+    "meta/llama-3.3-70b-instruct": "Llama 3.3 70B",
+    "nvidia/nemotron-3-nano-30b-a3b": "Nemotron 30B",
+    "gemini-2.5-flash": "Gemini 2.5 Flash",
+  };
+  return map[model] || model.replace(/^.*\//, "");
 }
 
 async function sendStreamingAnswer(message, loadingMessage, stream, usedModel, isFirstConversation = false, displayName = "") {
@@ -737,7 +780,7 @@ async function sendStreamingAnswer(message, loadingMessage, stream, usedModel, i
       if (!delta) continue;
 
       fullAnswer += delta;
-      const visible = stripCodeBlocks(stripReasoningTags(fullAnswer));
+      const visible = stripCodeBlocks(stripReasoningTags(stripModelFooter(fullAnswer)));
       let currentChunk = visible.slice(sentText.length);
 
       while (currentChunk.length > SAFE_MESSAGE_LIMIT) {
@@ -768,22 +811,23 @@ async function sendStreamingAnswer(message, loadingMessage, stream, usedModel, i
     logError("streaming_process_error", message.guildId, error);
   }
 
-  const finalVisible = stripCodeBlocks(stripReasoningTags(fullAnswer));
+  const finalVisible = stripCodeBlocks(stripReasoningTags(stripModelFooter(fullAnswer)));
   const finalRemaining = finalVisible.slice(sentText.length).trim();
+  const modelFooter = `\n\n-# 🤖 모델: ${getModelDisplayName(usedModel)}`;
   const firstTalkFooter = isFirstConversation
     ? `\n\n-# 👋 처음 대화하시는 것이라 **${displayName}**님이라고 부를게요. 이름을 바꾸고 싶으시다면 \`${PREFIX} 이름변경 [새이름]\`을 입력해주세요!`
     : "";
 
   if (finalRemaining) {
-    const textToSend = finalRemaining + firstTalkFooter;
+    const textToSend = finalRemaining + modelFooter + firstTalkFooter;
     if (currentMessage) {
       await currentMessage.edit(textToSend).catch(() => message.channel.send(textToSend));
     } else {
       await message.channel.send(textToSend);
     }
-  } else if (currentMessage && isFirstConversation) {
+  } else if (currentMessage) {
     const lastContent = (await currentMessage.fetch()).content;
-    await currentMessage.edit(lastContent + firstTalkFooter).catch(() => {});
+    await currentMessage.edit(lastContent + modelFooter + firstTalkFooter).catch(() => {});
   }
 
   return finalVisible;

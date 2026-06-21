@@ -12,6 +12,8 @@ const discordClient = new Client({
   partials: [Partials.Channel, Partials.Message],
 });
 
+let schedulerCleanup = null;
+
 discordClient.once(Events.ClientReady, (client) => {
   logInfo("bot_ready", {
     botTag: client.user.tag,
@@ -29,7 +31,7 @@ discordClient.once(Events.ClientReady, (client) => {
     ],
   });
 
-  startScheduler(client);
+  schedulerCleanup = startScheduler(client);
 });
 
 discordClient.on(Events.MessageCreate, (message) => {
@@ -51,6 +53,18 @@ discordClient.on(Events.InteractionCreate, (interaction) => {
       customId: interaction.customId,
     });
   });
+});
+
+discordClient.on(Events.ShardDisconnect, (event, shardId) => {
+  logInfo("shard_disconnect", { shardId, eventCode: event?.code });
+  if (schedulerCleanup) {
+    schedulerCleanup();
+    schedulerCleanup = null;
+  }
+});
+
+discordClient.on(Events.ShardReconnecting, (shardId) => {
+  logInfo("shard_reconnecting", { shardId });
 });
 
 discordClient.login(process.env.DISCORD_TOKEN);

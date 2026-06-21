@@ -217,6 +217,15 @@ function truncate(value, maxLength) {
 
 export const scheduleChannelMap = new Map();
 
+setInterval(() => {
+  const now = Date.now();
+  for (const [userId, timestamp] of scheduleChannelMap.entries()) {
+    if (typeof timestamp === 'number' && now - timestamp > 5 * 60 * 1000) {
+      scheduleChannelMap.delete(userId);
+    }
+  }
+}, 60_000);
+
 export async function openScheduleModalButton(message, loadingMessage) {
   const selectMenu = new ChannelSelectMenuBuilder()
     .setCustomId("schedule_channel_select")

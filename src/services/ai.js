@@ -306,6 +306,18 @@ export const AI_TOOLS = [
   {
     type: "function",
     function: {
+      name: "change_model",
+      description: "Change the AI chat model for the current user. Use when the user wants to change or switch their AI model (e.g. '모델 변경', '모델 바꿔줘', 'Qwen3로 바꿔줘', '모델 설정', 'DeepSeek로 변경', '모델 선택', '모델 추천'). This is only available for Premium users. Other users will be told the feature is Premium-only.",
+      parameters: {
+        type: "object",
+        properties: {},
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "run_management",
       description: "Execute a Discord server moderation or management action. Use when the user requests any admin/moderation task in any natural language phrasing.",
       parameters: {
@@ -404,6 +416,7 @@ export const INTENT_TOOL_NAMES = new Set([
   "confirm_management",
   "cancel_management",
   "schedule",
+  "change_model",
 ]);
 
 const MANAGEMENT_COMMAND_GUIDE = [
@@ -453,7 +466,7 @@ const MANAGEMENT_COMMAND_GUIDE = [
 const INTENT_ROUTER_PROMPT = [
   "You are a fast intent classifier for a Discord bot. Return ONLY valid JSON, no markdown, no prose.",
   'Schema: {"tool":"<tool_name>","arguments":{...}}',
-  `Tool names: chat | image_read | video_analysis | generate_image | search_logs | google_search | run_management | subscription | bot_feature_info | pronunciation | developer_diagnostics | confirm_management | cancel_management | schedule`,
+  `Tool names: chat | image_read | video_analysis | generate_image | search_logs | google_search | run_management | subscription | bot_feature_info | pronunciation | developer_diagnostics | confirm_management | cancel_management | schedule | change_model`,
   "",
   "=== CLASSIFICATION RULES ===",
   "1. Infer intent from MEANING, not exact keywords. Users speak naturally in Korean.",
@@ -477,7 +490,7 @@ const INTENT_ROUTER_PROMPT = [
   "    - action='reschedule' when user wants to change a reservation's time. Extract id and convert the new time to executeAt='YYYY-MM-DD HH:MM' KST format.",
   "    IMPORTANT: For executeAt, ALWAYS output absolute KST time in 'YYYY-MM-DD HH:MM' format (Korea Standard Time, UTC+9). Convert relative times yourself. e.g. if user says '10분 뒤' and current time is 11:00, output '2026-06-21 11:10'. For '내일 09:30', output next day's date at 09:30.",
   "    If only partial info is given (e.g. just '예약메시지' with no details), still use action='create' with empty executeAt and message — the handler will ask for missing details.",
-  "",
+  "16. 'change_model': user wants to change their AI chat model (모델 변경/설정/선택/추천/바꾸기). Keywords: 모델 변경, 모델 설정, 모델 선택, 모델 바꿔, 모델 추천, Qwen, DeepSeek, Llama. ALWAYS use 'change_model' for these — NEVER classify as 'chat' or 'run_management'. This tool has no arguments — the handler will show a model selection UI.",
   "",
   "=== run_management COMMAND GUIDE ===",
   MANAGEMENT_COMMAND_GUIDE,

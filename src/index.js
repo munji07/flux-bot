@@ -1,6 +1,7 @@
 import { ShardingManager } from "discord.js";
 import { validateEnv } from "./config/config.js";
 import { logError, logInfo } from "./logger.js";
+import { db } from "./services/database.js";
 
 validateEnv();
 
@@ -46,6 +47,29 @@ manager.on("shardCreate", (shard) => {
     });
   });
 });
+
+async function shutdown(signal) {
+  logInfo("shutdown_start", { signal });
+  
+  try {
+    manager.shutdown().catch((err) => logError("shard_shutdown", "unknown", err));
+  } catch (err) {
+    logError("shard_shutdown", "unknown", err);
+  }
+
+  try {
+    db.close();
+    logInfo("database_closed");
+  } catch (err) {
+    logError("database_close", "unknown", err);
+  }
+
+  logInfo("shutdown_complete");
+  process.exit(0);
+}
+
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));
 
 manager.spawn().catch((error) => {
   logError("shard_spawn", "unknown", error);
