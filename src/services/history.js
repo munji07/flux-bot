@@ -132,7 +132,9 @@ export function shouldUseConversationHistory(userPrompt) {
 }
 
 function trimHistoryContent(content) {
-  if (content.length <= MAX_HISTORY_CONTENT_LENGTH) return content;
+  // content가 string이 아닌 경우(배열 등) JSON으로 변환하여 Groq API 오류 방지
+  const str = typeof content === "string" ? content : JSON.stringify(content ?? "");
+  if (str.length <= MAX_HISTORY_CONTENT_LENGTH) return str;
 
-  return `${content.slice(0, MAX_HISTORY_CONTENT_LENGTH)}\n...`;
+  return `${str.slice(0, MAX_HISTORY_CONTENT_LENGTH)}\n...`;
 }

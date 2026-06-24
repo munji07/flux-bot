@@ -1,10 +1,11 @@
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFile, mkdir } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 
 const LOG_DIR = new URL("../logs/", import.meta.url);
 const LOG_FILE = new URL("../logs/bot.log", import.meta.url);
 const ERROR_LOG_FILE = new URL("../logs/error.log", import.meta.url);
 
-mkdirSync(LOG_DIR, { recursive: true });
+await mkdir(LOG_DIR, { recursive: true });
 
 export function logInfo(event, details = {}) {
   const record = {
@@ -35,11 +36,11 @@ export function logError(step, guildId, error, details = {}) {
 }
 
 function writeLogFile(record) {
-  appendFileSync(LOG_FILE, `${JSON.stringify(record)}\n`, "utf8");
+  appendFile(LOG_FILE, `${JSON.stringify(record)}\n`, "utf8").catch(() => {});
 }
 
 function errorLogFile(record) {
-  appendFileSync(ERROR_LOG_FILE, `${JSON.stringify(record)}\n`, "utf8");
+  appendFile(ERROR_LOG_FILE, `${JSON.stringify(record)}\n`, "utf8").catch(() => {});
 }
 
 function writeConsoleInfo(record) {

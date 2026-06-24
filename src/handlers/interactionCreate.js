@@ -3,8 +3,6 @@ import { ADMIN_USER_ID } from "../config/config.js";
 import { addServerImageToken, updateUserSubscription, getServerSubscriptionTier } from "../services/subscription.js";
 import { createScheduledMessage } from "../services/scheduler.js";
 import { parseScheduleTime, scheduleChannelMap } from "../commands/scheduler.js";
-import { showModelSelectionUI } from "../commands/management.js";
-import { db } from "../services/database.js";
 
 const SERVER_TOKEN_LABELS = {
   image_readings: "서버 이미지 검토 토큰",
@@ -550,22 +548,4 @@ export async function handleInteractionCreate(client, interaction) {
     return;
   }
 
-  // 모델 변경 UI 열기 버튼 처리
-  if (customId === "open_model_selection") {
-    await showModelSelectionUI(interaction);
-    return;
-  }
-
-  // 실제 모델 변경 처리
-  if (customId.startsWith("set_model:")) {
-    const selectedModel = customId.split(":")[1];
-    db.prepare("INSERT OR REPLACE INTO user_settings (user_id, chat_model, updated_at) VALUES (?, ?, datetime('now'))")
-      .run(interaction.user.id, selectedModel);
-
-    await interaction.update({
-      content: `✅ 채팅 모델이 \`${selectedModel}\`(으)로 변경되었습니다.`,
-      components: []
-    });
-    return;
-  }
 }

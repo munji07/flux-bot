@@ -39,6 +39,16 @@ export function createUserMessageContent(userName, userPrompt, imageUrls = []) {
   return `[유저 이름: ${userName}]\n${userPrompt}${imageText}`;
 }
 
+export function stripFancyUnicode(text) {
+  return text
+    .replace(/[\u{1D400}-\u{1D7FF}]/gu, "")
+    .replace(/[\u{2100}-\u{214F}]/gu, "")
+    .replace(/[\u{2460}-\u{24FF}]/gu, "")
+    .replace(/[\u{2500}-\u{27BF}]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function isImageAttachment(attachment) {
   if (attachment.contentType?.startsWith("image/")) return true;
 

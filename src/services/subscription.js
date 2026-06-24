@@ -82,16 +82,6 @@ export function getUserSubscriptionTier(userId) {
 }
 
 /**
- * 사용자의 채팅 모델 설정을 조회합니다.
- */
-export function getUserChatModel(userId) {
-  const row = db.prepare("SELECT chat_model FROM user_settings WHERE user_id = ?").get(userId);
-  if (!row) return null;
-  if (row.chat_model === 'groq') return 'qwen/qwen3-32b';
-  return row.chat_model;
-}
-
-/**
  * 사용자의 등급을 수동으로 변경(부여)합니다. (개발자 어드민 기능)
  */
 export function updateUserSubscription(userId, tier, days = 30) {

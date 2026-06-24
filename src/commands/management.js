@@ -1,10 +1,6 @@
 import {
   ActionRowBuilder,
   ChannelSelectMenuBuilder,
-  StringSelectMenuBuilder,
-  StringSelectMenuOptionBuilder,
-  ButtonBuilder,
-  ButtonStyle,
   ComponentType,
   AutoModerationActionType,
   AutoModerationRuleEventType,
@@ -21,7 +17,7 @@ import { extractDiscordId, normalizeCommand, splitArgs } from "../utils/command.
 import { getDisplayName } from "../utils/message.js";
 import { matchServerMember, matchServerChannel, matchServerRole } from "../services/ai.js";
 import { db } from "../services/database.js";
-import { updateUserSubscription, TIER_LIMITS, getUserSubscriptionTier, getServerSubscriptionTier } from "../services/subscription.js";
+import { updateUserSubscription, TIER_LIMITS, getServerSubscriptionTier } from "../services/subscription.js";
 
 const CONFIRMATION_TIMEOUT_MS = 30_000;
 const DANGEROUS_COMMANDS = new Set([
@@ -121,7 +117,6 @@ const COMMANDS = {
   removeRole: "removeRole",
   addRolePermission: "addRolePermission",
   removeRolePermission: "removeRolePermission",
-  setModel: "setModel",
   serverAnalysis: "serverAnalysis",
   channelAnalysis: "channelAnalysis",
   changeGuildName: "changeGuildName",
@@ -217,8 +212,6 @@ const COMMAND_ALIASES = {
   권한제거: COMMANDS.removeRolePermission,
   removepermission: COMMANDS.removeRolePermission,
   removerolepermission: COMMANDS.removeRolePermission,
-  모델변경: COMMANDS.setModel,
-  모델설정: COMMANDS.setModel,
   서버분석: COMMANDS.serverAnalysis,
   서버분석보고서: COMMANDS.serverAnalysis,
   serveranalysis: COMMANDS.serverAnalysis,
@@ -504,9 +497,6 @@ async function executeCommand(message, command, args, userPrompt, loadingMessage
       break;
     case COMMANDS.removeRolePermission:
       await rolePermissionCommand(message, args, "remove", loadingMessage);
-      break;
-    case COMMANDS.setModel:
-      await setModelCommand(message, args, loadingMessage);
       break;
     case COMMANDS.serverAnalysis:
       await serverAnalysisCommand(message, args, loadingMessage);
@@ -1195,43 +1185,6 @@ async function rolePermissionCommand(message, args, action, loadingMessage) {
   await loadingMessage.edit(`${role.name} 역할에서 ${args[1]} 권한을 제거했어요.`);
 }
 
-async function setModelCommand(message, args, loadingMessage) {
-  await showModelSelectionUI(message);
-  if (loadingMessage) await loadingMessage.delete().catch(() => {});
-}
-
-export async function showModelSelectionUI(messageOrInteraction, isUpdate = false) {
-  const userId = messageOrInteraction.user?.id ?? messageOrInteraction.author?.id;
-  const tier = await getUserSubscriptionTier(userId);
-  
-  if (tier !== 'premium') {
-    const errorMsg = "❌ 모델 변경은 **Premium** 등급 유저만 사용할 수 있는 기능이에요.";
-    if (isUpdate) return messageOrInteraction.update({ content: errorMsg, components: [] });
-    return messageOrInteraction.reply({ content: errorMsg, ephemeral: true });
-  }
-
-  const models = [
-    { label: "DeepSeek Flash", value: "deepseek-ai/deepseek-v4-flash", style: ButtonStyle.Primary },
-    { label: "DeepSeek Pro", value: "deepseek-ai/deepseek-v4-pro", style: ButtonStyle.Success },
-    { label: "Llama 3.3", value: "meta/llama-3.3-70b-instruct", style: ButtonStyle.Secondary },
-    { label: "Qwen 3 Chat (Groq)", value: "qwen/qwen3-32b", style: ButtonStyle.Secondary }
-  ];
-
-  const row = new ActionRowBuilder().addComponents(
-    models.map((m) => new ButtonBuilder().setCustomId(`set_model:${m.value}`).setLabel(m.label).setStyle(m.style))
-  );
-
-  const payload = {
-    content: "### 🤖 모델 설정\n대화에 사용할 AI 모델을 선택해주세요. 선택 즉시 적용됩니다.",
-    components: [row],
-    ephemeral: true,
-  };
-
-  if (isUpdate) return messageOrInteraction.update(payload);
-  if (messageOrInteraction.replied || messageOrInteraction.deferred) return messageOrInteraction.followUp(payload);
-  return messageOrInteraction.reply(payload);
-}
-
 async function resolveMember(message, token, missingMessage) {
   const id = extractDiscordId(token);
   if (id) {
@@ -1679,10 +1632,6 @@ export function getManagementHelpText() {
     "## 📊 분석 (플래티넘)",
     `\`${PREFIX} 서버분석\` — 서버 활동량 리포트`,
     `\`${PREFIX} 채널분석 [#채널/ID]\` — 채널 활동 통계`,
-    "",
-    "## 🤖 모델 (프리미엄)",
-    `\`${PREFIX} 모델변경 <모델명>\``,
-    `모델 목록: deepseek-ai/deepseek-v4-flash, deepseek-ai/deepseek-v4-pro, meta/llama-3.3-70b-instruct, qwen/qwen3-32b`,
   ].join("\n");
 }
 

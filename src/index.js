@@ -11,48 +11,20 @@ const manager = new ShardingManager("./src/bot.js", {
   respawn: true,
 });
 
-manager.on("shardCreate", (shard) => {
-  logInfo("shard_create", {
-    shardId: shard.id,
-  });
-
-  shard.on("ready", () => {
-    logInfo("shard_ready", {
-      shardId: shard.id,
-    });
-  });
-
-  shard.on("disconnect", () => {
-    logInfo("shard_disconnect", {
-      shardId: shard.id,
-    });
-  });
-
-  shard.on("reconnecting", () => {
-    logInfo("shard_reconnecting", {
-      shardId: shard.id,
-    });
-  });
-
-  shard.on("death", (process) => {
-    logError("shard_death", "unknown", new Error(`Shard exited with code ${process.exitCode}`), {
-      shardId: shard.id,
-      exitCode: process.exitCode,
-    });
-  });
-
-  shard.on("error", (error) => {
-    logError("shard_error", "unknown", error, {
-      shardId: shard.id,
-    });
-  });
-});
-
 async function shutdown(signal) {
   logInfo("shutdown_start", { signal });
-  
+
   try {
-    manager.shutdown().catch((err) => logError("shard_shutdown", "unknown", err));
+    // ShardingManager에는 shutdown() 메서드가 없으므로 각 shard를 개별 종료
+    const shards = manager.shards ? Array.from(manager.shards.values()) : [];
+    for (const shard of shards) {
+      try {
+        await shard.kill();
+      } catch (shardErr) {
+        logError("shard_kill", "unknown", shardErr);
+      }
+    }
+    logInfo("shard_shutdown", { signal });
   } catch (err) {
     logError("shard_shutdown", "unknown", err);
   }
@@ -68,10 +40,13 @@ async function shutdown(signal) {
   process.exit(0);
 }
 
-process.on("SIGINT", () => shutdown("SIGINT"));
-process.on("SIGTERM", () => shutdown("SIGTERM"));
-
-manager.spawn().catch((error) => {
-  logError("shard_spawn", "unknown", error);
-  process.exit(1);
+manager.on("shardCreate", (shard) => {
+  logInfo("shard_create", {
+    shardId: shard.id,
+  });
 });
+
+manager.spawn();
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));

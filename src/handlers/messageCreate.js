@@ -1,14 +1,14 @@
-﻿import { ADMIN_USER_ID, PREFIX, SAFE_MESSAGE_LIMIT, HISTORY_BATCH_SIZE, GEMINI_SEARCH_MODEL, DEEPSEEK_CHAT_MODEL, LOADING_EMOJI } from "../config/config.js";
+import { ADMIN_USER_ID, PREFIX, SAFE_MESSAGE_LIMIT, HISTORY_BATCH_SIZE, GEMINI_SEARCH_MODEL, DEEPSEEK_CHAT_MODEL, LOADING_EMOJI } from "../config/config.js";
 import { UserFacingError } from "../errors.js";
-import { handleManagementToolCall, getManagementHelpText, showModelSelectionUI } from "../commands/management.js";
+import { handleManagementToolCall, getManagementHelpText } from "../commands/management.js";
 import { handleScheduleFromIntent } from "../commands/scheduler.js";
-import { handleSubscriptionToolCall } from "../commands/subscription.js";
+import { handleSubscriptionToolCall, handleSubscriptionCommand } from "../commands/subscription.js";
 import { handleImageGenerationRequest } from "./imageGeneration.js";
 import { handleUserSettingsCommand } from "../commands/userSettings.js";
 import { handleBotFeatureInfoRequest } from "../services/botFeatureInfo.js";
 import { handleDeveloperDiagnosticsRequest } from "../services/developerDiagnostics.js";
 import { handleLogSearchRequest, isPayloadTooLargeError } from "../services/logSearch.js";
-import { addServerImageToken, checkAndIncrementUsage, decrementUsage, TIER_LIMITS, getUserSubscription, getUserChatModel } from "../services/subscription.js";
+import { addServerImageToken, checkAndIncrementUsage, decrementUsage, TIER_LIMITS } from "../services/subscription.js";
 import { handleGoogleSearch } from "./googleSearch.js";
 import { handleVideoAnalysis } from "./video.js";
 import { db } from '../services/database.js';
@@ -36,6 +36,7 @@ import {
   getDisplayName,
   getImageAttachmentUrls,
   sendChunkedAnswer,
+  stripFancyUnicode,
 } from "../utils/message.js";
 import { getPronunciationReply } from "../utils/phonetics.js";
 
@@ -138,6 +139,10 @@ export async function handleMessageCreate(client, message) {
       if (handled) return;
     }
 
+    // 등록된 구독 명령어 (AI 분류 없이 직접 처리)
+    const subHandled = await handleSubscriptionCommand(message, userPrompt, loadingMessage);
+    if (subHandled) return;
+
     try {
       intent = await classifyRequestIntent({
         userPrompt,
@@ -199,26 +204,15 @@ export async function handleMessageCreate(client, message) {
 
   // 사용량 타입 결정
   const isImageRead = intent.type === "image_read" || attachedImageUrls.length > 0;
-  try {
-    if (intent.type === "image_generation") {
-      usageType = "image_generations";
-    } else if (isImageRead) {
-      usageType = "image_readings";
-    } else if (
-      ["chat", "log_search"].includes(intent.type) ||
-      ["google_search", "bot_feature_info", "developer_diagnostics", "subscription"].includes(intent.tool)
-    ) {
-      usageType = "ai_calls";
-    }
 
-    // 사용량 타입이 설정되지 않았는데 AI 호출이 필요한 경우 기본값 설정
-    // video_analysis는 위에서 별도로 처리되거나 여기서 ai_calls로 분류될 수 있음
-    if (!usageType && (intent.type === "chat" || intent.tool === "chat")) {
-      usageType = "ai_calls";
-    }
-  } catch (error) {
-    logError("usage_type_determination", message.guildId, error);
-    usageType = "ai_calls"; // 에러 발생 시 안전하게 기본값 사용
+  if (intent.type === "image_generation") {
+    usageType = "image_generations";
+  } else if (isImageRead) {
+    usageType = "image_readings";
+  } else if (intent.tool === "video_analysis") {
+    usageType = "video_analysis";
+  } else {
+    usageType = "ai_calls";
   }
 
   // --- 도구 및 의도별 처리 시작 ---
@@ -247,24 +241,6 @@ export async function handleMessageCreate(client, message) {
   } catch (error) {
       const errorMessage = error instanceof UserFacingError ? error.message : "발음 변환 중 문제가 생겼어요.";
       await loadingMessage.edit(errorMessage);
-    }
-    return;
-  }
-
-  if (intent.tool === "change_model") {
-    try {
-      await showModelSelectionUI(message);
-      if (loadingMessage) await loadingMessage.delete().catch(() => {});
-    } catch (error) {
-      logError("change_model", message.guildId, error, {
-        guildName: message.guild.name,
-        channelId: message.channelId,
-        userId: message.author.id,
-        userTag: message.author.tag,
-        commandText: userPrompt,
-      });
-      const errorMessage = error instanceof UserFacingError ? error.message : "모델 변경 UI를 표시하는 중 문제가 생겼어요.";
-      await loadingMessage.edit(errorMessage).catch(() => {});
     }
     return;
   }
@@ -467,16 +443,7 @@ export async function handleMessageCreate(client, message) {
   let typingInterval;
   let currentStep = "command_detected";
 
-  // 사용자 설정 모델 가져오기 (Premium 전용)
-  const userSub = getUserSubscription(message.author.id);
-  let chatModel = null;
-  if (userSub.tier === "premium") {
-    chatModel = getUserChatModel(message.author.id);
-  }
-
-  // 의도 파악(classifyRequestIntent)은 내부적으로 이미 llama-3.1-8b-instruct를 사용 중임
-  // 실제 답변 생성에 쓰일 모델 결정
-  const usedModel = chatModel || (attachedImageUrls.length > 0 ? "meta/llama-4-maverick-17b-128e-instruct" : "qwen/qwen3-32b");
+  const usedModel = attachedImageUrls.length > 0 ? "meta/llama-4-maverick-17b-128e-instruct" : "qwen/qwen3-32b";
 
   try {
     const historyKey = getHistoryKey(message); // 로깅 및 DB 저장을 위해 유지
@@ -552,9 +519,8 @@ export async function handleMessageCreate(client, message) {
 
         currentStep = "parse_ai_answer";
         answer = stripCodeBlocks(stripReasoningTags(chatCompletion.choices?.[0]?.message?.content ?? ""));
-        answer = stripModelFooter(answer);
+        answer = stripFancyUnicode(stripModelFooter(answer));
 
-        // 답변이 비어있다면 에러를 던져 catch 블록의 폴백(Groq)이 실행되도록 함
         if (!answer || answer.trim().length === 0) {
           throw new Error("Primary model returned empty content");
         }
@@ -567,9 +533,7 @@ export async function handleMessageCreate(client, message) {
           errorDetail: primaryError.message
         });
 
-        const groqLimitHit = isGroqModel(usedModel) && (isPayloadTooLargeError(primaryError) || isGroqRateLimitError(primaryError));
-
-        if (groqLimitHit) {
+        if (isPayloadTooLargeError(primaryError) || isGroqRateLimitError(primaryError)) {
           currentStep = "request_nvidia_fallback";
           await loadingMessage.edit(`-# ${LOADING_EMOJI} DUST봇이 다른 모델로 답변을 이어서 준비하고 있어요...`);
 
@@ -593,7 +557,7 @@ export async function handleMessageCreate(client, message) {
 
             currentStep = "parse_nvidia_fallback_answer";
             answer = stripCodeBlocks(stripReasoningTags(fallbackCompletion.choices?.[0]?.message?.content ?? ""));
-            answer = stripModelFooter(answer);
+            answer = stripFancyUnicode(stripModelFooter(answer));
             if (!answer || answer.trim().length === 0) {
               throw new Error("NVIDIA fallback returned empty content");
             }
@@ -606,28 +570,9 @@ export async function handleMessageCreate(client, message) {
             throw fallbackError;
           }
         } else {
-          currentStep = "request_stream_fallback";
-          await loadingMessage.edit(`-# ${LOADING_EMOJI} DUST봇이 다른 모델로 답변을 이어서 준비하고 있어요...`);
-
-          const streamModel = isGroqModel(usedModel) ? DEEPSEEK_CHAT_MODEL : usedModel;
-          const chatCompletion = await createChatCompletionStream({
-            userName,
-            historyMessages,
-            currentApiUserMessage,
-            guildName: message.guild.name,
-            guildId: message.guildId,
-            serverContext,
-            logContext: {
-              ...logContext,
-              fallbackFrom: usedModel,
-              fallbackTo: streamModel,
-            },
-            model: streamModel,
-          });
-
-          currentStep = "stream_fallback_answer";
-          answer = await sendStreamingAnswer(message, loadingMessage, chatCompletion, streamModel, isFirstConversation, displayName);
-          answerAlreadySent = true;
+          await loadingMessage.edit("답변을 생성하는 중 문제가 발생했어요. 잠시 뒤 다시 시도해주세요.");
+          decrementUsage(message.author.id, usageType);
+          return;
         }
       }
     } else {
@@ -645,7 +590,7 @@ export async function handleMessageCreate(client, message) {
 
       currentStep = "parse_ai_answer";
       answer = stripCodeBlocks(stripReasoningTags(chatCompletion.choices?.[0]?.message?.content ?? ""));
-      answer = stripModelFooter(answer);
+      answer = stripFancyUnicode(stripModelFooter(answer));
     }
 
     if (!answer) {
@@ -763,12 +708,8 @@ function getModelDisplayName(model) {
     "qwen/qwen3-32b": "Qwen3 32B",
     "meta/llama-4-maverick-17b-128e-instruct": "Llama 4 Maverick",
     "deepseek-ai/deepseek-v4-flash": "DeepSeek V4 Flash",
-    "deepseek-ai/deepseek-v4-pro": "DeepSeek V4 Pro",
-    "meta/llama-3.3-70b-instruct": "Llama 3.3 70B",
-    "nvidia/nemotron-3-nano-30b-a3b": "Nemotron 30B",
-    "gemini-2.5-flash": "Gemini 2.5 Flash",
   };
-  return map[model] || model.replace(/^.*\//, "");
+  return map[model] || "Qwen3 32B";
 }
 
 async function sendStreamingAnswer(message, loadingMessage, stream, usedModel, isFirstConversation = false, displayName = "") {
@@ -783,7 +724,7 @@ async function sendStreamingAnswer(message, loadingMessage, stream, usedModel, i
       if (!delta) continue;
 
       fullAnswer += delta;
-      const visible = stripCodeBlocks(stripReasoningTags(stripModelFooter(fullAnswer)));
+      const visible = stripFancyUnicode(stripCodeBlocks(stripReasoningTags(stripModelFooter(fullAnswer))));
       let currentChunk = visible.slice(sentText.length);
 
       while (currentChunk.length > SAFE_MESSAGE_LIMIT) {
@@ -814,7 +755,7 @@ async function sendStreamingAnswer(message, loadingMessage, stream, usedModel, i
     logError("streaming_process_error", message.guildId, error);
   }
 
-  const finalVisible = stripCodeBlocks(stripReasoningTags(stripModelFooter(fullAnswer)));
+  const finalVisible = stripFancyUnicode(stripCodeBlocks(stripReasoningTags(stripModelFooter(fullAnswer))));
   const finalRemaining = finalVisible.slice(sentText.length).trim();
   const modelFooter = `\n\n-# 🤖 모델: ${getModelDisplayName(usedModel)}`;
   const firstTalkFooter = isFirstConversation

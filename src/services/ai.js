@@ -5,7 +5,6 @@ import {
   GEMINI_WEB_SEARCH_MODEL,
   ADMIN_USER_ID,
   SYSTEM_PROMPT,
-  SYSTEM_PROMPT_LITE,
   GROQ_TPM_BUDGET,
   GROQ_MAX_COMPLETION_TOKENS,
   HISTORY_BATCH_SIZE,
@@ -47,7 +46,7 @@ export async function createVideoAnalysis({ videoUrl, prompt, userName, guildNam
   });
 
   const messages = [
-        { role: "system", content: SYSTEM_PROMPT },
+        { role: "system", content: `${SYSTEM_PROMPT}\nSTRICT RULE: 반드시 오직 한국어로만 답변하십시오. 다른 언어나 알 수 없는 문자를 포함하지 마십시오.` },
     { role: "system", content: `현재 유저 이름은 "${userName}"입니다. 답변에서 반드시 "${userName}"님이라고 불러주세요.` },
     { role: "system", content: `현재 서버 이름은 "${guildName}"입니다.` },
         {
@@ -92,7 +91,16 @@ export function isGroqRateLimitError(error) {
 
 function estimateTokens(content) {
   const text = typeof content === "string" ? content : JSON.stringify(content);
-  return Math.ceil(text.length / 2.5);
+  let count = 0;
+  for (const ch of text) {
+    // 한글(완성형 자모 포함)은 평균 ~2.5토큰, 영문/숫자/기호는 ~4글자당 1토큰
+    if (/[\uAC00-\uD7AF\u1100-\u11FF\u3130-\u318F]/.test(ch)) {
+      count += 0.4;
+    } else {
+      count += 0.25;
+    }
+  }
+  return Math.ceil(count) + 4;
 }
 
 function messageContentToString(content) {
@@ -122,53 +130,41 @@ function buildChatMessages({
   serverContext,
   historyMessages,
   currentApiUserMessage,
-  useLite,
 }) {
-  const systemPrompt = useLite
-    ? SYSTEM_PROMPT_LITE
-    : `${SYSTEM_PROMPT}\nSTRICT RULE: 반드시 오직 한국어로만 답변하십시오. 다른 언어나 알 수 없는 문자를 포함하지 마십시오.`;
+  const systemPrompt = `${SYSTEM_PROMPT}\nSTRICT RULE: 반드시 오직 한국어로만 답변하십시오. 다른 언어나 알 수 없는 문자를 포함하지 마십시오.`;
 
   const systemMessages = [
     { role: "system", content: systemPrompt },
     {
       role: "system",
-      content: useLite
-        ? `유저 이름: "${userName}" (${userName}님으로 불러주세요)`
-        : `현재 응답해야 하는 유저 이름은 "${userName}"입니다. 답변에서 반드시 "${userName}"님이라고 불러주세요.`,
+      content: `현재 응답해야 하는 유저 이름은 "${userName}"입니다. 답변에서 반드시 "${userName}"님이라고 불러주세요.`,
     },
   ];
 
   if (guildName) {
     systemMessages.push({
       role: "system",
-      content: useLite
-        ? `서버: ${guildName}${guildId ? ` (${guildId})` : ""}`
-        : `현재 대화가 진행되는 서버의 이름은 "${guildName}"입니다.`,
+      content: `현재 대화가 진행되는 서버의 이름은 "${guildName}"입니다.`,
     });
-  } else if (guildId && !useLite) {
+  } else if (guildId) {
     systemMessages.push({ role: "system", content: `현재 대화가 진행되는 서버의 ID는 "${guildId}"입니다.` });
-  } else if (guildId && useLite) {
-    systemMessages.push({ role: "system", content: `서버 ID: ${guildId}` });
   }
 
   if (serverContext) {
-    const context = useLite && serverContext.length > 500
-      ? `${serverContext.slice(0, 500)}...`
-      : serverContext;
-    systemMessages.push({ role: "system", content: context });
+    systemMessages.push({ role: "system", content: serverContext });
   }
 
-  let history = historyMessages;
-  if (useLite) {
-    const systemTokens = systemMessages.reduce((sum, msg) => sum + estimateTokens(msg.content), 0);
-    const userTokens = estimateTokens(messageContentToString(currentApiUserMessage.content));
-    const historyBudget = GROQ_TPM_BUDGET - systemTokens - userTokens - GROQ_MAX_COMPLETION_TOKENS - 100;
-    history = trimHistoryToBudget(historyMessages, Math.max(200, historyBudget));
-  }
+  systemMessages.push({
+    role: "system",
+    content: "아래 메시지들은 채널 최근 대화 참고용입니다. 반드시 **마지막 유저 메시지**에만 답변하고, 다른 사람들의 대화 내용은 절대 언급하지 마세요.",
+  });
 
   return [
     ...systemMessages,
-    ...history,
+    ...historyMessages.map((msg) => ({
+      role: msg.role,
+      content: typeof msg.content === "string" ? msg.content : String(msg.content ?? ""),
+    })),
     { role: currentApiUserMessage.role, content: currentApiUserMessage.content },
   ];
 }
@@ -179,12 +175,8 @@ export function getChatModel(imageUrls) {
 
 function normalizeChatModel(model) {
   if (!model) return model;
-
-  if (model === "qwen/qwen3-32b" || model === "qwen3" || model === "qwen" || model === "groq/qwen3") {
-    return "qwen/qwen3-32b";
-  }
-
-  return model;
+  if (model === "meta/llama-4-maverick-17b-128e-instruct") return model;
+  return "qwen/qwen3-32b";
 }
 
 export function getChatTask(imageUrls) {
@@ -306,18 +298,6 @@ export const AI_TOOLS = [
   {
     type: "function",
     function: {
-      name: "change_model",
-      description: "Change the AI chat model for the current user. Use when the user wants to change or switch their AI model (e.g. '모델 변경', '모델 바꿔줘', 'Qwen3로 바꿔줘', '모델 설정', 'DeepSeek로 변경', '모델 선택', '모델 추천'). This is only available for Premium users. Other users will be told the feature is Premium-only.",
-      parameters: {
-        type: "object",
-        properties: {},
-        required: [],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
       name: "run_management",
       description: "Execute a Discord server moderation or management action. Use when the user requests any admin/moderation task in any natural language phrasing.",
       parameters: {
@@ -416,7 +396,6 @@ export const INTENT_TOOL_NAMES = new Set([
   "confirm_management",
   "cancel_management",
   "schedule",
-  "change_model",
 ]);
 
 const MANAGEMENT_COMMAND_GUIDE = [
@@ -466,7 +445,7 @@ const MANAGEMENT_COMMAND_GUIDE = [
 const INTENT_ROUTER_PROMPT = [
   "You are a fast intent classifier for a Discord bot. Return ONLY valid JSON, no markdown, no prose.",
   'Schema: {"tool":"<tool_name>","arguments":{...}}',
-  `Tool names: chat | image_read | video_analysis | generate_image | search_logs | google_search | run_management | subscription | bot_feature_info | pronunciation | developer_diagnostics | confirm_management | cancel_management | schedule | change_model`,
+  `Tool names: chat | image_read | video_analysis | generate_image | search_logs | google_search | run_management | subscription | bot_feature_info | pronunciation | developer_diagnostics | confirm_management | cancel_management | schedule`,
   "",
   "=== CLASSIFICATION RULES ===",
   "1. Infer intent from MEANING, not exact keywords. Users speak naturally in Korean.",
@@ -476,8 +455,8 @@ const INTENT_ROUTER_PROMPT = [
   "5. 'video_analysis': only when a video file is attached (hasVideoAttachment: true).",
   "6. 'image_read': only when an image file is attached AND the user asks for analysis.",
   "7. 'google_search': when query needs real-time/external info (news, weather, prices, scores, schedules, current events).",
-  "8. 'confirm_management': user confirms a pending dangerous action (e.g. '확인', 'ㅇㅇ', 'ok', '응').",
-  "9. 'cancel_management': user cancels a pending action (e.g. '취소', 'cancel', '아니', 'ㄴㄴ').",
+  "8. 'confirm_management': user confirms a pending dangerous action. CRITICAL: If the user message is ONLY a single confirmation word with no target/action context (e.g. '확인', 'ㅇㅇ', 'ok', '응', '예', 'yes', '맞아', '그래', 'ㅇ'), ALWAYS classify as 'confirm_management'. Do NOT map single-word confirmations to run_management.",
+  "9. 'cancel_management': user cancels a pending action (e.g. '취소', 'cancel', '아니', 'ㄴㄴ', '아니요'). CRITICAL: Single-word cancellations must ALWAYS be 'cancel_management', not 'run_management'.",
   "10. 'run_management': ANY server moderation or admin task — set arguments.command to the matching enum value AND arguments.args with extracted targets/params.",
   "11. Creative writing (stories, novels, poems, code writing) must ALWAYS be 'chat'.",
   "12. 'subscription': user wants to buy/upgrade/check a membership tier (등급), buy image/video tokens, or buy/upgrade a Platinum Server license. This is about the BOT's membership system, NOT Discord's own premium. Keywords: 등급, 프리미엄, 프리미엄 구매/사고싶어/살래, Basic, basic, 플래티넘, platinum, 서버 라이선스, 토큰 구매. (e.g. '프리미엄 사고싶어', '프리미엄 살래', 'Basic 사고싶어', '등급 구매', '등급 조회', '나의 등급', '토큰 구매', '이미지 분석 토큰 살래', '플래티넘 서버 구매', '서버 라이선스 살래'). If user mentions '프리미엄' alone without '디스코드' or 'discord', assume they mean the bot's premium. Set arguments.action to 'purchase' (or 'status' for checking) and arguments.type to 'tier' | 'image_generations' | 'image_readings' | 'video_analysis' | 'platinum'.",
@@ -490,8 +469,8 @@ const INTENT_ROUTER_PROMPT = [
   "    - action='reschedule' when user wants to change a reservation's time. Extract id and convert the new time to executeAt='YYYY-MM-DD HH:MM' KST format.",
   "    IMPORTANT: For executeAt, ALWAYS output absolute KST time in 'YYYY-MM-DD HH:MM' format (Korea Standard Time, UTC+9). Convert relative times yourself. e.g. if user says '10분 뒤' and current time is 11:00, output '2026-06-21 11:10'. For '내일 09:30', output next day's date at 09:30.",
   "    If only partial info is given (e.g. just '예약메시지' with no details), still use action='create' with empty executeAt and message — the handler will ask for missing details.",
-  "16. 'change_model': user wants to change their AI chat model (모델 변경/설정/선택/추천/바꾸기). Keywords: 모델 변경, 모델 설정, 모델 선택, 모델 바꿔, 모델 추천, Qwen, DeepSeek, Llama. ALWAYS use 'change_model' for these — NEVER classify as 'chat' or 'run_management'. This tool has no arguments — the handler will show a model selection UI.",
-  "",
+  "16. 'subscription' with action='grant': ONLY for admin users. Used when admin wants to give/assign/set/change a user's membership tier (e.g. '유저 등급 설정', '유저 등급 부여', 'basic으로 설정', 'premium 부여'). Set arguments.targetUserId to the target Discord user ID, arguments.tier to 'free'|'basic'|'premium', arguments.days to number (default 30).",
+  "17. CRITICAL for run_management: NEVER classify hypothetical/permission/opinion questions as 'run_management'. Questions like '~해도 될까?', '~되나요?', '~하는 게 좋을까?', '만약 ~하면?' are asking for the bot's opinion or hypothetical discussion — ALWAYS classify these as 'chat'. Only classify as 'run_management' when the user is explicitly asking the bot TO EXECUTE an action RIGHT NOW (e.g. '청소해줘', '밴해줘', '타임아웃 시켜줘').",
   "=== run_management COMMAND GUIDE ===",
   MANAGEMENT_COMMAND_GUIDE,
   "",
@@ -588,7 +567,6 @@ export async function createChatCompletion({
 }) {
   const task = intent || getChatTask(imageUrls);
   const model = normalizeChatModel(userModel) || (imageUrls.length > 0 ? "meta/llama-4-maverick-17b-128e-instruct" : "qwen/qwen3-32b");
-  const useLite = isGroqModel(model);
 
   logInfo("ai_call", {
     ...logContext,
@@ -596,16 +574,14 @@ export async function createChatCompletion({
     model,
     imageCount: imageUrls.length,
     historyMessageCount: historyMessages.length,
-    useLitePrompt: useLite,
   });
 
   const request = ({ requestModel }) => {
-    const requestUseLite = isGroqModel(requestModel);
     const options = {
       model: requestModel,
       temperature: 0.4,
       top_p: 0.95,
-      max_completion_tokens: requestUseLite ? GROQ_MAX_COMPLETION_TOKENS : 4096,
+      max_completion_tokens: isGroqModel(requestModel) ? GROQ_MAX_COMPLETION_TOKENS : 4096,
       stream: false,
     };
 
@@ -616,7 +592,6 @@ export async function createChatCompletion({
       serverContext,
       historyMessages,
       currentApiUserMessage,
-      useLite: requestUseLite,
     });
 
     const client = getClientForModel(requestModel);
@@ -648,14 +623,12 @@ export async function createChatCompletionStream({
   model: userModel = null,
 }) {
   const model = normalizeChatModel(userModel) || "qwen/qwen3-32b";
-  const useLite = isGroqModel(model);
   logInfo("ai_call", {
     ...logContext,
     task: "chat_stream",
     model: model,
     imageCount: 0,
     historyMessageCount: historyMessages.length,
-    useLitePrompt: useLite,
   });
 
   const messages = buildChatMessages({
@@ -668,14 +641,13 @@ export async function createChatCompletionStream({
       role: currentApiUserMessage.role,
       content: String(currentApiUserMessage.content),
     },
-    useLite,
   });
 
   const client = getClientForModel(model);
   return client.chat.completions.create({
     model: model,
     messages: messages,
-    max_completion_tokens: useLite ? GROQ_MAX_COMPLETION_TOKENS : 4096,
+    max_completion_tokens: isGroqModel(model) ? GROQ_MAX_COMPLETION_TOKENS : 4096,
     temperature: 0.4,
     top_p: 0.95,
     stream: true,
@@ -741,7 +713,7 @@ export async function createLogSearchAnswer({
     logRecordCount: records.length,
   });
 
-  const completion = await nvidiaClient.chat.completions.create({
+  const completion = await getClientForModel(model).chat.completions.create({
     model: model,
     messages: [
       {
@@ -811,6 +783,8 @@ function createTextChatMessages(userName, historyMessages, currentApiUserMessage
   ];
 }
 
+// unused - kept for reference
+
 export async function generateImage(prompt, logContext = {}) {
   const selectedModel = "gptimage";
   logInfo("ai_call", {
@@ -819,29 +793,43 @@ export async function generateImage(prompt, logContext = {}) {
     model: selectedModel,
     promptLength: prompt.length,
   });
-  const url = `https://gen.pollinations.ai/image/${encodeURIComponent(prompt)}?model=${encodeURIComponent(selectedModel)}&nologo=true&private=true`;
+
+  // 유료 API URL (gen.pollinations.ai)
+  const paidUrl = `https://gen.pollinations.ai/image/${encodeURIComponent(prompt)}?model=${encodeURIComponent(selectedModel)}&nologo=true&private=true`;
+  // 무료 API URL (image.pollinations.ai) - API 키 불필요
+  const freeUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?model=flux&nologo=true&nofeed=true`;
+
   let response;
-  try {
-    response = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${process.env.POLLINATIONS_API_KEY}`
-      }
+
+  // 유료 API 키가 있는 경우 먼저 시도
+  if (process.env.POLLINATIONS_API_KEY) {
+    try {
+      response = await fetch(paidUrl, {
+        headers: {
+          Authorization: `Bearer ${process.env.POLLINATIONS_API_KEY}`
+        }
+      });
+    } catch (err) {
+      logError("pollinations_auth_request_failed", logContext.guildId, err, logContext);
+    }
+  }
+
+  // 유료 API 실패 또는 키 없을 때 무료 tier로 폴백
+  if (!response || !response.ok) {
+    logInfo("pollinations_fallback_to_free_tier", {
+      paidStatus: response?.status,
+      paidStatusText: response?.statusText,
     });
-  } catch (err) {
-    logError("pollinations_auth_request_failed", logContext.guildId, err, logContext);
+    try {
+      response = await fetch(freeUrl);
+    } catch (err) {
+      logError("pollinations_free_request_failed", logContext.guildId, err, logContext);
+      throw new Error(`이미지 생성 요청에 실패했어요: ${err.message}`);
+    }
   }
 
   if (!response || !response.ok) {
-    logInfo("pollinations_auth_failed_trying_free_tier", {
-      status: response?.status,
-      statusText: response?.statusText,
-    });
-
-    response = await fetch(url);
-  }
-
-  if (!response.ok) {
-    throw new Error(`Failed to generate image from pollinations.ai: ${response.status} ${response.statusText}`);
+    throw new Error(`Failed to generate image from pollinations.ai: ${response?.status} ${response?.statusText}`);
   }
 
   const arrayBuffer = await response.arrayBuffer();
@@ -852,6 +840,32 @@ export async function generateImage(prompt, logContext = {}) {
 
 function normalizeIntentResult(content, userPrompt) {
   const parsed = parseJsonObject(content);
+
+  // 단독 확인/취소 키워드 강제 보정 (AI가 잘못 분류하더라도 방어)
+  const trimmedPrompt = userPrompt.trim().toLowerCase();
+  const CONFIRM_KEYWORDS = new Set(["확인", "ㅇㅇ", "ok", "응", "예", "yes", "맞아", "그래", "ㅇ", "ㅇㅋ"]);
+  const CANCEL_KEYWORDS = new Set(["취소", "cancel", "아니", "ㄴㄴ", "아니요", "no", "ㄴ"]);
+
+  if (CONFIRM_KEYWORDS.has(trimmedPrompt)) {
+    return {
+      type: "confirm_management",
+      tool: "confirm_management",
+      arguments: {},
+      imagePrompt: "",
+      raw: content,
+    };
+  }
+
+  if (CANCEL_KEYWORDS.has(trimmedPrompt)) {
+    return {
+      type: "cancel_management",
+      tool: "cancel_management",
+      arguments: {},
+      imagePrompt: "",
+      raw: content,
+    };
+  }
+
   const legacyTool =
     parsed?.type === "image_generation"
       ? "generate_image"
@@ -1045,10 +1059,11 @@ function parseMemberMatchResult(content) {
 
 function parseJsonObject(content) {
   try {
-    const start = content.indexOf("{");
-    const end = content.lastIndexOf("}");
+    const stripped = stripReasoningTags(content);
+    const start = stripped.indexOf("{");
+    const end = stripped.lastIndexOf("}");
     if (start < 0 || end <= start) return null;
-    return JSON.parse(content.substring(start, end + 1));
+    return JSON.parse(stripped.substring(start, end + 1));
     } catch {
       return null;
   }
@@ -1076,6 +1091,7 @@ export function stripReasoningTags(content) {
   while (true) {
     const lowerResult = result.toLowerCase();
     const start = lowerResult.indexOf("<think>");
+    if (start < 0) break;
 
     const end = lowerResult.indexOf("</think>", start + "<think>".length);
     if (end < 0) {
@@ -1097,24 +1113,37 @@ export async function fetchChannelContext(message, limit = HISTORY_BATCH_SIZE) {
       before: message.id,
     });
 
-    return Array.from(messages.values())
-
+    const rawMessages = Array.from(messages.values())
       .reverse()
       .filter((msg) => {
-
         if (msg.system || (!msg.content && msg.attachments.size === 0)) return false;
         return true;
       })
       .map((msg) => {
         const isBot = msg.author.id === message.client.user.id;
         const authorName = msg.member?.displayName ?? msg.author.username;
+        // content가 배열인 경우(이미지 첨부 메시지 등) string으로 변환
+        const rawContent = msg.content || "(이미지 또는 첨부파일)";
 
         return {
           role: isBot ? "assistant" : "user",
-
-          content: isBot ? msg.content : `[${authorName}]: ${msg.content || "(이미지 또는 첨부파일)"}`,
+          content: isBot ? rawContent : `[${authorName}]: ${rawContent}`,
         };
       });
+
+    // Groq API는 연속된 같은 role의 메시지를 허용하지 않으므로 병합
+    const normalized = [];
+    for (const msg of rawMessages) {
+      const last = normalized[normalized.length - 1];
+      if (last && last.role === msg.role) {
+        // 같은 role이면 내용을 합침
+        last.content = `${last.content}\n${msg.content}`;
+      } else {
+        normalized.push({ role: msg.role, content: String(msg.content) });
+      }
+    }
+
+    return normalized;
   } catch (error) {
     logError("fetch_channel_context_failed", message.guildId, error, {
       channelId: message.channelId,

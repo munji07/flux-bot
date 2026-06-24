@@ -1,339 +1,213 @@
-# 먼지 디스코드 AI 챗봇
+# 먼지 (DUST) 디스코드 AI 챗봇
 
-`discord.js` v14와 Hugging Face Router API를 사용하는 **다목적 AI 챗봇**입니다.  
-자연스러운 대화, 이미지 생성/판독, 서버 관리 기능을 제공하며, 안전성을 위해 위험한 작업에 대한 2단계 확인을 구현했습니다.
+`discord.js` v14 기반 다목적 AI 챗봇. Groq/NVIDIA/Gemini 멀티 모델 지원, 서버 관리, 등급 시스템, 이미지 생성/판독, 영상 분석, 예약 메시지, 구글 검색 등을 제공.
 
 ---
 
-## 🚀 빠른 시작
+## 환경 변수
 
-### 1. 환경 변수 설정
-
-`.env` 파일을 프로젝트 루트에 생성하고 다음을 입력합니다:
+`.env` 파일을 프로젝트 루트에 생성:
 
 ```env
-DISCORD_TOKEN=your_discord_bot_token_here
-HF_TOKEN=your_huggingface_token_here
+DISCORD_TOKEN=your_token
+HF_TOKEN=your_hf_token
+GROQ_API_KEY=your_groq_key
+NVIDIA_API_KEY=your_nvidia_key
+GEMINI_API_KEY=your_gemini_key
+POLLINATIONS_API_KEY=your_pollinations_key
 ```
 
-### 2. 의존성 설치
+## 설치 및 실행
 
 ```bash
 npm install
-```
-
-### 3. 봇 실행
-
-```bash
 npm start
 ```
 
-`npm start`는 `src/index.js`의 `ShardingManager`를 실행하고, 각 샤드는 `src/bot.js`에서 봇 클라이언트를 시작합니다.
+`npm start`는 `src/index.js`의 `ShardingManager`를 실행합니다.
 
 ---
 
-## 📋 사용법
+## 사용법
+
+모든 명령은 `!먼지야` 접두어로 시작합니다.
 
 ### 일반 대화
 
-디스코드 채널에서 `!먼지야` 뒤에 질문을 입력합니다:
-
-```text
+```
 !먼지야 오늘 저녁 메뉴 추천해줘
-!먼지야 파이썬으로 리스트 정렬하는 방법 알려줄래?
-!먼지야 요즘 날씨 어때?
+!먼지야 파이썬 리스트 정렬 방법 알려줘
 ```
 
-- 봇이 요청을 감지하면 **즉시 응답 메시지를 보냅니다**.
-- 답변이 길면 여러 메시지로 나누어 전송합니다.
-- 이전 대화 히스토리는 토큰 낭비를 줄이기 위해 필요해 보일 때만 최근 5개씩 전달합니다.
+- 기본 모델: `qwen/qwen3-32b` (Groq)
+- Premium 사용자는 모델 변경 가능 (DeepSeek Flash/Pro, Llama 3.3)
 
 ### 이미지 생성
 
-```text
-!먼지야 이미지 생성 노을이 지는 바닷가에 서 있는 고양이
-!먼지야 그림 그려줘 미래 도시를 걷는 로봇
-!먼지야 프로필에 쓸 일러스트 만들어줘
+```
+!먼지야 이미지 생성 노을 지는 바닷가 고양이
 ```
 
-- AI가 자동으로 이미지 생성 의도를 판단합니다.
-- 생성 모델: `Tongyi-MAI/Z-Image-Turbo`
+- 모델: Pollinations.ai (`gptimage` / `flux`)
 
 ### 이미지 판독
 
-```text
-!먼지야 이 이미지가 뭐야? [이미지 첨부]
-!먼지야 사진 분석해줄래? [스크린샷 첨부]
-!먼지야 그림에서 뭐가 보여? [파일 첨부]
+이미지 첨부 후 `!먼지야 [질문]`
+
+- 모델: `meta/llama-4-maverick-17b-128e-instruct`
+
+### 영상 분석
+
+영상 파일 첨부 후 `!먼지야 [질문]`
+
+- 모델: `nvidia/nemotron-nano-12b-v2-vl`
+
+### 구글 실시간 검색
+
+```
+!먼지야 오늘 날씨 어때?
+!먼지야 최신 뉴스 알려줘
 ```
 
-- 이미지 분석 모델: `Qwen/Qwen3.6-27B:featherless-ai`
+- 모델: `gemini-2.5-flash`
 
----
+### 등급/멤버십
 
-## 🛡️ 서버 관리 명령
-
-### 안전성 강화
-
-관리 명령은 실행자의 **디스코드 권한과 봇 권한을 모두 확인**한 뒤 수행합니다.  
-**위험한 작업** (추방, 차단, 권한 변경 등)은 2단계 확인을 거칩니다:
-
-```text
-!먼지야 차단 @유저 사유
-→ "이 작업은 위험합니다. 30초 이내에 !먼지야 확인 을 입력해주세요"
-!먼지야 확인
-→ 작업 실행 / 또는 !먼지야 취소 로 취소
+```
+!먼지야 등급            # 내 등급 조회
+!먼지야 등급 구매        # 구매 안내
 ```
 
-### 주요 관리 명령
+| 등급 | 가격/30일 | AI 호출 | 이미지 생성 | 이미지 판독 | 영상 분석 |
+|------|-----------|---------|------------|------------|----------|
+| Free | 무료 | 10회 | 3회 | 5회 | 0회 |
+| Basic | 3,000원 | 30회 | 6회 | 10회 | 0회 |
+| Premium | 5,000원 | 무제한 | 15회 | 30회 | 3회 |
 
-#### 메시지 관리
-- `!먼지야 청소 20` - 최근 메시지 20개 삭제
-- `!먼지야 저속모드 5` - 채널에 5초 저속 모드 적용
+서버 전용 Platinum (4,000원/30일): 예약 메시지, 서버/채널 분석
 
-#### 멤버 관리
-- `!먼지야 타임아웃 @유저 10m 사유` - 10분 동안 채팅 불가
-- `!먼지야 추방 @유저 사유` - 서버에서 추방 (2단계 확인)
-- `!먼지야 차단 @유저 사유` - 서버에서 차단 (2단계 확인)
-- `!먼지야 IP차단 @유저 사유` - IP 차단 시도
-- `!먼지야 뮤트 @유저 on` - 음성 채팅 음소거
-- `!먼지야 청각차단 @유저 on` - 음성 채팅 청취 불가
-- `!먼지야 이동 @유저 음성채널이름` - 음성 채널로 이동
-- `!먼지야 연결끊기 @유저` - 음성 연결 끊기
-- `!먼지야 닉네임 @유저 새닉네임` - 닉네임 변경
+### 서버 관리
 
-#### 역할 및 권한
-- `!먼지야 역할부여 @유저 @역할` - 역할 부여
-- `!먼지야 역할제거 @유저 @역할` - 역할 제거
-- `!먼지야 권한추가 @역할 ManageMessages` - 역할에 권한 추가 (2단계 확인)
-- `!먼지야 권한제거 @역할 ManageMessages` - 역할에서 권한 제거 (2단계 확인)
+```
+!먼지야 청소 20                 # 메시지 20개 삭제
+!먼지야 타임아웃 @유저 10m     # 타임아웃
+!먼지야 추방 @유저              # 추방 (위험 작업 확인 필요)
+!먼지야 차단 @유저              # 차단 (위험 작업 확인 필요)
+!먼지야 역할부여 @유저 @역할    # 역할 부여
+!먼지야 감사로그 5              # 감사 로그 조회
+!먼지야 관리 도움말              # 전체 명령어 목록
+```
 
-#### 자동 관리
-- `!먼지야 오토모드 키워드 단어1,단어2` - AutoMod 규칙 생성 (2단계 확인)
-- `!먼지야 보안수준 높음` - 서버 인증 단계 설정 (2단계 확인)
+위험한 작업(추방, 차단, 역할 변경, 보안 수준 변경 등)은 30초 내 2차 확인(`!먼지야 확인` / `!먼지야 취소`) 필요.
 
-#### 로그
-- `!먼지야 감사로그 5` - 최근 감사 로그 5개 조회
-- `!먼지야 관리 도움말` - 관리 명령 전체 목록
+### 예약 메시지
 
----
+```
+!먼지야 10분 뒤에 회의 시작한다고 알려줘
+!먼지야 예약                    # 예약 목록
+```
 
-## 🔑 권한 체계
+### 발음 변환
 
-### 일반 사용자
+```
+!먼지야 발음 私は学生です
+```
 
-- 모든 관리 명령에 해당 Discord 권한이 필요합니다.
-- 위험한 작업은 **2단계 확인(30초 타임아웃)** 필수입니다.
+### 이름 변경
 
-### 개발자/최고 관리자 (ID: `1269575955626725390`)
-
-- ✅ **모든 권한을 자동으로 보유**
-- ✅ 권한 검사 건너뜀
-- ✅ 2단계 확인 없이 위험한 작업 즉시 실행
-- ✅ AI 프롬프트에 명시되어 제약 없는 지원
+```
+!먼지야 이름변경 새로운이름
+```
 
 ---
 
-## 🏗️ 프로젝트 구조
+## AI 모델 체계
+
+| 목적 | 모델 | 제공자 |
+|------|------|--------|
+| 의도 분류 | `meta/llama-3.1-8b-instruct` | NVIDIA |
+| 일반 대화 | `qwen/qwen3-32b` | Groq |
+| 이미지 포함 대화 | `meta/llama-4-maverick-17b-128e-instruct` | NVIDIA |
+| 폴백 대화 | `deepseek-ai/deepseek-v4-flash` | NVIDIA |
+| Premium 전용 | `deepseek-ai/deepseek-v4-pro`, `meta/llama-3.3-70b-instruct` | NVIDIA |
+| 영상 분석 | `nvidia/nemotron-nano-12b-v2-vl` | NVIDIA |
+| 이미지 생성 | `gptimage` / `flux` | Pollinations.ai |
+| 실시간 검색 | `gemini-2.5-flash` | Google |
+| 로그 요약 | `qwen/qwen3-32b` | Groq |
+| 멤버/채널/역할 매칭 | `meta/llama-3.1-8b-instruct` | NVIDIA |
+
+---
+
+## 프로젝트 구조
 
 ```
 src/
-├── index.js                    # 샤드 매니저 진입점
-├── bot.js                      # Discord 클라이언트 & 이벤트 바인딩
-├── config.js                   # 설정 및 상수 (ADMIN_USER_ID, SYSTEM_PROMPT 포함)
-├── logger.js                   # 로그 시스템 (콘솔 + 파일)
-├── errors.js                   # 사용자 정의 에러
+├── index.js                    # ShardingManager 진입점
+├── bot.js                      # Discord 클라이언트 + 이벤트 바인딩
+├── logger.js                   # 로깅 (콘솔 + JSON 파일)
+├── errors.js                   # UserFacingError
+│
+├── config/
+│   ├── config.js               # 상수, SYSTEM_PROMPT, env 검증
+│   └── models.js               # 모델 ID, API URL, 관리자 ID
 │
 ├── handlers/
-│   ├── messageCreate.js        # 메시지 이벤트 처리 (즉시 응답 + 의도 분류)
-│   └── imageGeneration.js      # 이미지 생성 요청 처리
+│   ├── messageCreate.js        # 메인 메시지 라우터 (831줄)
+│   ├── interactionCreate.js    # 버튼/모달 상호작용 처리
+│   ├── imageGeneration.js      # 이미지 생성 요청
+│   ├── googleSearch.js         # Gemini 실시간 검색
+│   └── video.js                # 영상 분석
 │
 ├── commands/
-│   └── management.js           # 관리 명령 파싱 & 2단계 확인 & 실행
+│   ├── management.js           # 서버 관리 명령어 (1,600+줄)
+│   ├── subscription.js         # 등급 구매/부여 UI
+│   ├── scheduler.js            # 예약 메시지 명령어
+│   └── userSettings.js         # 이름 변경
 │
 ├── services/
-│   ├── ai.js                   # Hugging Face API 호출
-│   ├── history.js              # 대화 히스토리 관리
+│   ├── ai.js                   # AI 클라이언트 + 분류 + 채팅 (1,100+줄)
+│   ├── database.js             # SQLite 스키마 (8개 테이블)
+│   ├── subscription.js         # 등급/사용량/토큰 로직
+│   ├── history.js              # 대화 히스토리 저장/조회
+│   ├── scheduler.js            # 예약 메시지 서비스
+│   ├── userSettings.js         # 유저 설정 서비스
+│   ├── botFeatureInfo.js       # 봇 기능 정보
+│   ├── developerDiagnostics.js # 개발자 진단
+│   └── logSearch.js            # 관리자 로그 검색
 │
 └── utils/
+    ├── message.js              # 메시지 포매팅/청크 전송
     ├── command.js              # 명령어 파싱 유틸
-    └── message.js              # 메시지 포매팅 유틸
-
-logs/
-└── bot.log                     # JSON 형식의 상세 로그
-```
-
-### 핵심 흐름
-
-1. **메시지 수신** (`bot.js` → `messageCreate.js`)
-2. **관리 명령 검사** → 해당하면 처리 후 반환
-3. **즉시 응답** → 사용자에게 placeholder 메시지 전송
-4. **의도 분류** (`services/ai.js` → `classifyRequestIntent()`)
-   - `chat`: 일반 대화
-   - `image_read`: 이미지 분석
-   - `image_generation`: 이미지 생성
-5. **의도별 처리**
-   - 대화: `createChatCompletion()` → 답변 생성
-   - 이미지 생성: `generateImage()` → 이미지 URL/파일
-   - 이미지 판독: `createChatCompletion()` + 이미지 URL
-
----
-
-## ⚙️ 설정 (config.js)
-
-| 설정 | 값 | 설명 |
-|------|-----|------|
-| `PREFIX` | `!먼지야` | 봇 명령 접두어 |
-| `ADMIN_USER_ID` | `1269575955626725390` | 개발자/최고관리자 ID |
-| `CHAT_MODEL` | `deepseek-ai/DeepSeek-R1:fastest` | 대화/의도 분류 모델 |
-| `IMAGE_MODEL` | `Qwen/Qwen3.6-27B:featherless-ai` | 이미지 판독 모델 |
-| `IMAGE_GENERATION_MODEL` | `Tongyi-MAI/Z-Image-Turbo` | 이미지 생성 모델 |
-| `MAX_STORED_HISTORY_MESSAGES` | `20` | 메모리에 저장할 히스토리 메시지 수 |
-| `HISTORY_BATCH_SIZE` | `5` | AI 호출 시 전달할 히스토리 메시지 수 |
-
----
-
-## 📊 로그 시스템
-
-### 콘솔 출력 (주요 이벤트만)
-
-```
-[20:21:45] 서버명 서버에서 유저명 유저가 "!먼지야 뭐해?" 명령을 함(처리 ai: deepseek-ai/DeepSeek-R1:fastest chat)
-```
-
-로그에 `task` 정보가 포함되어 **의도 분류(intent_classification)와 답변 생성(chat)을 구분**합니다.
-
-### 파일 로그 (logs/bot.log)
-
-모든 이벤트가 JSON 형식으로 기록됩니다:
-
-```json
-{
-  "level": "info",
-  "event": "ai_call",
-  "task": "chat",
-  "model": "deepseek-ai/DeepSeek-R1:fastest",
-  "guildId": "123456789",
-  "userId": "987654321",
-  "promptLength": 15,
-  "occurredAt": "2026-05-29T20:21:45.123Z"
-}
+    └── phonetics.js            # 한글 발음 변환
 ```
 
 ---
 
-## 🔄 AI 모델 체계
+## 데이터베이스
 
-### 의도 분류 (최초 호출)
+SQLite (`data/conversations.sqlite`), WAL 모드.
 
-사용자 입력을 분석하여 3가지 중 하나로 분류:
-- **chat**: 일반 대화, 질문, 추천, 정보 요청
-- **image_read**: 이미지 분석, 설명, 판독 요청
-- **image_generation**: 이미지, 그림, 일러스트, 배너 생성 요청
-
-### 대화 모델
-
-`SYSTEM_PROMPT`로 다음을 설정:
-- 페르소나: "먼지" (다정하고 착한 AI 챗봇)
-- 말투: 존댓말, 사용자 이름 + "님"으로 호칭
-- 스타일: 자연스러움, 필요할 때만 이모지
-- **개발자 인식**: 관리자 ID(`1269575955626725390`)는 프롬프트에 포함되어 제약 없는 지원
+| 테이블 | 용도 |
+|--------|------|
+| `conversation_messages` | 대화 히스토리 |
+| `user_subscriptions` | 유저 등급/만료일 |
+| `user_daily_usage` | 일별 사용량 |
+| `server_image_tokens` | 서버별 이미지/영상 토큰 |
+| `server_subscriptions` | 서버 Platinum 등급 |
+| `scheduled_tasks` | 예약 메시지 |
+| `user_settings` | 유저별 설정 (이름, 모델) |
+| `channel_messages` | 채널 메시지 로깅 |
 
 ---
 
-## 🔐 위험 명령 목록
+## 권한 체계
 
-다음 명령은 2단계 확인(30초 타임아웃)을 거칩니다:
-
-- `추방` (kickMember)
-- `차단` / `IP차단` (banMember, ipBanMember)
-- `권한추가` / `권한제거` (addRolePermission, removeRolePermission)
-- `보안수준` (setVerificationLevel)
-- `오토모드` (autoMod)
-
-**예외**: 관리자(ID: `1269575955626725390`)는 확인 단계 없이 즉시 실행 가능
+- 일반 사용자: Discord 권한 기반
+- 개발자/최고 관리자 (`1269575955626725390`): 모든 권한 자동 보유, 2차 확인 없이 위험 작업 실행 가능
+- 위험 작업 7종: 추방, 차단, 역할 부여/제거, 권한 변경, 보안 수준 변경, AutoMod, 닉네임 변경
 
 ---
 
-## 🔌 특수 기능
+## 라이선스
 
-### 즉시 응답 시스템
-
-명령 감지 후 **즉시 placeholder 메시지**를 보냅니다:
-- 일반 메시지: `먼지야가 요청을 확인하고 있어요...` → 업데이트
-- 이미지 생성: `이미지를 그리고 있어요...` → 업데이트
-- 오류 시: 메시지 수정으로 오류 안내
-
-이를 통해 사용자가 **봇이 반응하고 있음을 바로 알 수 있습니다**.
-
-### 봇 상태 표시
-
-- 봇 상태: `online`
-- 활동: `Listening` - `유저들과 대화중`
-- 다른 서버에서 봇의 상태를 한눈에 파악 가능
-
----
-
-## 🚨 문제 해결
-
-### 봇이 응답하지 않음
-
-1. **환경 변수 확인**
-   - `.env` 파일이 프로젝트 루트에 있는가?
-   - `DISCORD_TOKEN`과 `HF_TOKEN`이 올바른가?
-
-2. **권한 확인**
-   - 봇이 채널에서 메시지를 보낼 권한이 있는가?
-   - 봇 역할이 서버의 충분한 권한을 가지고 있는가?
-
-3. **명령 형식**
-   - `!먼지야` 뒤에 공백이 있는가?
-   - 명령이 `!먼지야` 접두어로 시작하는가?
-
-### 모델 호출 오류
-
-- **Hugging Face API 오류**: `HF_TOKEN` 유효성 확인, 토큰 할당량 확인
-- **모델 불가용**: Hugging Face Router 상태 확인, 모델 가용성 확인
-
-### 권한 오류
-
-- 관리 명령 실행 시: 사용자와 봇의 Discord 권한 확인
-- 위험한 작업: 2단계 확인 메시지 확인 (30초 타임아웃)
-
----
-
-## 📈 향후 개선 방향
-
-### 1. 히스토리 영구 저장
-- Redis / SQLite / PostgreSQL로 대화 히스토리 보존
-- 서버별/채널별 히스토리 분리 저장
-
-### 2. 슬래시 커맨드 추가
-- 관리 기능: `/청소`, `/타임아웃`, `/차단` 등
-- Discord 네이티브 권한 제어, 자동완성 활용
-
-### 3. 샤딩 상태 공유
-- Redis를 통한 샤드 간 상태 동기화
-- 히스토리, 쿨다운, 확인 대기 상태 공유
-
-### 4. 감사 로그 강화
-- 별도 `logs/moderation.log` 분리
-- 관리 명령 실행 결과 기록
-- Discord 감사 로그 연계
-
-### 5. 비용 최적화
-- 명확한 명령을 AI 분류 전에 deterministic parser로 처리
-- 모델 선택 최적화 (저렴한 분류 모델 사용)
-- Rate limit & 쿨다운 적용
-
----
-
-## 📝 라이선스
-
-이 프로젝트는 개인 프로젝트입니다.
-
----
-
-## 🤝 지원
-
-문제가 발생하면 `logs/bot.log`를 확인하여 오류 메시지와 함께 개발자에게 보고해주세요.
+개인 프로젝트

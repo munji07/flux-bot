@@ -78,7 +78,13 @@ export async function handleServerImageTokenPurchaseCommand(message, userPrompt,
       .setStyle(ButtonStyle.Success),
   );
 
-  await message.author.send({ content: dmContent, components: [row] });
+  try {
+    await message.author.send({ content: dmContent, components: [row] });
+  } catch (error) {
+    console.error("Failed to send DM to user:", error);
+    await message.reply(`❌ ${message.author.username}님에게 DM을 보낼 수 없습니다. 디스코드 설정에서 '서버 멤버가 보내는 개인 메시지 허용'이 켜져 있는지 확인해주세요.`);
+    return true;
+  }
 
   const replyText = `${message.author.username}님, ${product.label} ${count}개 구매 안내를 DM으로 보냈어요.`;
   if (loadingMessage) {
@@ -196,7 +202,13 @@ export async function handleSubscriptionToolCall(message, intent, loadingMessage
           .setStyle(ButtonStyle.Success),
       );
 
-      await message.author.send({ content: dmContent, components: [row] });
+      try {
+        await message.author.send({ content: dmContent, components: [row] });
+      } catch (error) {
+        console.error("Failed to send DM to user:", error);
+        await sendResponse(`❌ ${message.author.username}님에게 DM을 보낼 수 없습니다. 디스코드 설정에서 '서버 멤버가 보내는 개인 메시지 허용'이 켜져 있는지 확인해주세요.`);
+        return true;
+      }
       await sendResponse(`${message.author.username}님, ${product.label} ${count}개 구매 안내를 DM으로 보냈어요.`);
       return true;
     }
@@ -240,7 +252,13 @@ export async function handleSubscriptionToolCall(message, intent, loadingMessage
           .setStyle(ButtonStyle.Danger)
       );
 
-      await message.author.send({ content: dmContent, components: [row] });
+      try {
+        await message.author.send({ content: dmContent, components: [row] });
+      } catch (error) {
+        console.error("Failed to send DM to user:", error);
+        await sendResponse(`❌ ${message.author.username}님에게 DM을 보낼 수 없습니다. 디스코드 설정에서 '서버 멤버가 보내는 개인 메시지 허용'이 켜져 있는지 확인해주세요.`);
+        return true;
+      }
       await sendResponse(`${message.author.username}님, Platinum 서버 구매 안내를 DM으로 보냈어요.`);
       return true;
     }
@@ -304,7 +322,13 @@ export async function handleSubscriptionToolCall(message, intent, loadingMessage
 
     const row = new ActionRowBuilder().addComponents(buttons);
 
-    await message.author.send({ content: dmContent, components: [row] });
+    try {
+      await message.author.send({ content: dmContent, components: [row] });
+    } catch (error) {
+      console.error("Failed to send DM to user:", error);
+      await sendResponse(`❌ ${message.author.username}님에게 DM을 보낼 수 없습니다. 디스코드 설정에서 '서버 멤버가 보내는 개인 메시지 허용'이 켜져 있는지 확인해주세요.`);
+      return true;
+    }
     await sendResponse(`${message.author.username}님, 등급 구매 안내를 DM으로 보냈어요.`);
     return true;
   }
@@ -581,6 +605,41 @@ export async function handleSubscriptionCommand(message, userPrompt, loadingMess
     } catch (error) {
       console.error("Failed to update user subscription:", error);
       await sendResponse("❌ 등급 부여 중 데이터베이스 오류가 발생했습니다.");
+    }
+    return true;
+  }
+
+  // 5. 관리자 전용 등급 설정 명령어 (set)
+  // 형식: !먼지야 <유저ID> <free|basic|premium> set
+  const adminSetRegex = /^(\d{17,19})\s+(free|basic|premium)\s+set$/i;
+  const adminSetMatch = trimmed.match(adminSetRegex);
+  if (adminSetMatch) {
+    if (message.author.id !== ADMIN_USER_ID) {
+      await sendResponse("❌ 이 명령어는 개발자만 사용할 수 있습니다.");
+      return true;
+    }
+
+    const targetUserId = adminSetMatch[1];
+    const targetTier = adminSetMatch[2].toLowerCase();
+    const days = 30;
+
+    try {
+      const { tier, expiresAt } = updateUserSubscription(targetUserId, targetTier, days);
+      const displayExpiry = expiresAt ? `${expiresAt} (KST)` : "무제한";
+
+      await sendResponse(`✅ 성공적으로 등급이 설정되었습니다.\n- **대상 유저 ID**: ${targetUserId}\n- **설정된 등급**: \`${tier.toUpperCase()}\`\n- **만료 일자**: \`${displayExpiry}\``);
+
+      try {
+        const targetUser = await message.client.users.fetch(targetUserId);
+        if (targetUser) {
+          await targetUser.send(`🎉 **DUST봇 등급 설정 완료**\n\n안녕하세요, **${targetUser.username}**님! 관리자가 등급을 설정했습니다.\n- **등급**: \`${tier.toUpperCase()}\`\n- **만료일**: \`${displayExpiry}\`\n\n지금부터 혜택이 적용됩니다!`);
+        }
+      } catch (dmErr) {
+        console.log("Failed to send subscription confirmation DM to user:", dmErr.message);
+      }
+    } catch (error) {
+      console.error("Failed to update user subscription:", error);
+      await sendResponse("❌ 등급 설정 중 데이터베이스 오류가 발생했습니다.");
     }
     return true;
   }
