@@ -111,7 +111,7 @@ export async function handleBotFeatureInfoRequest(message, intent, loadingMessag
 export function getGeneralHelpText(prefix) {
   return [
     `### 🤖 ${prefix} 봇 사용 도움말`,
-    "먼지는 다정하고 똑똑한 AI 친구예요! 아래와 같이 말을 걸어보세요.",
+    "FLUX는 다정하고 똑똑한 AI 친구예요! 아래와 같이 말을 걸어보세요.",
     "",
     "**💬 일반 대화**",
     `- \`${prefix} 안녕? 반가워\` - 일상적인 대화`,
@@ -131,7 +131,7 @@ export function getGeneralHelpText(prefix) {
     `- \`${prefix} 서버 이모지 분석 토큰 (개수) 구매\` - 서버 이모지 분석을 위한 토큰을 구매합니다.`,
     `- \`${prefix} 서버 이모지 생성 토큰 (개수) 구매\` - 서버 이모지 생성을 위한 토큰을 구매합니다.`,
     "",
-    "*※ 모든 명령어는 접두사(`!먼지야`) 뒤에 한 칸을 띄우고 입력해주세요!*",
+    "*※ 모든 명령어는 접두사(`!FLUX` 또는 `!FL`) 뒤에 한 칸을 띄우고 입력해주세요!*",
     "",
     "**⚙️ 모델 변경 (프리미엄 전용)**",
     `- \`${prefix} 모델변경 <모델명>\` - 사용하려는 챗 모델을 변경합니다.`,

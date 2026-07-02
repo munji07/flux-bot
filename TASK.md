@@ -3,7 +3,7 @@
 ## 버그 (수정 필요)
 
 ### 1. AI가 사용자 이름 이상하게 생성함
-- `!먼지야 안녕` → `[[∞μg]먼지]: 김이카님 반가워요! ✧ 𝓝𝓸𝓿𝓪 ☽` 처럼 특수 유니코드 장식 문자와 역할극 형태로 응답
+- `!FLUX 안녕` → `[[∞μg]FLUX]: 김이카님 반가워요! ✧ 𝓝𝓸𝓿𝓪 ☽` 처럼 특수 유니코드 장식 문자와 역할극 형태로 응답
 - **원인**: Qwen 3 32B 모델이 SYSTEM_PROMPT를 충분히 따르지 않음
 - **조치**: SYSTEM_PROMPT에 역할극 금지 + 특수 문자 금지 명시, `stripFancyUnicode()` 후처리 적용
 - **상태**: 🔄 프롬프트 개선 완료, 추가 테스트 필요
@@ -14,16 +14,16 @@
 - **조치**: SYSTEM_PROMPT_LITE 제거 → SYSTEM_PROMPT로 통일, STRICT RULE 모든 경로에 적용
 - **상태**: ✅ 수정 완료
 
-### 3. `!먼지야 ~해도 될까?` 가 관리 명령어로 분류됨
-- `!먼지야 내가 싫어하는 사람을 폭력으로 때려도 될까?` → 관리 명령어 도움말 출력
+### 3. `!FLUX ~해도 될까?` 가 관리 명령어로 분류됨
+- `!FLUX 내가 싫어하는 사람을 폭력으로 때려도 될까?` → 관리 명령어 도움말 출력
 - **원인**: 의도 분류기가 `때려` 키워드를 보고 `run_management`로 오분류
 - **조치**: INTENT_ROUTER_PROMPT에 규칙 18 추가 (가상/허가/의견 질문은 chat으로)
 - **상태**: ✅ 수정 완료
 
 ### 4. 유저 등급 설정 AI 분류 미지원
-- `!먼지야 유저 등급 설정해줘` 같은 자연어 명령어가 AI에 의해 올바르게 분류되지 않음
+- `!FLUX 유저 등급 설정해줘` 같은 자연어 명령어가 AI에 의해 올바르게 분류되지 않음
 - **원인**: INTENT_ROUTER_PROMPT에 `action='grant'` 문서 누락
-- **조치**: 규칙 17 추가, `!먼지야 <ID> <tier> set` 명령어 추가
+- **조치**: 규칙 17 추가, `!FLUX <ID> <tier> set` 명령어 추가
 - **상태**: ✅ 수정 완료
 
 ## 기능 개선 (예정)
@@ -63,6 +63,19 @@
 | 2026-06-24 | SYSTEM_PROMPT_LITE 제거 → SYSTEM_PROMPT 통일 |
 | 2026-06-24 | INTENT_ROUTER_PROMPT에 규칙 17(grant), 18(가상질문) 추가 |
 | 2026-06-24 | `stripFancyUnicode()` 후처리 함수 추가, 모든 응답 경로에 적용 |
-| 2026-06-24 | `!먼지야 <ID> <tier> set` 명령어 추가 |
+| 2026-06-24 | `!FLUX <ID> <tier> set` 명령어 추가 |
 | 2026-06-24 | SYSTEM_PROMPT에 역할극 금지, 가벼운 대화 수용 규칙 추가 |
 | 2026-06-24 | README.md / TASK.md 전면 업데이트 |
+
+## 💰 경제 시스템 개발 태스크 (완료 ✅)
+- [x] `src/config/economyConfig.js` 추가: 게임 확률, 상점 아이템, 일일 퀘스트, 쿨다운 설정
+- [x] `src/services/database.js` 수정: 경제 시스템 관련 SQLite 테이블 추가 (eco_users, eco_inventory, eco_quests, eco_achievements)
+- [x] `src/services/economyService.js` 추가: 잔액 변동, 송금, 아이템 지급, 쿨다운, 랭킹 공통 로직
+- [x] `src/services/economyQuestService.js` 추가: 일일 퀘스트 리셋, 진행도 계산, 보상 수령, 업적 달성 검사
+- [x] `src/deploy-commands.js` 추가: Discord 슬래시 명령어 빌더 및 배포 스크립트 (토큰에서 ClientID 자동 추출)
+- [x] `src/handlers/economyHandler.js` 추가: 슬래시 명령어 15종 (돈/송금/일출/슬롯/주사위/동전/낚시/채굴/농사/인벤토리/상점/판매/랭킹/업적/퀘스트)
+- [x] `src/handlers/interactionCreate.js` 수정: ESM import 순서 수정, 슬래시 명령어 분기 및 퀘스트 보상 수령 버튼 연결
+- [x] `package.json` 수정: `npm run deploy` 스크립트 추가
+
+
+

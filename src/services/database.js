@@ -107,6 +107,62 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_channel_messages_user
     ON channel_messages (guild_id, channel_id, user_id);
+
+  CREATE TABLE IF NOT EXISTS user_names (
+    user_id TEXT NOT NULL,
+    guild_id TEXT NOT NULL,
+    username TEXT NOT NULL DEFAULT '',
+    display_name TEXT NOT NULL DEFAULT '',
+    global_name TEXT DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, guild_id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_user_names_user
+    ON user_names (user_id);
+
+  CREATE INDEX IF NOT EXISTS idx_user_names_guild
+    ON user_names (guild_id);
+
+  CREATE TABLE IF NOT EXISTS ai_channels (
+    channel_id TEXT PRIMARY KEY,
+    guild_id TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS eco_users (
+    user_id TEXT PRIMARY KEY,
+    coins INTEGER NOT NULL DEFAULT 0,
+    last_fishing TEXT,
+    last_mining TEXT,
+    last_farming TEXT,
+    last_daily TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS eco_inventory (
+    user_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    quantity INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, item_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS eco_quests (
+    user_id TEXT NOT NULL,
+    quest_id TEXT NOT NULL,
+    progress INTEGER NOT NULL DEFAULT 0,
+    completed INTEGER NOT NULL DEFAULT 0,
+    quest_date TEXT NOT NULL DEFAULT (date('now', 'localtime')),
+    PRIMARY KEY (user_id, quest_id, quest_date)
+  );
+
+  CREATE TABLE IF NOT EXISTS eco_achievements (
+    user_id TEXT NOT NULL,
+    achievement_id TEXT NOT NULL,
+    unlocked_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, achievement_id)
+  );
 `);
 
 const userSettingsColumns = db.prepare("PRAGMA table_info(user_settings)").all().map((column) => column.name);

@@ -170,12 +170,12 @@ function buildChatMessages({
 }
 
 export function getChatModel(imageUrls) {
-  return imageUrls.length > 0 ? "meta/llama-4-maverick-17b-128e-instruct" : "qwen/qwen3-32b";
+  return imageUrls.length > 0 ? "google/diffusiongemma-26b-a4b-it" : "qwen/qwen3-32b";
 }
 
 function normalizeChatModel(model) {
   if (!model) return model;
-  if (model === "meta/llama-4-maverick-17b-128e-instruct") return model;
+  if (model.includes("diffusiongemma")) return model;
   return "qwen/qwen3-32b";
 }
 
@@ -255,6 +255,73 @@ export const AI_TOOLS = [
           query: {
             type: "string",
             description: "The search query.",
+          },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "pronunciation",
+      description: "Convert Korean text to pronunciation guide (발음). Use when the user asks how to pronounce a word or sentence.",
+      parameters: {
+        type: "object",
+        properties: {
+          text: {
+            type: "string",
+            description: "The text to convert to pronunciation.",
+          },
+        },
+        required: ["text"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "summary",
+      description: "Summarize recent messages in the current channel. Use when the user asks to summarize/요약 the channel chat, or wants a recap of recent conversations.",
+      parameters: {
+        type: "object",
+        properties: {
+          count: {
+            type: "number",
+            description: "Optional number of recent messages to summarize (default 50).",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "feedback",
+      description: "Send user feedback or suggestion to the bot developer. Use when the user says '건의', '피드백', '제안', '의견', '버그 신고', or wants to send a message to the developer.",
+      parameters: {
+        type: "object",
+        properties: {
+          text: {
+            type: "string",
+            description: "The feedback or suggestion text.",
+          },
+        },
+        required: ["text"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "lookup_user",
+      description: "Search for a user's stored name information by name, nickname, or Discord ID. Use when someone asks about another user's identity or when you need to remember who a user is.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "The name, nickname, or user ID to search for.",
           },
         },
         required: ["query"],
@@ -396,6 +463,9 @@ export const INTENT_TOOL_NAMES = new Set([
   "confirm_management",
   "cancel_management",
   "schedule",
+  "summary",
+  "feedback",
+  "lookup_user",
 ]);
 
 const MANAGEMENT_COMMAND_GUIDE = [
@@ -428,6 +498,7 @@ const MANAGEMENT_COMMAND_GUIDE = [
   "  setAfkTimeout       : 'AFK 시간 설정', '잠수 시간 설정'",
   "  setSystemChannel    : '시스템 메시지 채널 설정', '웰컴 메시지 채널 설정'",
   "  createChannel       : '채널 생성', '새로운 채팅방 만들어줘', 'createChannel 채널명 [text|voice|category]'",
+  "  createAiChannel     : 'AI 전용 채널 생성', 'ai 채널 만들어줘', 'ai 전용채널 생성해줘', 'createAiChannel 채널명 [카테고리명]'",
   "  deleteChannel       : '채널 삭제', '채널 지워줘', 'deleteChannel 채널명/ID'",
   "  createRole          : '역할 생성', '역할 추가해줘', 'createRole 역할명'",
   "  deleteRole          : '역할 삭제', '역할 지워줘', 'deleteRole 역할명/ID'",
@@ -445,7 +516,7 @@ const MANAGEMENT_COMMAND_GUIDE = [
 const INTENT_ROUTER_PROMPT = [
   "You are a fast intent classifier for a Discord bot. Return ONLY valid JSON, no markdown, no prose.",
   'Schema: {"tool":"<tool_name>","arguments":{...}}',
-  `Tool names: chat | image_read | video_analysis | generate_image | search_logs | google_search | run_management | subscription | bot_feature_info | pronunciation | developer_diagnostics | confirm_management | cancel_management | schedule`,
+  `   Tool names: chat | image_read | video_analysis | generate_image | search_logs | google_search | run_management | subscription | bot_feature_info | pronunciation | developer_diagnostics | confirm_management | cancel_management | schedule | summary | feedback | lookup_user`,
   "",
   "=== CLASSIFICATION RULES ===",
   "1. Infer intent from MEANING, not exact keywords. Users speak naturally in Korean.",
@@ -468,10 +539,13 @@ const INTENT_ROUTER_PROMPT = [
   "    - action='cancel' when user wants to cancel/delete a reservation. Extract the reservation id.",
   "    - action='reschedule' when user wants to change a reservation's time. Extract id and convert the new time to executeAt='YYYY-MM-DD HH:MM' KST format.",
   "    IMPORTANT: For executeAt, ALWAYS output absolute KST time in 'YYYY-MM-DD HH:MM' format (Korea Standard Time, UTC+9). Convert relative times yourself. e.g. if user says '10분 뒤' and current time is 11:00, output '2026-06-21 11:10'. For '내일 09:30', output next day's date at 09:30.",
-  "    If only partial info is given (e.g. just '예약메시지' with no details), still use action='create' with empty executeAt and message — the handler will ask for missing details.",
-  "16. 'subscription' with action='grant': ONLY for admin users. Used when admin wants to give/assign/set/change a user's membership tier (e.g. '유저 등급 설정', '유저 등급 부여', 'basic으로 설정', 'premium 부여'). Set arguments.targetUserId to the target Discord user ID, arguments.tier to 'free'|'basic'|'premium', arguments.days to number (default 30).",
-  "17. CRITICAL for run_management: NEVER classify hypothetical/permission/opinion questions as 'run_management'. Questions like '~해도 될까?', '~되나요?', '~하는 게 좋을까?', '만약 ~하면?' are asking for the bot's opinion or hypothetical discussion — ALWAYS classify these as 'chat'. Only classify as 'run_management' when the user is explicitly asking the bot TO EXECUTE an action RIGHT NOW (e.g. '청소해줘', '밴해줘', '타임아웃 시켜줘').",
-  "=== run_management COMMAND GUIDE ===",
+   "    If only partial info is given (e.g. just '예약메시지' with no details), still use action='create' with empty executeAt and message — the handler will ask for missing details.",
+   "16. 'subscription' with action='grant': ONLY for admin users. Used when admin wants to give/assign/set/change a user's membership tier (e.g. '유저 등급 설정', '유저 등급 부여', 'basic으로 설정', 'premium 부여'). Set arguments.targetUserId to the target Discord user ID, arguments.tier to 'free'|'basic'|'premium', arguments.days to number (default 30).",
+   "17. CRITICAL for run_management: NEVER classify hypothetical/permission/opinion questions as 'run_management'. Questions like '~해도 될까?', '~되나요?', '~하는 게 좋을까?', '만약 ~하면?' are asking for the bot's opinion or hypothetical discussion — ALWAYS classify these as 'chat'. Only classify as 'run_management' when the user is explicitly asking the bot TO EXECUTE an action RIGHT NOW (e.g. '청소해줘', '밴해줘', '타임아웃 시켜줘').",
+   "18. 'summary': Use when the user asks to summarize/요약 channel messages, recap recent conversations, or get a summary of what's been discussed. Set arguments.count to number of messages if specified (default 50).",
+   "19. 'feedback': Use when the user wants to send feedback/건의/의견/제안/버그 신고 to the bot developer. Extract the feedback text into arguments.text.",
+   "20. 'lookup_user': Use when the user asks about someone's identity, name, or when you need to look up a user by name/nickname/ID from the stored name database. Also use when the user asks '아까 그 사람 누구야?', '저 사람 이름이 뭐였지?', or similar. Set arguments.query to the search term.",
+   "=== run_management COMMAND GUIDE ===",
   MANAGEMENT_COMMAND_GUIDE,
   "",
   "=== run_management ARGUMENT EXTRACTION ===",
@@ -487,8 +561,8 @@ const INTENT_ROUTER_PROMPT = [
   "- setVerificationLevel → args: [level]  where level ∈ {none, low, medium, high, highest}",
   "- autoMod  → args: ['keyword', ...keywords]",
   "- auditLog → args: [count]  (optional)",
-  "- banMember / kickMember / deleteMessage / disconnectMember → args: [targetUser]",
   "- changeGuildName / changeGuildDescription / createRole / createChannel / deleteRole / deleteChannel / unbanMember / pinMessage / unpinMessage → args: [param]",
+  "- createAiChannel    → args: [channelName, categoryName] (channelName: name of the new AI channel, categoryName: target category name, optional)",
   "- setAfkChannel    → args: [channelIdOrName]  e.g. ['1477917124763844690']",
   "- clearAfkChannel  → args: []                 e.g. [] (no arguments needed)",
   "- setAfkTimeout    → args: [seconds]           e.g. ['300']",
@@ -566,7 +640,7 @@ export async function createChatCompletion({
   model: userModel = null,
 }) {
   const task = intent || getChatTask(imageUrls);
-  const model = normalizeChatModel(userModel) || (imageUrls.length > 0 ? "meta/llama-4-maverick-17b-128e-instruct" : "qwen/qwen3-32b");
+  const model = normalizeChatModel(userModel) || (imageUrls.length > 0 ? "google/diffusiongemma-26b-a4b-it" : "qwen/qwen3-32b");
 
   logInfo("ai_call", {
     ...logContext,

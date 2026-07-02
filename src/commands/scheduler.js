@@ -17,7 +17,7 @@ export async function handleScheduleCommand(message, userPrompt, loadingMessage)
 
   const tier = getServerSubscriptionTier(message.guildId);
   if (tier !== "platinum") {
-    await loadingMessage.edit("❌ 예약 메시지 기능은 **플래티넘 서버(유료)** 전용 기능입니다.\n이 서버는 현재 플래티넘 라이선스가 없습니다. `!먼지야 플래티넘 서버 구매`를 입력하여 서버를 업그레이드해 보세요!");
+    await loadingMessage.edit(`❌ 예약 메시지 기능은 **플래티넘 서버(유료)** 전용 기능입니다.\n이 서버는 현재 플래티넘 라이선스가 없습니다. \`${PREFIX} 플래티넘 서버 구매\`를 입력하여 서버를 업그레이드해 보세요!`);
     return true;
   }
 
@@ -243,7 +243,7 @@ export async function openScheduleModalButton(message, loadingMessage) {
 export async function handleScheduleFromIntent(message, args, loadingMessage) {
   const tier = getServerSubscriptionTier(message.guildId);
   if (tier !== "platinum") {
-    await loadingMessage.edit("❌ 예약 메시지 기능은 **플래티넘 서버(유료)** 전용 기능입니다.\n이 서버는 현재 플래티넘 라이선스가 없습니다. `!먼지야 플래티넘 서버 구매`를 입력하여 서버를 업그레이드해 보세요!");
+    await loadingMessage.edit(`❌ 예약 메시지 기능은 **플래티넘 서버(유료)** 전용 기능입니다.\n이 서버는 현재 플래티넘 라이선스가 없습니다. \`${PREFIX} 플래티넘 서버 구매\`를 입력하여 서버를 업그레이드해 보세요!`);
     return true;
   }
 
@@ -257,7 +257,7 @@ export async function handleScheduleFromIntent(message, args, loadingMessage) {
   if (action === "cancel") {
     const id = Number.parseInt(args?.id, 10);
     if (!id) {
-      await loadingMessage.edit("취소할 예약 번호를 알려주세요. 예: `!먼지야 예약 취소 1`");
+      await loadingMessage.edit(`취소할 예약 번호를 알려주세요. 예: \`${PREFIX} 예약 취소 1\``);
       return true;
     }
     await handleScheduleCancel(message, loadingMessage, id);
@@ -268,7 +268,7 @@ export async function handleScheduleFromIntent(message, args, loadingMessage) {
     const id = Number.parseInt(args?.id, 10);
     const executeAt = args?.executeAt?.trim();
     if (!id || !executeAt) {
-      await loadingMessage.edit("변경할 예약 번호와 새 시간을 알려주세요. 예: `!먼지야 예약 변경 1 내일 09:30`");
+      await loadingMessage.edit(`변경할 예약 번호와 새 시간을 알려주세요. 예: \`${PREFIX} 예약 변경 1 내일 09:30\``);
       return true;
     }
     const isAdmin = message.member?.permissions.has(PermissionFlagsBits.ManageMessages) ?? false;

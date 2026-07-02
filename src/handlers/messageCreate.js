@@ -11,6 +11,9 @@ import { handleLogSearchRequest, isPayloadTooLargeError } from "../services/logS
 import { addServerImageToken, checkAndIncrementUsage, decrementUsage, TIER_LIMITS } from "../services/subscription.js";
 import { handleGoogleSearch } from "./googleSearch.js";
 import { handleVideoAnalysis } from "./video.js";
+import { generateChannelSummary } from "../services/summary.js";
+import { handleFeedback } from "../services/feedback.js";
+import { saveUserName, searchUserNames, getUserName, formatUserNameRecord, getAllUserNames } from "../services/userNames.js";
 import { db } from '../services/database.js';
 import {
   classifyRequestIntent,
@@ -81,12 +84,37 @@ export async function handleMessageCreate(client, message) {
     } catch (e) {
       logError("store_channel_message", message.guildId, e);
     }
+
+    try {
+      saveUserName(
+        message.author.id,
+        message.guildId,
+        message.author.username,
+        message.member?.displayName || message.author.displayName,
+        message.author.globalName || "",
+      );
+    } catch (e) {
+      logError("save_user_name", message.guildId, e);
+    }
   }
 
   if (message.author.bot || !message.inGuild()) return;
-  if (!message.content.startsWith(PREFIX)) return;
+  if (message.content && message.content.trim().startsWith('&')) return;
 
-  const userPrompt = message.content.slice(PREFIX.length).trim();
+  let isAiChannel = false;
+  try {
+    const row = db.prepare("SELECT 1 FROM ai_channels WHERE channel_id = ?").get(message.channelId);
+    if (row) isAiChannel = true;
+  } catch (e) {
+    logError("check_ai_channel", message.guildId, e);
+  }
+
+  const prefixMatch = message.content.match(/^!(?:FLUX|FL)\b/i);
+  if (!prefixMatch && !isAiChannel) return;
+
+  const userPrompt = prefixMatch
+    ? message.content.slice(prefixMatch[0].length).trim()
+    : message.content.trim();
     const attachedImageUrls = getImageAttachmentUrls(message);
   const videoAttachment = message.attachments.find(a => a.contentType?.startsWith('video/'));
 
@@ -97,7 +125,7 @@ export async function handleMessageCreate(client, message) {
 
   const now = Date.now();
   if (activeUsers.has(message.author.id)) {
-    await message.reply("먼지가 이미 답변을 작성하고 있어요. 답변이 완료된 후 다시 질문해주세요!");
+    await message.reply("FLUX가 이미 답변을 작성하고 있어요. 답변이 완료된 후 다시 질문해주세요!");
     return;
   }
 
@@ -111,7 +139,7 @@ export async function handleMessageCreate(client, message) {
   try {
     let usageCheck = null;
     let usageType = null;
-    let loadingMessage = await message.reply(`-# ${LOADING_EMOJI} DUST봇이 요청을 확인하고 있어요...`);
+    let loadingMessage = await message.reply(`-# ${LOADING_EMOJI} FLUX봇이 요청을 확인하고 있어요...`);
 
     // 유저 이름 설정 여부 체크 및 자동 저장 (첫 대화)
     let isFirstConversation = false;
@@ -137,6 +165,36 @@ export async function handleMessageCreate(client, message) {
     if (userPrompt.startsWith("이름변경") || /^이름(?:초기화|삭제|리셋)$/i.test(userPrompt)) {
       const handled = await handleUserSettingsCommand(message, userPrompt, loadingMessage);
       if (handled) return;
+    }
+
+    // 이름찾기 — DB에 저장된 모든 사용자 이름 검색 (AI 분류 없이 바로 처리)
+    const nameSearchMatch = userPrompt.match(/^이름(?:찾기|검색|조회|보기|목록|리스트)\s*(.*)$/i);
+    if (nameSearchMatch) {
+      const query = nameSearchMatch[1].trim();
+      if (query) {
+        const results = searchUserNames(query);
+        if (results.length === 0) {
+          await loadingMessage.edit(`\`${query}\`(와)과 일치하는 사용자를 찾지 못했어요.`);
+        } else {
+          const lines = results.slice(0, 15).map((r, i) =>
+            `${i + 1}. **${r.display_name || r.username || "알 수 없음"}** (ID: \`${r.user_id}\`)${r.global_name ? ` / ${r.global_name}` : ""}`
+          );
+          const text = [`## 🔍 이름 검색 결과: \`${query}\``, "", ...lines].join("\n");
+          await loadingMessage.edit(text);
+        }
+      } else {
+        const allNames = getAllUserNames();
+        if (allNames.length === 0) {
+          await loadingMessage.edit("아직 저장된 사용자 이름이 없어요.");
+        } else {
+          const lines = allNames.slice(0, 20).map((r, i) =>
+            `${i + 1}. **${r.display_name || r.username || "알 수 없음"}** (ID: \`${r.user_id}\`)`
+          );
+          const text = [`## 📋 저장된 사용자 이름 목록 (최근 ${Math.min(allNames.length, 20)}명)`, "", ...lines].join("\n");
+          await loadingMessage.edit(text);
+        }
+      }
+      return;
     }
 
     // 등록된 구독 명령어 (AI 분류 없이 직접 처리)
@@ -245,9 +303,99 @@ export async function handleMessageCreate(client, message) {
     return;
   }
 
-  if (intent.tool === "schedule") {
-    const handled = await handleScheduleFromIntent(message, intent.arguments, loadingMessage);
-    if (handled) return;
+  if (intent.tool === "summary") {
+    try {
+      usageCheck = checkAndIncrementUsage(message.author.id, "ai_calls", message.guildId);
+      if (!usageCheck.allowed) {
+        const limits = TIER_LIMITS[usageCheck.tier];
+        await loadingMessage.edit(createLimitExceededMessage(message.author.username, limits.name, "AI 호출", limits.ai_calls, PREFIX));
+        return;
+      }
+
+      const count = Math.min(Math.max(Number(intent.arguments?.count) || 50, 5), 200);
+      await loadingMessage.edit(`-# ${LOADING_EMOJI} 채널 메시지를 요약하고 있어요... (최근 ${count}개)`);
+
+      const summary = await generateChannelSummary(
+        message.guildId,
+        message.channelId,
+        message.channel.name,
+        count,
+      );
+
+      if (!summary) {
+        await loadingMessage.edit("최근 메시지가 충분하지 않아 요약할 수 없어요. 채널에 메시지가 더 쌓인 후에 시도해주세요.");
+        return;
+      }
+
+      const footer = `\n\n-# 🤖 요약 모델: ${"meta/llama-3.1-8b-instruct"}`;
+      await sendChunkedAnswer(message, loadingMessage, summary + footer);
+    } catch (error) {
+      logError("summary_tool", message.guildId, error, {
+        guildName: message.guild.name,
+        channelId: message.channelId,
+        userId: message.author.id,
+        userTag: message.author.tag,
+        commandText: userPrompt,
+      });
+      await loadingMessage.edit("채널 요약 중 문제가 발생했어요. 잠시 뒤 다시 시도해주세요.");
+    }
+    return;
+  }
+
+  if (intent.tool === "feedback") {
+    try {
+      const feedbackText = String(intent.arguments?.text || userPrompt).trim();
+      if (!feedbackText || feedbackText.length < 2) {
+        await loadingMessage.edit(`건의 내용을 입력해주세요. 예: \`${PREFIX} 건의: 여기에 내용을 적어주세요\``);
+        return;
+      }
+
+      const sent = await handleFeedback(client, message, feedbackText);
+      if (sent) {
+        await loadingMessage.edit("✅ 소중한 의견 감사합니다! 개발자에게 전달했어요.");
+      } else {
+        await loadingMessage.edit("❌ 건의 전송 중 문제가 발생했어요. 개발자에게 직접 문의해주세요.");
+      }
+    } catch (error) {
+      logError("feedback_tool", message.guildId, error, {
+        guildName: message.guild.name,
+        channelId: message.channelId,
+        userId: message.author.id,
+        userTag: message.author.tag,
+        commandText: userPrompt,
+      });
+      await loadingMessage.edit("건의 처리 중 문제가 발생했어요. 잠시 뒤 다시 시도해주세요.");
+    }
+    return;
+  }
+
+  if (intent.tool === "lookup_user") {
+    try {
+      const query = String(intent.arguments?.query || "").trim();
+      if (!query) {
+        await loadingMessage.edit("찾을 사용자 이름이나 ID를 입력해주세요.");
+        return;
+      }
+      const results = searchUserNames(query);
+      if (results.length === 0) {
+        await loadingMessage.edit(`\`${query}\`(와)과 일치하는 사용자를 찾지 못했어요.`);
+      } else {
+        const lines = results.slice(0, 10).map((r, i) =>
+          `${i + 1}. **${r.display_name || r.username || "알 수 없음"}** (ID: \`${r.user_id}\`)${r.global_name ? ` / ${r.global_name}` : ""}`
+        );
+        const text = [`## 🔍 사용자 검색 결과`, `검색어: \`${query}\``, "", ...lines].join("\n");
+        await loadingMessage.edit(text);
+      }
+    } catch (error) {
+      logError("lookup_user_tool", message.guildId, error, {
+        guildName: message.guild.name,
+        channelId: message.channelId,
+        userId: message.author.id,
+        commandText: userPrompt,
+      });
+      await loadingMessage.edit("사용자 검색 중 문제가 발생했어요.");
+    }
+    return;
   }
 
   if (intent.tool === "video_analysis") {
@@ -443,7 +591,7 @@ export async function handleMessageCreate(client, message) {
   let typingInterval;
   let currentStep = "command_detected";
 
-  const usedModel = attachedImageUrls.length > 0 ? "meta/llama-4-maverick-17b-128e-instruct" : "qwen/qwen3-32b";
+  const usedModel = attachedImageUrls.length > 0 ? "google/diffusiongemma-26b-a4b-it" : "qwen/qwen3-32b";
 
   try {
     const historyKey = getHistoryKey(message); // 로깅 및 DB 저장을 위해 유지
@@ -488,7 +636,7 @@ export async function handleMessageCreate(client, message) {
     await message.channel.sendTyping();
 
     currentStep = "send_loading_message";
-    await loadingMessage.edit(`-# ${LOADING_EMOJI} DUST봇이 답변을 준비하고 있어요...`).catch(() => {});
+    await loadingMessage.edit(`-# ${LOADING_EMOJI} FLUX봇이 답변을 준비하고 있어요...`).catch(() => {});
 
     typingInterval = setInterval(() => {
       message.channel.sendTyping().catch((error) => {
@@ -535,7 +683,7 @@ export async function handleMessageCreate(client, message) {
 
         if (isPayloadTooLargeError(primaryError) || isGroqRateLimitError(primaryError)) {
           currentStep = "request_nvidia_fallback";
-          await loadingMessage.edit(`-# ${LOADING_EMOJI} DUST봇이 다른 모델로 답변을 이어서 준비하고 있어요...`);
+          await loadingMessage.edit(`-# ${LOADING_EMOJI} FLUX봇이 다른 모델로 답변을 이어서 준비하고 있어요...`);
 
           try {
             const fallbackCompletion = await createChatCompletion({
@@ -706,7 +854,7 @@ function stripModelFooter(text) {
 function getModelDisplayName(model) {
   const map = {
     "qwen/qwen3-32b": "Qwen3 32B",
-    "meta/llama-4-maverick-17b-128e-instruct": "Llama 4 Maverick",
+    "google/diffusiongemma-26b-a4b-it": "DiffusionGemma 26B",
     "deepseek-ai/deepseek-v4-flash": "DeepSeek V4 Flash",
   };
   return map[model] || "Qwen3 32B";

@@ -1,8 +1,21 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle } from "discord.js";
+import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ChannelType,
+  ModalBuilder,
+  PermissionFlagsBits,
+  TextInputBuilder,
+  TextInputStyle,
+} from "discord.js";
 import { ADMIN_USER_ID } from "../config/config.js";
 import { addServerImageToken, updateUserSubscription, getServerSubscriptionTier } from "../services/subscription.js";
 import { createScheduledMessage } from "../services/scheduler.js";
 import { parseScheduleTime, scheduleChannelMap } from "../commands/scheduler.js";
+import { db } from "../services/database.js";
+import { logError } from "../logger.js";
+import { handleEconomyCommand } from "./economyHandler.js";
+import { EconomyQuestService } from "../services/economyQuestService.js";
 
 const SERVER_TOKEN_LABELS = {
   image_readings: "서버 이미지 검토 토큰",
@@ -17,15 +30,90 @@ const SERVER_TOKEN_PRICES = {
 
 /**
  * 디스코드 Interaction(버튼 클릭 등) 이벤트를 처리합니다.
- * @param {import("discord.js").Client} client 
- * @param {import("discord.js").Interaction} interaction 
+ * @param {import("discord.js").Client} client
+ * @param {import("discord.js").Interaction} interaction
  */
 export async function handleInteractionCreate(client, interaction) {
+  // ── 슬래시 명령어 처리 ────────────────────────────────────────────────────
+  if (interaction.isChatInputCommand()) {
+    try {
+      await handleEconomyCommand(interaction);
+    } catch (err) {
+      logError("slash_command_execution_failed", interaction.guildId, err, {
+        commandName: interaction.commandName,
+        userId: interaction.user?.id,
+      });
+      const replyMethod = interaction.replied || interaction.deferred ? "followUp" : "reply";
+      await interaction[replyMethod]({
+        content: "❌ 명령어를 실행하는 중 내부 오류가 발생했습니다.",
+        ephemeral: true,
+      }).catch(() => {});
+    }
+    return;
+  }
+
+  // ── 일일 퀘스트 보상 수령 버튼 ───────────────────────────────────────────
+  if (interaction.isButton() && interaction.customId.startsWith("claim_quest:")) {
+    const [, questId, userId] = interaction.customId.split(":");
+    if (interaction.user.id !== userId) {
+      await interaction.reply({ content: "❌ 본인의 퀘스트 보상만 수령할 수 있습니다.", ephemeral: true });
+      return;
+    }
+
+    const result = EconomyQuestService.claimQuestReward(userId, questId);
+    if (!result.success) {
+      await interaction.reply({ content: `❌ 수령 실패: ${result.message}`, ephemeral: true });
+      return;
+    }
+
+    await interaction.reply({ content: `🎉 보상 수령 성공! **+${result.reward.toLocaleString()}** 코인을 획득했습니다!` });
+    return;
+  }
+
+  // ── AI 채널 카테고리 선택 메뉴 ───────────────────────────────────────────
+  if (interaction.isStringSelectMenu() && interaction.customId.startsWith("ai_channel_create_category:")) {
+    if (!interaction.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
+      await interaction.reply({
+        content: "❌ 채널 관리 권한(`ManageChannels`)이 없어 AI 전용 채널을 생성할 수 없습니다.",
+        ephemeral: true,
+      });
+      return;
+    }
+
+    const channelName = interaction.customId.split(":")[1] || "ai-전용-채널";
+    const categoryId = interaction.values[0];
+
+    try {
+      const parent = interaction.guild.channels.cache.get(categoryId);
+      const newChan = await interaction.guild.channels.create({
+        name: channelName,
+        type: ChannelType.GuildText,
+        parent: categoryId,
+        rateLimitPerUser: 10,
+      });
+
+      db.prepare("INSERT OR REPLACE INTO ai_channels (channel_id, guild_id) VALUES (?, ?)").run(newChan.id, interaction.guildId);
+
+      await interaction.update({
+        content: `✅ 카테고리 **${parent ? parent.name : "Unknown"}** 하위에 AI 전용 채널 ${newChan}을 생성했어요. (슬로우모드 10초가 적용되었습니다.)`,
+        components: [],
+      });
+    } catch (error) {
+      logError("ai_channel_create_interaction_failed", interaction.guildId, error);
+      await interaction.reply({
+        content: `❌ 채널 생성 중 오류가 발생했습니다: ${error.message}`,
+        ephemeral: true,
+      });
+    }
+    return;
+  }
+
+  // ── 예약 메시지 모달 제출 ────────────────────────────────────────────────
   if (interaction.isModalSubmit() && interaction.customId === "schedule_create_modal") {
     const tier = getServerSubscriptionTier(interaction.guildId);
     if (tier !== "platinum") {
       await interaction.reply({
-        content: "❌ 이 서버는 **플래티넘 서버(유료)** 권한이 없으므로 예약 기능을 사용할 수 없습니다. `!먼지야 플래티넘 서버 구매`를 입력해 등급을 업그레이드해 보세요!",
+        content: "❌ 이 서버는 **플래티넘 서버(유료)** 권한이 없으므로 예약 기능을 사용할 수 없습니다. `!FLUX 플래티넘 서버 구매`를 입력해 등급을 업그레이드해 보세요!",
         ephemeral: true,
       });
       return;
@@ -55,16 +143,12 @@ export async function handleInteractionCreate(client, interaction) {
       const rawId = mentionMatch ? mentionMatch[1] : channelTextInput;
       if (/^\d{17,20}$/.test(rawId)) {
         const resolved = await interaction.guild.channels.fetch(rawId).catch(() => null);
-        if (resolved && resolved.isTextBased()) {
-          channelId = resolved.id;
-        }
+        if (resolved && resolved.isTextBased()) channelId = resolved.id;
       } else {
         const byName = interaction.guild.channels.cache.find(
           c => c.isTextBased() && (c.name === channelTextInput || c.name.includes(channelTextInput))
         );
-        if (byName) {
-          channelId = byName.id;
-        }
+        if (byName) channelId = byName.id;
       }
     }
 
@@ -88,14 +172,12 @@ export async function handleInteractionCreate(client, interaction) {
     return;
   }
 
-  // 채널 선택 메뉴 처리 (예약 메시지)
+  // ── 예약 채널 선택 메뉴 ──────────────────────────────────────────────────
   if (interaction.isChannelSelectMenu() && interaction.customId === "schedule_channel_select") {
     const channelId = interaction.values[0];
     scheduleChannelMap.set(interaction.user.id, { channelId, timestamp: Date.now() });
 
-    const modal = new ModalBuilder()
-      .setCustomId("schedule_create_modal")
-      .setTitle("예약 메시지");
+    const modal = new ModalBuilder().setCustomId("schedule_create_modal").setTitle("예약 메시지");
 
     const timeInput = new TextInputBuilder()
       .setCustomId("schedule_time")
@@ -120,24 +202,23 @@ export async function handleInteractionCreate(client, interaction) {
     return;
   }
 
-  // 버튼 상호작용만 처리
+  // ── 이 이하는 버튼 전용 ───────────────────────────────────────────────────
   if (!interaction.isButton()) return;
 
   const { customId } = interaction;
 
+  // 예약 메시지 모달 열기 버튼
   if (customId === "schedule_open_modal") {
     const tier = getServerSubscriptionTier(interaction.guildId);
     if (tier !== "platinum") {
       await interaction.reply({
-        content: "❌ 이 서버는 **플래티넘 서버(유료)** 권한이 없으므로 예약 기능을 사용할 수 없습니다. `!먼지야 플래티넘 서버 구매`를 입력해 등급을 업그레이드해 보세요!",
+        content: "❌ 이 서버는 **플래티넘 서버(유료)** 권한이 없으므로 예약 기능을 사용할 수 없습니다. `!FLUX 플래티넘 서버 구매`를 입력해 등급을 업그레이드해 보세요!",
         ephemeral: true,
       });
       return;
     }
 
-    const modal = new ModalBuilder()
-      .setCustomId("schedule_create_modal")
-      .setTitle("예약 메시지");
+    const modal = new ModalBuilder().setCustomId("schedule_create_modal").setTitle("예약 메시지");
 
     const timeInput = new TextInputBuilder()
       .setCustomId("schedule_time")
@@ -170,29 +251,26 @@ export async function handleInteractionCreate(client, interaction) {
     return;
   }
 
-  // 1. 유저/서버의 등급 구매 송금완료 버튼 처리
+  // 1. 유저/서버 등급 구매 송금완료 버튼
   if (customId.startsWith("sub_complete:")) {
     const parts = customId.split(":");
     if (parts.length < 4) return;
 
-    const [_, tier, userId, timeStr, maybeGuildId] = parts;
+    const [, tier, userId, timeStr, maybeGuildId] = parts;
     const isPlatinum = tier === "platinum";
     const guildId = maybeGuildId || "dm";
-    const depositName = isPlatinum 
-      ? `${timeStr}-plat-${guildId !== 'dm' ? guildId.slice(-4) : 'dm'}`
+    const depositName = isPlatinum
+      ? `${timeStr}-plat-${guildId !== "dm" ? guildId.slice(-4) : "dm"}`
       : `${timeStr}-${userId}`;
     const uppercaseTier = tier.toUpperCase();
 
     try {
-      // 개발자에게 알림 DM 발송 (승인/반려 컨텍스트 버튼 포함)
       const developer = await client.users.fetch(ADMIN_USER_ID);
       if (developer) {
-        let adminNotifyMsg = `🔔 **[${isPlatinum ? '플래티넘 서버' : '등급'} 구매 신청 알림]**\n\n`;
+        let adminNotifyMsg = `🔔 **[${isPlatinum ? "플래티넘 서버" : "등급"} 구매 신청 알림]**\n\n`;
         adminNotifyMsg += `- **신청자**: <@${userId}> (ID: \`${userId}\`)\n`;
         adminNotifyMsg += `- **신청 등급**: \`${uppercaseTier}\`\n`;
-        if (isPlatinum) {
-          adminNotifyMsg += `- **대상 길드 ID**: \`${guildId}\`\n`;
-        }
+        if (isPlatinum) adminNotifyMsg += `- **대상 길드 ID**: \`${guildId}\`\n`;
         adminNotifyMsg += `- **입금자명**: \`${depositName}\`\n`;
         adminNotifyMsg += `- **신청 시간**: \`${timeStr}\`\n\n`;
         adminNotifyMsg += `*아래 버튼을 눌러 입금 승인 또는 반려 처리를 진행하세요.*`;
@@ -205,37 +283,32 @@ export async function handleInteractionCreate(client, interaction) {
           new ButtonBuilder()
             .setCustomId(isPlatinum ? `admin_reject_platinum:${guildId}:${userId}` : `admin_reject:${userId}`)
             .setLabel("반려 (거절)")
-            .setStyle(ButtonStyle.Danger)
+            .setStyle(ButtonStyle.Danger),
         );
 
-        await developer.send({
-          content: adminNotifyMsg,
-          components: [row]
-        });
+        await developer.send({ content: adminNotifyMsg, components: [row] });
       }
 
-      // 신청자에게 응답
       await interaction.reply({
-        content: `✅ **송금 완료 알림이 전송되었습니다.**\n\n` +
-                 `- **입금자명**: \`${depositName}\`\n` +
-                 `- **신청 등급**: \`${uppercaseTier}\`\n` +
-                 (isPlatinum ? `- **대상 길드 ID**: \`${guildId}\`\n` : "") + `\n` +
-                 `개발자가 입금 확인 후 등급을 부여해 드립니다. 처리가 완료되면 DM으로 알려드릴게요! 잠시만 기다려주세요. ✨`,
-        ephemeral: true
+        content:
+          `✅ **송금 완료 알림이 전송되었습니다.**\n\n` +
+          `- **입금자명**: \`${depositName}\`\n` +
+          `- **신청 등급**: \`${uppercaseTier}\`\n` +
+          (isPlatinum ? `- **대상 길드 ID**: \`${guildId}\`\n` : "") +
+          `\n개발자가 입금 확인 후 등급을 부여해 드립니다. 처리가 완료되면 DM으로 알려드릴게요! 잠시만 기다려주세요. ✨`,
+        ephemeral: true,
       });
-
     } catch (error) {
       console.error("Error processing sub_complete interaction:", error);
       await interaction.reply({
         content: "❌ 송금 완료 처리 중 오류가 발생했습니다. 개발자에게 직접 문의해주세요.",
-        ephemeral: true
+        ephemeral: true,
       }).catch(() => {});
     }
     return;
   }
 
-  // 2. 개발자 승인 버튼 처리
-  // customId 형식: admin_approve:<tier>:<userId>
+  // 2. 서버 토큰 구매 완료 버튼
   if (customId.startsWith("server_token_complete:")) {
     const parts = customId.split(":");
     if (parts.length < 5) return;
@@ -304,6 +377,7 @@ export async function handleInteractionCreate(client, interaction) {
     return;
   }
 
+  // 3. 서버 토큰 승인 버튼
   if (customId.startsWith("server_token_approve:")) {
     if (interaction.user.id !== ADMIN_USER_ID) {
       await interaction.reply({ content: "권한이 없습니다.", ephemeral: true });
@@ -317,7 +391,6 @@ export async function handleInteractionCreate(client, interaction) {
     const label = SERVER_TOKEN_LABELS[type];
     if (!label) return;
 
-    // customId에 저장된 count 추출 (parts[5]에 위치)
     const count = parseInt(parts[5] || 1, 10);
 
     try {
@@ -352,6 +425,7 @@ export async function handleInteractionCreate(client, interaction) {
     return;
   }
 
+  // 4. 서버 토큰 반려 버튼
   if (customId.startsWith("server_token_reject:")) {
     if (interaction.user.id !== ADMIN_USER_ID) {
       await interaction.reply({ content: "권한이 없습니다.", ephemeral: true });
@@ -384,6 +458,7 @@ export async function handleInteractionCreate(client, interaction) {
     return;
   }
 
+  // 5. 플래티넘 서버 승인 버튼
   if (customId.startsWith("admin_approve_platinum:")) {
     if (interaction.user.id !== ADMIN_USER_ID) {
       await interaction.reply({ content: "❌ 권한이 없습니다.", ephemeral: true });
@@ -392,8 +467,7 @@ export async function handleInteractionCreate(client, interaction) {
 
     const parts = customId.split(":");
     if (parts.length < 3) return;
-
-    const [_, guildId, userId] = parts;
+    const [, guildId, userId] = parts;
 
     try {
       const { updateServerSubscription } = await import("../services/subscription.js");
@@ -402,23 +476,19 @@ export async function handleInteractionCreate(client, interaction) {
 
       await interaction.update({
         content: `✅ 길드 ID ${guildId} (신청자: <@${userId}>)의 **플래티넘 서버** 구매 신청을 **승인**했습니다.\n- 만료일: ${displayExpiry}`,
-        components: []
+        components: [],
       });
 
-      try {
-        const targetUser = await client.users.fetch(userId);
-        if (targetUser) {
-          await targetUser.send(
-            `🎉 **DUST봇 플래티넘 서버 승인 완료**\n\n` +
-            `안녕하세요, **${targetUser.username}**님! 개발자가 송금 확인을 완료하여 플래티넘 서버 구독을 승인했습니다.\n` +
-            `- **부여 등급**: \`PLATINUM\`\n` +
-            `- **대상 길드 ID**: \`${guildId}\`\n` +
-            `- **만료 일자**: \`${displayExpiry}\`\n\n` +
-            `해당 서버의 예약 메시지 및 서버 분석 기능 등 플래티넘 혜택이 정상적으로 적용됩니다. 감사합니다! 💛`
-          );
-        }
-      } catch (dmError) {
-        console.error("Failed to send platinum approval DM to user:", dmError);
+      const targetUser = await client.users.fetch(userId).catch(() => null);
+      if (targetUser) {
+        await targetUser.send(
+          `🎉 **FLUX봇 플래티넘 서버 승인 완료**\n\n` +
+          `안녕하세요, **${targetUser.username}**님! 개발자가 송금 확인을 완료하여 플래티넘 서버 구독을 승인했습니다.\n` +
+          `- **부여 등급**: \`PLATINUM\`\n` +
+          `- **대상 길드 ID**: \`${guildId}\`\n` +
+          `- **만료 일자**: \`${displayExpiry}\`\n\n` +
+          `해당 서버의 예약 메시지 및 서버 분석 기능 등 플래티넘 혜택이 정상적으로 적용됩니다. 감사합니다! 💛`
+        ).catch(() => {});
       }
     } catch (dbError) {
       console.error("Database error during platinum approval:", dbError);
@@ -427,6 +497,7 @@ export async function handleInteractionCreate(client, interaction) {
     return;
   }
 
+  // 6. 플래티넘 서버 반려 버튼
   if (customId.startsWith("admin_reject_platinum:")) {
     if (interaction.user.id !== ADMIN_USER_ID) {
       await interaction.reply({ content: "❌ 권한이 없습니다.", ephemeral: true });
@@ -435,26 +506,21 @@ export async function handleInteractionCreate(client, interaction) {
 
     const parts = customId.split(":");
     if (parts.length < 3) return;
-
-    const [_, guildId, userId] = parts;
+    const [, guildId, userId] = parts;
 
     try {
       await interaction.update({
         content: `❌ 길드 ID ${guildId} (신청자: <@${userId}>)의 플래티넘 서버 구매 신청을 **반려(거절)** 처리했습니다.`,
-        components: []
+        components: [],
       });
 
-      try {
-        const targetUser = await client.users.fetch(userId);
-        if (targetUser) {
-          await targetUser.send(
-            `❌ **DUST봇 플래티넘 서버 구매 신청 반려**\n\n` +
-            `안녕하세요, **${targetUser.username}**님.\n` +
-            `신청하신 플래티넘 서버 라이선스 (길드 ID: \`${guildId}\`) 구매 건이 입금 미확인 또는 기타 사유로 인해 반려 처리되었습니다.`
-          );
-        }
-      } catch (dmError) {
-        console.error("Failed to send platinum rejection DM to user:", dmError);
+      const targetUser = await client.users.fetch(userId).catch(() => null);
+      if (targetUser) {
+        await targetUser.send(
+          `❌ **FLUX봇 플래티넘 서버 구매 신청 반려**\n\n` +
+          `안녕하세요, **${targetUser.username}**님.\n` +
+          `신청하신 플래티넘 서버 라이선스 (길드 ID: \`${guildId}\`) 구매 건이 입금 미확인 또는 기타 사유로 인해 반려 처리되었습니다.`
+        ).catch(() => {});
       }
     } catch (err) {
       console.error("Error during platinum rejection:", err);
@@ -462,6 +528,7 @@ export async function handleInteractionCreate(client, interaction) {
     return;
   }
 
+  // 7. 개발자 등급 승인 버튼
   if (customId.startsWith("admin_approve:")) {
     if (interaction.user.id !== ADMIN_USER_ID) {
       await interaction.reply({ content: "❌ 권한이 없습니다.", ephemeral: true });
@@ -470,36 +537,27 @@ export async function handleInteractionCreate(client, interaction) {
 
     const parts = customId.split(":");
     if (parts.length < 3) return;
-
-    const [_, tier, userId] = parts;
+    const [, tier, userId] = parts;
 
     try {
-      // 등급 부여 및 DB 저장 (기본 30일)
       const { tier: updatedTier, expiresAt } = updateUserSubscription(userId, tier, 30);
       const displayExpiry = expiresAt ? `${expiresAt} (KST)` : "무제한";
 
-      // 개발자 DM 메시지에서 버튼을 지우고 완료 상태로 업데이트
       await interaction.update({
         content: `✅ <@${userId}> (ID: \`${userId}\`)님의 \`${updatedTier.toUpperCase()}\` 등급 구매 신청을 **승인**했습니다.\n- 만료일: \`${displayExpiry}\``,
-        components: []
+        components: [],
       });
 
-      // 신청자에게 완료 안내 DM 발송
-      try {
-        const targetUser = await client.users.fetch(userId);
-        if (targetUser) {
-          await targetUser.send(
-            `🎉 **DUST봇 등급 승인 완료**\n\n` +
-            `안녕하세요, **${targetUser.username}**님! 개발자가 송금 확인을 완료하여 등급을 승인했습니다.\n` +
-            `- **부여 등급**: \`${updatedTier.toUpperCase()}\`\n` +
-            `- **만료 일자**: \`${displayExpiry}\`\n\n` +
-            `지금부터 혜택이 정상적으로 적용됩니다. DUST봇을 애용해 주셔서 감사합니다! 💛`
-          );
-        }
-      } catch (dmError) {
-        console.error("Failed to send approval DM to user:", dmError);
+      const targetUser = await client.users.fetch(userId).catch(() => null);
+      if (targetUser) {
+        await targetUser.send(
+          `🎉 **FLUX봇 등급 승인 완료**\n\n` +
+          `안녕하세요, **${targetUser.username}**님! 개발자가 송금 확인을 완료하여 등급을 승인했습니다.\n` +
+          `- **부여 등급**: \`${updatedTier.toUpperCase()}\`\n` +
+          `- **만료 일자**: \`${displayExpiry}\`\n\n` +
+          `지금부터 혜택이 정상적으로 적용됩니다. FLUX봇을 애용해 주셔서 감사합니다! 💛`
+        ).catch(() => {});
       }
-
     } catch (dbError) {
       console.error("Database error during admin approval:", dbError);
       await interaction.reply({ content: "❌ 등급 부여 처리 중 DB 오류가 발생했습니다.", ephemeral: true }).catch(() => {});
@@ -507,8 +565,7 @@ export async function handleInteractionCreate(client, interaction) {
     return;
   }
 
-  // 3. 개발자 반려 버튼 처리
-  // customId 형식: admin_reject:<userId>
+  // 8. 개발자 등급 반려 버튼
   if (customId.startsWith("admin_reject:")) {
     if (interaction.user.id !== ADMIN_USER_ID) {
       await interaction.reply({ content: "❌ 권한이 없습니다.", ephemeral: true });
@@ -517,35 +574,26 @@ export async function handleInteractionCreate(client, interaction) {
 
     const parts = customId.split(":");
     if (parts.length < 2) return;
-
-    const [_, userId] = parts;
+    const [, userId] = parts;
 
     try {
-      // 개발자 DM 메시지에서 버튼을 지우고 반려 상태로 업데이트
       await interaction.update({
         content: `❌ <@${userId}> (ID: \`${userId}\`)님의 등급 구매 신청을 **반려(거절)** 처리했습니다.`,
-        components: []
+        components: [],
       });
 
-      // 신청자에게 반려 안내 DM 발송
-      try {
-        const targetUser = await client.users.fetch(userId);
-        if (targetUser) {
-          await targetUser.send(
-            `❌ **DUST봇 등급 구매 신청 반려**\n\n` +
-            `안녕하세요, **${targetUser.username}**님.\n` +
-            `신청하신 등급 구매 건이 입금 미확인 또는 기타 사유로 인해 반려 처리되었습니다.\n` +
-            `문제가 있거나 입금 완료 후에도 반려되었다면 개발자에게 문의해주시기 바랍니다.`
-          );
-        }
-      } catch (dmError) {
-        console.error("Failed to send rejection DM to user:", dmError);
+      const targetUser = await client.users.fetch(userId).catch(() => null);
+      if (targetUser) {
+        await targetUser.send(
+          `❌ **FLUX봇 등급 구매 신청 반려**\n\n` +
+          `안녕하세요, **${targetUser.username}**님.\n` +
+          `신청하신 등급 구매 건이 입금 미확인 또는 기타 사유로 인해 반려 처리되었습니다.\n` +
+          `문제가 있거나 입금 완료 후에도 반려되었다면 개발자에게 문의해주시기 바랍니다.`
+        ).catch(() => {});
       }
-
     } catch (err) {
       console.error("Error during admin rejection:", err);
     }
     return;
   }
-
 }

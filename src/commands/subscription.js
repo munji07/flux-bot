@@ -275,7 +275,7 @@ export async function handleSubscriptionToolCall(message, intent, loadingMessage
     const serverHasPlatinum = message.guildId && getServerSubscriptionTier(message.guildId) === "platinum";
 
     const dmContent = [
-      "## DUST봇 등급 구매 안내",
+      "## FLUX봇 등급 구매 안내",
       `${message.author.username}님, 아래 계좌로 원하는 등급 금액을 입금한 뒤 버튼을 눌러 주세요.`,
       "",
       "**입금 계좌**",
@@ -430,8 +430,8 @@ export async function handleSubscriptionCommand(message, userPrompt, loadingMess
     const serverHasPlatinum = message.guildId && getServerSubscriptionTier(message.guildId) === "platinum";
 
     // DM 내용 구성
-    let dmContent = `## ✨ DUST봇 등급 구매 안내서\n\n`;
-    dmContent += `안녕하세요, ${message.author.username}님! DUST봇의 유료 등급을 이용해주셔서 감사합니다.\n`;
+    let dmContent = `## ✨ FLUX봇 등급 구매 안내서\n\n`;
+    dmContent += `안녕하세요, ${message.author.username}님! FLUX봇의 유료 등급을 이용해주셔서 감사합니다.\n`;
     dmContent += `아래의 계좌로 구매를 원하시는 등급의 금액을 입금해주신 후, **[송금완료]** 버튼을 클릭해주세요.\n\n`;
     
     dmContent += `### 💳 입금 계좌 정보\n`;
@@ -517,9 +517,9 @@ export async function handleSubscriptionCommand(message, userPrompt, loadingMess
   }
 
   // 3. 등급 부여 (개발자 전용)
-  // 형식: !먼지야 등급부여 <유저ID> <free|basic|premium> [기간(일)]
+  // 형식: !FLUX 등급부여 <유저ID> <free|basic|premium> [기간(일)]
   // 4. 서버 등급 부여 (개발자 전용)
-  // 형식: !먼지야 서버등급부여 <길드ID> <free|platinum> [기간(일)]
+  // 형식: !FLUX 서버등급부여 <길드ID> <free|platinum> [기간(일)]
   if (trimmed.startsWith("서버등급부여") || trimmed.startsWith("서버 등급 부여")) {
     if (message.author.id !== ADMIN_USER_ID) {
       await sendResponse("❌ 이 명령어는 개발자만 사용할 수 있습니다.");
@@ -596,7 +596,7 @@ export async function handleSubscriptionCommand(message, userPrompt, loadingMess
       try {
         const targetUser = await message.client.users.fetch(targetUserId);
         if (targetUser) {
-          await targetUser.send(`🎉 **DUST봇 등급 부여 완료**\n\n안녕하세요, **${targetUser.username}**님! 개발자가 입금을 확인하고 등급을 부여했습니다.\n- **등급**: \`${tier.toUpperCase()}\`\n- **만료일**: \`${displayExpiry}\`\n\n지금부터 혜택이 적용됩니다. 이용해주셔서 감사합니다!`);
+          await targetUser.send(`🎉 **FLUX봇 등급 부여 완료**\n\n안녕하세요, **${targetUser.username}**님! 개발자가 입금을 확인하고 등급을 부여했습니다.\n- **등급**: \`${tier.toUpperCase()}\`\n- **만료일**: \`${displayExpiry}\`\n\n지금부터 혜택이 적용됩니다. 이용해주셔서 감사합니다!`);
         }
       } catch (dmErr) {
         console.log("Failed to send subscription confirmation DM to user:", dmErr.message);
@@ -610,7 +610,7 @@ export async function handleSubscriptionCommand(message, userPrompt, loadingMess
   }
 
   // 5. 관리자 전용 등급 설정 명령어 (set)
-  // 형식: !먼지야 <유저ID> <free|basic|premium> set
+  // 형식: !FLUX <유저ID> <free|basic|premium> set
   const adminSetRegex = /^(\d{17,19})\s+(free|basic|premium)\s+set$/i;
   const adminSetMatch = trimmed.match(adminSetRegex);
   if (adminSetMatch) {
@@ -632,7 +632,7 @@ export async function handleSubscriptionCommand(message, userPrompt, loadingMess
       try {
         const targetUser = await message.client.users.fetch(targetUserId);
         if (targetUser) {
-          await targetUser.send(`🎉 **DUST봇 등급 설정 완료**\n\n안녕하세요, **${targetUser.username}**님! 관리자가 등급을 설정했습니다.\n- **등급**: \`${tier.toUpperCase()}\`\n- **만료일**: \`${displayExpiry}\`\n\n지금부터 혜택이 적용됩니다!`);
+          await targetUser.send(`🎉 **FLUX봇 등급 설정 완료**\n\n안녕하세요, **${targetUser.username}**님! 관리자가 등급을 설정했습니다.\n- **등급**: \`${tier.toUpperCase()}\`\n- **만료일**: \`${displayExpiry}\`\n\n지금부터 혜택이 적용됩니다!`);
         }
       } catch (dmErr) {
         console.log("Failed to send subscription confirmation DM to user:", dmErr.message);

@@ -84,7 +84,7 @@ function formatCommandLine(record, aiModel) {
   const command = record.commandText ?? record.command ?? "알 수 없는 명령";
   const taskLabel = record.task ? ` ${record.task}` : "";
 
-  return `[${formatTime(record.occurredAt)}] ${server} 서버에서 ${user} 유저가 "!먼지야 ${command}" 명령을 함(처리 ai: ${aiModel}${taskLabel})`;
+  return `[${formatTime(record.occurredAt)}] ${server} 서버에서 ${user} 유저가 "!FLUX ${command}" 명령을 함(처리 ai: ${aiModel}${taskLabel})`;
 }
 
 function formatTime(isoDate) {

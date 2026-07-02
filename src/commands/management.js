@@ -1,6 +1,7 @@
 import {
   ActionRowBuilder,
   ChannelSelectMenuBuilder,
+  StringSelectMenuBuilder,
   ComponentType,
   AutoModerationActionType,
   AutoModerationRuleEventType,
@@ -128,6 +129,7 @@ const COMMANDS = {
   setAfkTimeout: "setAfkTimeout",
   setSystemChannel: "setSystemChannel",
   createChannel: "createChannel",
+  createAiChannel: "createAiChannel",
   deleteChannel: "deleteChannel",
   createRole: "createRole",
   deleteRole: "deleteRole",
@@ -141,6 +143,13 @@ const COMMANDS = {
 };
 
 const COMMAND_ALIASES = {
+  ai채널생성: COMMANDS.createAiChannel,
+  ai전용채널생성: COMMANDS.createAiChannel,
+  ai방생성: COMMANDS.createAiChannel,
+  ai채널만들기: COMMANDS.createAiChannel,
+  ai전용채널만들기: COMMANDS.createAiChannel,
+  createaichannel: COMMANDS.createAiChannel,
+  ai전용채널: COMMANDS.createAiChannel,
   관리도움말: COMMANDS.help,
   서버관리도움말: COMMANDS.help,
   help: COMMANDS.help,
@@ -564,6 +573,10 @@ async function executeCommand(message, command, args, userPrompt, loadingMessage
         await loadingMessage.edit(`새로운 채널 ${newChan}을 생성했어요.`);
       }
       break;
+    case COMMANDS.createAiChannel:
+      await assertGuildPermissions(message, PermissionFlagsBits.ManageChannels);
+      await createAiChannelCommand(message, args, loadingMessage);
+      break;
     case COMMANDS.deleteChannel:
       await assertGuildPermissions(message, PermissionFlagsBits.ManageChannels);
       {
@@ -769,7 +782,7 @@ async function assertGuildPermissions(message, userPermission, botPermission = u
   const botMember = message.guild.members.me ?? (await message.guild.members.fetchMe());
 
   if (!botMember.permissions.has(botPermission)) {
-    throw new UserFacingError("먼지에게 이 작업을 수행할 권한이 없어요. 봇 역할 권한을 확인해주세요.");
+    throw new UserFacingError("FLUX에게 이 작업을 수행할 권한이 없어요. 봇 역할 권한을 확인해주세요.");
   }
 
   return botMember;
@@ -1023,7 +1036,7 @@ async function autoModCommand(message, args, loadingMessage) {
   }
 
   const rule = await message.guild.autoModerationRules.create({
-    name: `먼지 키워드 차단 ${new Date().toISOString().slice(0, 10)}`,
+    name: `FLUX 키워드 차단 ${new Date().toISOString().slice(0, 10)}`,
     enabled: true,
     eventType: AutoModerationRuleEventType.MessageSend,
     triggerType: AutoModerationRuleTriggerType.Keyword,
@@ -1599,7 +1612,7 @@ function createReason(message, action) {
 
 export function getManagementHelpText() {
   return [
-    "# 📋 먼지 관리 명령어",
+    "# 📋 FLUX 관리 명령어",
     "",
     "## 📝 메시지",
     `\`${PREFIX} 삭제\` — 메시지 ID 지정 또는 답장 후 사용`,
@@ -1638,15 +1651,60 @@ export function getManagementHelpText() {
 async function serverAnalysisCommand(message, args, loadingMessage) {
   const tier = getServerSubscriptionTier(message.guildId);
   if (tier !== "platinum") {
-    await loadingMessage.edit("❌ 서버 분석 기능은 **플래티넘 서버(유료)** 전용 기능입니다.\n이 서버는 현재 플래티넘 라이선스가 없습니다. `!먼지야 플래티넘 서버 구매`를 입력해 등급을 업그레이드해 보세요!");
+    await loadingMessage.edit("❌ 서버 분석 기능은 **플래티넘 서버(유료)** 전용 기능입니다.\n이 서버는 현재 플래티넘 라이선스가 없습니다. `!FLUX 플래티넘 서버 구매`를 입력해 등급을 업그레이드해 보세요!");
     return;
   }
 
-  // 1. 채널 정보 수집
-  const textChannels = message.guild.channels.cache.filter(c => c.type === ChannelType.GuildText);
-  const totalChannelsCount = textChannels.size;
+  const g = message.guild;
+  const now = Date.now();
 
-  // 2. DB에서 활동 통계 가져오기
+  // 1. 기본 서버 정보
+  const daysSinceCreation = Math.max(1, Math.ceil((now - g.createdAt) / (1000 * 60 * 60 * 24)));
+
+  // 2. 멤버 통계
+  const totalMembers = g.memberCount;
+  const onlineMembers = g.members.cache.filter(m => m.presence?.status === "online" || m.presence?.status === "dnd" || m.presence?.status === "idle").size;
+  const botMembers = g.members.cache.filter(m => m.user.bot).size;
+  const humanMembers = totalMembers - botMembers;
+  const boostCount = g.premiumSubscriptionCount ?? 0;
+  const boostTier = g.premiumTier ?? 0;
+
+  // 3. 채널 통계
+  const textChannels = g.channels.cache.filter(c => c.type === ChannelType.GuildText);
+  const voiceChannels = g.channels.cache.filter(c => c.type === ChannelType.GuildVoice || c.type === ChannelType.GuildStageVoice);
+  const categoryCount = g.channels.cache.filter(c => c.type === ChannelType.GuildCategory).size;
+  const threadsCount = g.channels.cache.filter(c => c.isThread?.()).size;
+
+  // 4. 음성 채널 접속자
+  const voiceMembers = g.members.cache.filter(m => m.voice.channelId);
+
+  // 5. 역할 통계
+  const totalRoles = g.roles.cache.filter(r => r.name !== "@everyone").size;
+  const emptyRoles = g.roles.cache.filter(r => r.members.size === 0 && !r.managed && r.name !== "@everyone");
+  const roleSizeDistribution = [0, 0, 0, 0, 0];
+  for (const role of g.roles.cache.values()) {
+    if (role.name === "@everyone" || role.managed) continue;
+    const size = role.members.size;
+    if (size === 0) roleSizeDistribution[0]++;
+    else if (size <= 5) roleSizeDistribution[1]++;
+    else if (size <= 20) roleSizeDistribution[2]++;
+    else if (size <= 50) roleSizeDistribution[3]++;
+    else roleSizeDistribution[4]++;
+  }
+
+  // 6. DB 메시지 통계
+  const totalMsgCount = db.prepare(`
+    SELECT COUNT(*) as cnt
+    FROM channel_messages
+    WHERE guild_id = ?
+  `).get(message.guildId);
+
+  const todayMsgCount = db.prepare(`
+    SELECT COUNT(*) as cnt
+    FROM channel_messages
+    WHERE guild_id = ? AND date(created_at) = date('now', '+9 hours')
+  `).get(message.guildId);
+
   const channelStats = db.prepare(`
     SELECT channel_id, COUNT(*) as cnt 
     FROM channel_messages 
@@ -1664,84 +1722,86 @@ async function serverAnalysisCommand(message, args, loadingMessage) {
     LIMIT 5
   `).all(message.guildId);
 
-  // 3. 미사용 채널 식별 (기록이 하나도 없는 채널)
   const activeChannelIds = new Set(channelStats.map(s => s.channel_id));
   const unusedChannels = [];
-  
   for (const [channelId, channel] of textChannels) {
-    if (!activeChannelIds.has(channelId)) {
-      unusedChannels.push(channel);
-    }
+    if (!activeChannelIds.has(channelId)) unusedChannels.push(channel);
   }
 
-  // 4. 유저가 없는 역할 확인
-  const emptyRoles = message.guild.roles.cache.filter(
-    r => r.members.size === 0 && !r.managed && r.name !== "@everyone"
-  );
-
-  // 5. 전체 메시지 통계 (서버 생성일 기준 일 평균)
-  const totalMsgCount = db.prepare(`
-    SELECT COUNT(*) as cnt
+  // 7. 최근 활동일 (마지막 메시지)
+  const lastActivity = db.prepare(`
+    SELECT MAX(created_at) as last_msg
     FROM channel_messages
     WHERE guild_id = ?
   `).get(message.guildId);
 
-  // 6. 리포트 텍스트 작성
-  let report = `## 📊 ${message.guild.name} 서버 분석 보고서 (플래티넘)\n\n`;
+  // 8. 리포트 작성
+  let report = `## 📊 ${g.name} 서버 분석 보고서\n\n`;
 
-  report += `### 📈 서버 메시지 통계\n`;
+  report += `### 📋 서버 기본 정보\n`;
+  report += `- **서버 ID**: \`${g.id}\`\n`;
+  report += `- **서버 생성일**: <t:${Math.floor(g.createdAt / 1000)}:R> (${daysSinceCreation}일)\n`;
+  report += `- **서버 주인**: <@${g.ownerId}>\n`;
+  report += `- **부스트**: ⭐ ${boostTier}단계 (${boostCount}개)\n\n`;
+
+  report += `### 👥 멤버 통계\n`;
+  report += `- **전체 멤버**: \`${totalMembers}명\`\n`;
+  report += `- **사람**: \`${humanMembers}명\` | **봇**: \`${botMembers}개\`\n`;
+  report += `- **온라인/자리비움**: \`${onlineMembers}명\`\n`;
+  report += `- **음성 채널**: \`${voiceMembers.size}명\` 접속 중\n\n`;
+
+  report += `### 📁 채널 통계\n`;
+  report += `- **텍스트 채널**: \`${textChannels.size}개\` | **음성 채널**: \`${voiceChannels.size}개\`\n`;
+  report += `- **카테고리**: \`${categoryCount}개\` | **스레드**: \`${threadsCount}개\`\n\n`;
+
+  report += `### 📈 메시지 활동\n`;
   if (totalMsgCount.cnt > 0) {
-    const days = Math.max(1, Math.ceil((Date.now() - message.guild.createdAt) / (1000 * 60 * 60 * 24)));
-    const dailyAvg = (totalMsgCount.cnt / days).toFixed(1);
-    report += `- 전체 메시지: \`${totalMsgCount.cnt}회\`\n`;
-    report += `- 일 평균: \`${dailyAvg}회/일\` (서버 생성일 기준)\n\n`;
-  } else {
-    report += `- 아직 기록된 메시지가 없어요.\n\n`;
-  }
-
-  report += `### 💬 채널별 메시지량\n`;
-  if (channelStats.length === 0) {
-    report += `- 아직 기록된 메시지가 없어요.\n`;
-  } else {
-    for (const stat of channelStats) {
-      const channel = message.guild.channels.cache.get(stat.channel_id);
-      const name = channel ? `#${channel.name}` : `<#${stat.channel_id}>`;
-      report += `- **${name}**: \`${stat.cnt}회\`\n`;
+    const dailyAvg = (totalMsgCount.cnt / daysSinceCreation).toFixed(1);
+    report += `- **전체 기록 메시지**: \`${totalMsgCount.cnt.toLocaleString()}회\`\n`;
+    report += `- **오늘 메시지**: \`${todayMsgCount.cnt}회\`\n`;
+    report += `- **일 평균**: \`${dailyAvg}회/일\`\n`;
+    if (lastActivity.last_msg) {
+      const lastTime = new Date(lastActivity.last_msg + "Z").getTime();
+      report += `- **마지막 활동**: <t:${Math.floor(lastTime / 1000)}:R>\n`;
     }
+  } else {
+    report += `- 아직 기록된 메시지가 없어요.\n`;
   }
   report += `\n`;
 
-  report += `### 💤 기록 없는 텍스트 채널\n`;
-  if (unusedChannels.length === 0) {
-    report += `- 모든 채널에 메시지 기록이 있습니다.\n`;
-  } else {
-    const listLimit = unusedChannels.slice(0, 10);
-    const displayList = listLimit.map(c => `<#${c.id}>`).join(", ");
-    report += `- ${displayList}${unusedChannels.length > 10 ? ` 외 ${unusedChannels.length - 10}개` : ""}\n`;
+  if (channelStats.length > 0) {
+    report += `### 💬 채널별 메시지량 TOP 5\n`;
+    const topChannels = channelStats.slice(0, 5);
+    for (const stat of topChannels) {
+      const channel = g.channels.cache.get(stat.channel_id);
+      const name = channel ? `#${channel.name}` : `<#${stat.channel_id}>`;
+      report += `- **${name}**: \`${stat.cnt.toLocaleString()}회\`\n`;
+    }
+    report += `\n`;
   }
-  report += `\n`;
 
-  report += `### 👑 주 활동 유저 TOP 5\n`;
-  if (userStats.length === 0) {
-    report += `- 활동 유저 데이터가 아직 없어요.\n`;
-  } else {
+  if (unusedChannels.length > 0) {
+    report += `### 💤 활동 없는 채널\n`;
+    const displayList = unusedChannels.slice(0, 5).map(c => `<#${c.id}>`).join(", ");
+    report += `- ${displayList}${unusedChannels.length > 5 ? ` 외 ${unusedChannels.length - 5}개` : ""}\n\n`;
+  }
+
+  if (userStats.length > 0) {
+    report += `### 👑 활동 TOP 5\n`;
     let rank = 1;
     for (const u of userStats) {
       const name = u.user_name || u.user_tag || u.user_id;
-      report += `${rank}. <@${u.user_id}> (${name}): \`${u.cnt}회\`\n`;
+      report += `${rank}. <@${u.user_id}>: \`${u.cnt.toLocaleString()}회\`\n`;
       rank++;
     }
-  }
-  report += `\n`;
-
-  report += `### 👥 유저가 없는 역할\n`;
-  if (emptyRoles.size === 0) {
-    report += `- 모든 역할에 최소 1명 이상의 멤버가 있습니다.\n`;
-  } else {
-    const limited = [...emptyRoles.values()].slice(0, 15);
-    report += limited.map(r => `- <@&${r.id}> (\`${r.name}\`)`).join("\n");
-    if (emptyRoles.size > 15) report += `\n- 외 ${emptyRoles.size - 15}개`;
     report += `\n`;
+  }
+
+  report += `### 🎭 역할 분포\n`;
+  report += `- **전체 역할**: \`${totalRoles}개\` (멤버 0명: ${roleSizeDistribution[0]}개, 1~5명: ${roleSizeDistribution[1]}개, 6~20명: ${roleSizeDistribution[2]}개)\n`;
+  if (emptyRoles.size > 0) {
+    const limited = [...emptyRoles.values()].slice(0, 5);
+    report += `- 👻 **멤버 없는 역할**: ${limited.map(r => `<@&${r.id}>`).join(", ")}${emptyRoles.size > 5 ? ` 외 ${emptyRoles.size - 5}개` : ""}\n`;
   }
 
   await loadingMessage.edit(report);
@@ -1750,7 +1810,7 @@ async function serverAnalysisCommand(message, args, loadingMessage) {
 async function channelAnalysisCommand(message, args, loadingMessage) {
   const tier = getServerSubscriptionTier(message.guildId);
   if (tier !== "platinum") {
-    await loadingMessage.edit("❌ 채널 분석 기능은 **플래티넘 서버(유료)** 전용 기능입니다.\n이 서버는 현재 플래티넘 라이선스가 없습니다. `!먼지야 플래티넘 서버 구매`를 입력해 등급을 업그레이드해 보세요!");
+    await loadingMessage.edit("❌ 채널 분석 기능은 **플래티넘 서버(유료)** 전용 기능입니다.\n이 서버는 현재 플래티넘 라이선스가 없습니다. `!FLUX 플래티넘 서버 구매`를 입력해 등급을 업그레이드해 보세요!");
     return;
   }
 
@@ -1919,10 +1979,75 @@ function getUnmoderatableReason(message, target, actionName) {
   }
 
   if (targetHighestRole && botHighestRole && targetHighestRole.position >= botHighestRole.position) {
-    return `먼지의 역할(${botHighestRole.name})보다 **${targetHighestRole.name}** 역할의 순위가 더 높아 ${actionName}할 수 없어요.\n서버 설정 → 역할에서 먼지의 역할을 대상 멤버의 역할보다 **위**로 올려주세요.`;
+    return `FLUX의 역할(${botHighestRole.name})보다 **${targetHighestRole.name}** 역할의 순위가 더 높아 ${actionName}할 수 없어요.\n서버 설정 → 역할에서 FLUX의 역할을 대상 멤버의 역할보다 **위**로 올려주세요.`;
   }
 
   return `알 수 없는 이유로 ${actionName}할 수 없어요. 봇의 권한과 역할 순서를 확인해주세요.`;
 }
+
+async function createAiChannelCommand(message, args, loadingMessage) {
+  const name = args[0] || "ai-전용-채널";
+  const categoryQuery = args[1] || "";
+
+  const categories = message.guild.channels.cache.filter(c => c.type === ChannelType.GuildCategory);
+
+  // 1. 카테고리가 없는 경우 카테고리 없이 생성
+  if (categories.size === 0) {
+    const newChan = await message.guild.channels.create({ name, type: ChannelType.GuildText, rateLimitPerUser: 10 });
+    db.prepare("INSERT OR REPLACE INTO ai_channels (channel_id, guild_id) VALUES (?, ?)").run(newChan.id, message.guildId);
+    await loadingMessage.edit(`서버에 카테고리가 존재하지 않아, 최상위에 AI 전용 채널 ${newChan}을 생성했어요. (슬로우모드 10초가 적용되었습니다.)`);
+    return;
+  }
+
+  // 2. 카테고리 쿼리가 명확히 제공된 경우
+  if (categoryQuery) {
+    const matched = categories.filter(c => c.name.toLowerCase().includes(categoryQuery.toLowerCase()));
+    if (matched.size === 1) {
+      const parent = matched.first();
+      const newChan = await message.guild.channels.create({ name, type: ChannelType.GuildText, parent: parent.id, rateLimitPerUser: 10 });
+      db.prepare("INSERT OR REPLACE INTO ai_channels (channel_id, guild_id) VALUES (?, ?)").run(newChan.id, message.guildId);
+      await loadingMessage.edit(`카테고리 **${parent.name}** 하위에 AI 전용 채널 ${newChan}을 생성했어요. (슬로우모드 10초가 적용되었습니다.)`);
+      return;
+    }
+    // 매치되는 카테고리가 0개 또는 2개 이상이면 컨테이너 리스트로 선택하게 함
+    const targetCats = matched.size > 1 ? matched : categories;
+    await sendCategorySelectMenu(message, name, targetCats, loadingMessage);
+    return;
+  }
+
+  // 3. 카테고리 쿼리가 없는 경우
+  // "이 카테고리는 현재 카테고리에 진행" -> 현재 채널의 parent가 있다면 그 parent 하위에 진행
+  const currentParentId = message.channel.parentId;
+  if (currentParentId) {
+    const parent = message.guild.channels.cache.get(currentParentId);
+    const newChan = await message.guild.channels.create({ name, type: ChannelType.GuildText, parent: currentParentId, rateLimitPerUser: 10 });
+    db.prepare("INSERT OR REPLACE INTO ai_channels (channel_id, guild_id) VALUES (?, ?)").run(newChan.id, message.guildId);
+    await loadingMessage.edit(`현재 카테고리 **${parent ? parent.name : 'Unknown'}** 하위에 AI 전용 채널 ${newChan}을 생성했어요. (슬로우모드 10초가 적용되었습니다.)`);
+    return;
+  }
+
+  // 만약 현재 채널이 카테고리 하위에 속하지 않았다면, 전체 카테고리 리스트를 보여주어 선택하게 함
+  await sendCategorySelectMenu(message, name, categories, loadingMessage);
+}
+
+async function sendCategorySelectMenu(message, name, categories, loadingMessage) {
+  const options = categories.map(c => ({
+    label: c.name,
+    value: c.id,
+    description: `카테고리 ID: ${c.id}`
+  })).slice(0, 25);
+
+  const selectMenu = new StringSelectMenuBuilder()
+    .setCustomId(`ai_channel_create_category:${name}`)
+    .setPlaceholder("AI 전용 채널을 생성할 카테고리를 선택해 주세요.")
+    .addOptions(options);
+
+  const row = new ActionRowBuilder().addComponents(selectMenu);
+  await loadingMessage.edit({
+    content: `생성할 AI 전용 채널의 카테고리를 선택해 주세요. (채널명: \`${name}\`)\n(자연어 입력에서 카테고리가 명확하지 않거나 현재 채널에 카테고리가 없어 선택 메뉴를 표시합니다.)`,
+    components: [row]
+  });
+}
+
 
 

@@ -18,13 +18,13 @@ export async function handleVideoAnalysis(message, userPrompt, loadingMessage) {
   const userName = getDisplayName(message);
   
   let usageCheck = null;
-  await loadingMessage.edit(`-# ${LOADING_EMOJI} DUST봇이 영상을 분석 중이에요... 잠시만 기다려 주세요!`);
+  await loadingMessage.edit(`-# ${LOADING_EMOJI} FLUX봇이 영상을 분석 중이에요... 잠시만 기다려 주세요!`);
 
   try {
     // 사용량 체크
     usageCheck = checkAndIncrementUsage(message.author.id, "video_analysis", message.guildId);
     if (!usageCheck.allowed) {
-      await loadingMessage.edit("죄송해요! 영상 분석은 프리미엄 등급에게 하루 3회까지만 제공돼요. `!먼지야 등급 구매`를 통해 프리미엄 등급을 이용해보세요!");
+      await loadingMessage.edit("죄송해요! 영상 분석은 프리미엄 등급에게 하루 3회까지만 제공돼요. `!FLUX 등급 구매`를 통해 프리미엄 등급을 이용해보세요!");
       return true;
     }
 

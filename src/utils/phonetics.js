@@ -149,7 +149,7 @@ export function isPronunciationRequest(userPrompt) {
 export function getPronunciationReply(userPrompt) {
   const commandText = userPrompt.replace(/^\s*발음(?:으로|로)?(?:\s|$)/i, "").trim();
   if (!commandText) {
-    throw new UserFacingError("변환할 문장을 입력해주세요. 예: `!먼지야 발음 hello` 또는 `!먼지야 발음 안녕하세요`");
+    throw new UserFacingError("변환할 문장을 입력해주세요. 예: `!FLUX 발음 hello` 또는 `!FLUX 발음 안녕하세요`");
   }
 
   const containsKorean = /[\u3131-\u318E\uAC00-\uD7AF]/.test(commandText);
