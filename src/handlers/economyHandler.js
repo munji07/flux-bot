@@ -1,9 +1,13 @@
-import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from "discord.js";
+﻿import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits } from "discord.js";
 import { EconomyService } from "../services/economyService.js";
 import { EconomyQuestService } from "../services/economyQuestService.js";
 import { ECONOMY_CONFIG } from "../config/economyConfig.js";
 import { getUserSubscriptionTier } from "../services/subscription.js";
-import { logError } from "../logger.js";
+import { logError, logInfo } from "../logger.js";
+
+function getWebGameUrl() {
+  return (process.env.WEB_APP_URL || process.env.BASE_URL || "http://localhost:3000").replace(/\/$/, "");
+}
 
 // ─── 유틸리티 ────────────────────────────────────────────────────────────────
 
@@ -37,13 +41,13 @@ async function progressAndCheck(userId, actionType) {
   let notices = "";
 
   // 퀘스트 진행도 업데이트
-  const newlyCompleted = EconomyQuestService.incrementProgress(userId, actionType);
+  const newlyCompleted = await EconomyQuestService.incrementProgress(userId, actionType);
   if (newlyCompleted.length > 0) {
     notices += `\n\n🎯 **퀘스트 달성!** \`${newlyCompleted.join(", ")}\` — \`/퀘스트\` 에서 보상을 받으세요!`;
   }
 
   // 자산가 업적 (10,000코인 이상 보유)
-  const user = EconomyService.getOrCreateUser(userId);
+  const user = await EconomyService.getOrCreateUser(userId);
   if (user.coins >= 10000) {
     const unlocked = await EconomyQuestService.checkAndUnlockAchievement(userId, "earn_10k");
     if (unlocked) {
@@ -64,6 +68,7 @@ export async function handleEconomyCommand(interaction) {
   try {
     switch (commandName) {
       case "돈":        return await handleBalance(interaction, userId);
+      case "상황":      return await handleStatus(interaction, userId);
       case "송금":      return await handleTransfer(interaction, userId);
       case "일출":      return await handleDaily(interaction, userId);
       case "슬롯머신":  return await handleSlots(interaction, userId);
@@ -78,6 +83,10 @@ export async function handleEconomyCommand(interaction) {
       case "랭킹":      return await handleRanking(interaction);
       case "업적":      return await handleAchievements(interaction, userId);
       case "퀘스트":    return await handleQuests(interaction, userId);
+      case "레이드설정":
+      case "레이드_활성화": return await handleRaidConfig(interaction);
+      case "레이드_비활성화": return await handleRaidDeactivate(interaction);
+      case "레이드_상태": return await handleRaidStatus(interaction);
     }
   } catch (error) {
     logError("economy_command", interaction.guildId, error, {
@@ -94,16 +103,16 @@ export async function handleEconomyCommand(interaction) {
 
 // ─── 1. 잔액 조회 ─────────────────────────────────────────────────────────────
 async function handleBalance(interaction, userId) {
-  const userData = EconomyService.getOrCreateUser(userId);
+  const userData = await EconomyService.getOrCreateUser(userId);
   const { user } = interaction;
 
   // 코인 순위
-  const rankings = EconomyService.getRankings(100);
+  const rankings = await EconomyService.getRankings(100);
   const rankPos = rankings.findIndex(r => r.user_id === userId) + 1;
   const rankText = rankPos > 0 ? `${rankPos}위` : "순위권 밖";
 
   // 등급 및 수수료
-  const tier = getUserSubscriptionTier(userId);
+  const tier = await getUserSubscriptionTier(userId);
   const feeRate = ECONOMY_CONFIG.transferFee[tier] ?? ECONOMY_CONFIG.transferFee.free;
   const feeText = feeRate === 0 ? "**면제** (프리미엄 혜택)" : `**${(feeRate * 100).toFixed(0)}%**`;
 
@@ -116,10 +125,60 @@ async function handleBalance(interaction, userId) {
       { name: "🏆 현재 순위", value: rankText, inline: true },
       { name: "💸 송금 수수료", value: feeText, inline: true },
     )
-    .setFooter({ text: "낚시, 채굴, 농사로 코인을 모아보세요! | 프리미엄 등급은 송금 수수료가 없어요." })
+    .setFooter({ text: "낚시, 웹 채굴, 웹 농사로 코인을 모아보세요! | 프리미엄 등급은 송금 수수료가 없어요." })
     .setTimestamp();
 
   await interaction.reply({ embeds: [embed] });
+}
+
+async function handleStatus(interaction, userId) {
+  const userData = await EconomyService.getOrCreateUser(userId);
+  const inventory = await EconomyService.getInventory(userId);
+  const miningReadyAt = userData.last_mining ? new Date(new Date(userData.last_mining).getTime() + ECONOMY_CONFIG.cooldowns.mining) : null;
+  const farmingReadyAt = userData.last_farming ? new Date(new Date(userData.last_farming).getTime() + ECONOMY_CONFIG.cooldowns.farming) : null;
+  const now = new Date();
+
+  const formatReady = (date) => {
+    if (!date) return "즉시 가능";
+    const diff = date.getTime() - now.getTime();
+    if (diff <= 0) return "즉시 가능";
+    return `약 ${formatTime(diff)} 후`;
+  };
+
+  let raidStatus = "확인 불가";
+  try {
+    const webUrl = getWebGameUrl();
+    const raidRes = await fetch(`${webUrl}/api/raid/state`);
+    if (raidRes.ok) {
+      const raidData = await raidRes.json();
+      if (raidData.raid) {
+        const hpPct = Math.max(0, Math.round(raidData.raid.current_hp / raidData.raid.max_hp * 100));
+        raidStatus = `⚔️ **${raidData.raid.boss_name}** HP ${hpPct}%`;
+      } else {
+        raidStatus = "휴면 상태";
+      }
+    }
+  } catch (e) {}
+
+  const embed = new EmbedBuilder()
+    .setColor(0x4CC9F0)
+    .setTitle(`📊 ${interaction.user.displayName}님의 상황`)
+    .setDescription(
+      `디스코드에서는 조회만 가능합니다.\n` +
+      `채굴과 농사는 웹사이트에서만 플레이할 수 있습니다.`
+    )
+    .addFields(
+      { name: "보유 코인", value: `**${userData.coins.toLocaleString()}** 코인`, inline: true },
+      { name: "아이템 수", value: `**${inventory.length}**종`, inline: true },
+      { name: "채굴 가능", value: formatReady(miningReadyAt), inline: true },
+      { name: "농사 가능", value: formatReady(farmingReadyAt), inline: true },
+      { name: "⚔️ 레이드 현황", value: raidStatus, inline: false },
+      { name: "웹 플레이", value: `[웹사이트에서 플레이하기](${getWebGameUrl()})`, inline: false },
+    )
+    .setFooter({ text: "채굴/농사 실행은 웹사이트에서 진행됩니다." })
+    .setTimestamp();
+
+  await interaction.reply({ embeds: [embed], ephemeral: true });
 }
 
 // ─── 2. 송금 ──────────────────────────────────────────────────────────────────
@@ -133,17 +192,17 @@ async function handleTransfer(interaction, userId) {
   }
 
   // 수수료 미리 계산 (안내용)
-  const tier = getUserSubscriptionTier(userId);
+  const tier = await getUserSubscriptionTier(userId);
   const feeRate = ECONOMY_CONFIG.transferFee[tier] ?? ECONOMY_CONFIG.transferFee.free;
   const expectedFee = Math.floor(amount * feeRate);
 
-  const result = EconomyService.transferCoins(userId, targetUser.id, amount);
+  const result = await EconomyService.transferCoins(userId, targetUser.id, amount);
   if (!result.success) {
     await interaction.reply({ content: `❌ 송금 실패: ${result.errorMessage}`, ephemeral: true });
     return;
   }
 
-  const receiverData = EconomyService.getOrCreateUser(targetUser.id);
+  const receiverData = await EconomyService.getOrCreateUser(targetUser.id);
   const feeText = result.fee > 0
     ? `**${result.fee.toLocaleString()}** 코인 (${(feeRate * 100).toFixed(0)}%)`
     : "**없음** (프리미엄 혜택 ✨)";
@@ -166,7 +225,7 @@ async function handleTransfer(interaction, userId) {
 
 // ─── 3. 일일 보상 ─────────────────────────────────────────────────────────────
 async function handleDaily(interaction, userId) {
-  const cooldown = EconomyService.checkAndSetCooldown(userId, "daily");
+  const cooldown = await EconomyService.checkAndSetCooldown(userId, "daily");
   if (cooldown.isCooldown) {
     await interaction.reply({
       content: `⏰ 이미 오늘의 보상을 수령했습니다. 다음 수령까지 **${formatTime(cooldown.remaining)}** 남았습니다.`,
@@ -176,7 +235,7 @@ async function handleDaily(interaction, userId) {
   }
 
   const rewardCoins = 1000;
-  EconomyService.updateCoins(userId, rewardCoins);
+  await EconomyService.updateCoins(userId, rewardCoins);
 
   const notices = await progressAndCheck(userId, "daily");
 
@@ -188,7 +247,7 @@ async function handleDaily(interaction, userId) {
     achievementNotice = `\n🏆 **업적 달성!** [${def.name}] - ${def.description} (+${def.reward.toLocaleString()} 코인)`;
   }
 
-  const currentBalance = EconomyService.getOrCreateUser(userId).coins;
+  const currentBalance = (await EconomyService.getOrCreateUser(userId)).coins;
 
   const embed = new EmbedBuilder()
     .setColor(0xFFDD00)
@@ -207,7 +266,7 @@ async function handleDaily(interaction, userId) {
 // ─── 4. 슬롯머신 ─────────────────────────────────────────────────────────────
 async function handleSlots(interaction, userId) {
   const cost = ECONOMY_CONFIG.slots.cost;
-  const userData = EconomyService.getOrCreateUser(userId);
+  const userData = await EconomyService.getOrCreateUser(userId);
 
   if (userData.coins < cost) {
     await interaction.reply({
@@ -217,7 +276,7 @@ async function handleSlots(interaction, userId) {
     return;
   }
 
-  EconomyService.updateCoins(userId, -cost);
+  await EconomyService.updateCoins(userId, -cost);
 
   const symbols = ECONOMY_CONFIG.slots.symbols;
   const s = [
@@ -241,9 +300,9 @@ async function handleSlots(interaction, userId) {
     color = 0x00FF88;
   }
 
-  if (reward > 0) EconomyService.updateCoins(userId, reward);
+  if (reward > 0) await EconomyService.updateCoins(userId, reward);
 
-  const currentBalance = EconomyService.getOrCreateUser(userId).coins;
+  const currentBalance = (await EconomyService.getOrCreateUser(userId)).coins;
   const notices = await progressAndCheck(userId, "gamble");
 
   // 777 잭팟 업적
@@ -283,13 +342,13 @@ async function handleDice(interaction, userId) {
     return;
   }
 
-  const userData = EconomyService.getOrCreateUser(userId);
+  const userData = await EconomyService.getOrCreateUser(userId);
   if (userData.coins < bet) {
     await interaction.reply({ content: "❌ 보유 코인이 배팅금보다 적습니다.", ephemeral: true });
     return;
   }
 
-  EconomyService.updateCoins(userId, -bet);
+  await EconomyService.updateCoins(userId, -bet);
 
   const myRoll  = Math.floor(Math.random() * 6) + 1;
   const botRoll = Math.floor(Math.random() * 6) + 1;
@@ -311,9 +370,9 @@ async function handleDice(interaction, userId) {
     color = 0x888888;
   }
 
-  if (reward > 0) EconomyService.updateCoins(userId, reward);
+  if (reward > 0) await EconomyService.updateCoins(userId, reward);
 
-  const currentBalance = EconomyService.getOrCreateUser(userId).coins;
+  const currentBalance = (await EconomyService.getOrCreateUser(userId)).coins;
   const notices = await progressAndCheck(userId, "gamble");
 
   const embed = new EmbedBuilder()
@@ -345,13 +404,13 @@ async function handleCoinflip(interaction, userId) {
     return;
   }
 
-  const userData = EconomyService.getOrCreateUser(userId);
+  const userData = await EconomyService.getOrCreateUser(userId);
   if (userData.coins < bet) {
     await interaction.reply({ content: "❌ 보유 코인이 배팅금보다 적습니다.", ephemeral: true });
     return;
   }
 
-  EconomyService.updateCoins(userId, -bet);
+  await EconomyService.updateCoins(userId, -bet);
 
   const result   = Math.random() < 0.5 ? "front" : "back";
   const resultKo = result === "front" ? "앞면 🟡" : "뒷면 ⚪";
@@ -369,9 +428,9 @@ async function handleCoinflip(interaction, userId) {
     resultLine = `💀 **오답!** 배팅금을 잃었습니다.`;
   }
 
-  if (reward > 0) EconomyService.updateCoins(userId, reward);
+  if (reward > 0) await EconomyService.updateCoins(userId, reward);
 
-  const currentBalance = EconomyService.getOrCreateUser(userId).coins;
+  const currentBalance = (await EconomyService.getOrCreateUser(userId)).coins;
   const notices = await progressAndCheck(userId, "gamble");
 
   const embed = new EmbedBuilder()
@@ -391,7 +450,7 @@ async function handleCoinflip(interaction, userId) {
 
 // ─── 7. 낚시 ─────────────────────────────────────────────────────────────────
 async function handleFishing(interaction, userId) {
-  const cooldown = EconomyService.checkAndSetCooldown(userId, "fishing");
+  const cooldown = await EconomyService.checkAndSetCooldown(userId, "fishing");
   if (cooldown.isCooldown) {
     await interaction.reply({
       content: `⏰ 낚싯줄이 엉켰습니다. **${formatTime(cooldown.remaining)}** 후에 다시 시도하세요.`,
@@ -409,7 +468,7 @@ async function handleFishing(interaction, userId) {
   }
 
   const item = drawReward(ECONOMY_CONFIG.fishing.rewards);
-  EconomyService.updateInventory(userId, item.id, 1);
+  await EconomyService.updateInventory(userId, item.id, 1);
 
   const notices = await progressAndCheck(userId, "work");
 
@@ -447,111 +506,51 @@ async function handleFishing(interaction, userId) {
   await interaction.reply({ embeds: [embed] });
 }
 
+export async function handleFishingButtonClick(interaction, userId) {
+  return handleFishing(interaction, userId);
+}
+
 // ─── 8. 채굴 ─────────────────────────────────────────────────────────────────
 async function handleMining(interaction, userId) {
-  const cooldown = EconomyService.checkAndSetCooldown(userId, "mining");
-  if (cooldown.isCooldown) {
-    await interaction.reply({
-      content: `⏰ 피로가 풀리지 않았습니다. **${formatTime(cooldown.remaining)}** 후에 다시 시도하세요.`,
-      ephemeral: true,
-    });
-    return;
-  }
-
-  const success = Math.random() < ECONOMY_CONFIG.mining.successRate;
-  if (!success) {
-    await interaction.reply({ content: "⛏️ 헛스윙! 돌만 부서졌습니다. 채굴에 실패했습니다." });
-    return;
-  }
-
-  const item = drawReward(ECONOMY_CONFIG.mining.rewards);
-  EconomyService.updateInventory(userId, item.id, 1);
-
-  const notices = await progressAndCheck(userId, "work");
-
-  // 고대 잔해 업적
-  let achievementNotice = "";
-  if (item.id === "ore_netherite") {
-    const unlocked = await EconomyQuestService.checkAndUnlockAchievement(userId, "mine_netherite");
-    if (unlocked) {
-      const def = ECONOMY_CONFIG.achievements.find(a => a.id === "mine_netherite");
-      achievementNotice = `\n🏆 **업적 달성!** [${def.name}] - ${def.description} (+${def.reward.toLocaleString()} 코인)`;
-    }
-  }
-
-  const rarityColor = {
-    ore_netherite: 0xFF4500,
-    ore_diamond:   0x00BFFF,
-    ore_gold:      0xFFD700,
-    ore_iron:      0xA9A9A9,
-    ore_coal:      0x444444,
-  };
-
-  const embed = new EmbedBuilder()
-    .setColor(rarityColor[item.id] ?? 0x8F8F8F)
-    .setTitle("⛏️ 채굴 성공!")
-    .setDescription(
-      `광산 깊숙이 들어가 광석을 캐냈습니다!\n\n` +
-      `✨ **${item.name}** (1개)\n` +
-      `*${item.description}*\n` +
-      `판매가: **${item.sellPrice.toLocaleString()}** 코인` +
-      notices + achievementNotice
-    )
-    .setFooter({ text: `쿨다운: ${formatTime(ECONOMY_CONFIG.cooldowns.mining)}` })
-    .setTimestamp();
-
-  await interaction.reply({ embeds: [embed] });
+  await interaction.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x4CC9F0)
+        .setTitle("⛏️ 채굴은 웹사이트 전용")
+        .setDescription(
+          `디스코드에서는 채굴을 실행할 수 없습니다.\n` +
+          `웹사이트에서만 플레이할 수 있도록 분리했습니다.\n\n` +
+          `[웹 채굴하러 가기](${getWebGameUrl()})`
+        )
+        .setFooter({ text: "잔액과 상황만 디스코드에서 조회할 수 있습니다." })
+        .setTimestamp(),
+    ],
+    ephemeral: true,
+  });
 }
 
 // ─── 9. 농사 ─────────────────────────────────────────────────────────────────
 async function handleFarming(interaction, userId) {
-  const cooldown = EconomyService.checkAndSetCooldown(userId, "farming");
-  if (cooldown.isCooldown) {
-    await interaction.reply({
-      content: `⏰ 작물이 아직 자라고 있습니다. **${formatTime(cooldown.remaining)}** 후에 다시 시도하세요.`,
-      ephemeral: true,
-    });
-    return;
-  }
-
-  const success = Math.random() < ECONOMY_CONFIG.farming.successRate;
-  if (!success) {
-    await interaction.reply({ content: "🌾 새들이 작물을 쪼아먹었습니다. 농사에 실패했습니다!" });
-    return;
-  }
-
-  const item = drawReward(ECONOMY_CONFIG.farming.rewards);
-  EconomyService.updateInventory(userId, item.id, 1);
-
-  const notices = await progressAndCheck(userId, "work");
-
-  const rarityColor = {
-    crop_ginseng: 0x228B22,
-    crop_melon:   0x32CD32,
-    crop_potato:  0xCD853F,
-    crop_carrot:  0xFF8C00,
-    crop_wheat:   0xDAA520,
-  };
-
-  const embed = new EmbedBuilder()
-    .setColor(rarityColor[item.id] ?? 0xD2B48C)
-    .setTitle("🌾 농사 성공!")
-    .setDescription(
-      `정성껏 가꾼 밭에서 훌륭한 작물을 수확했습니다!\n\n` +
-      `✨ **${item.name}** (1개)\n` +
-      `*${item.description}*\n` +
-      `판매가: **${item.sellPrice.toLocaleString()}** 코인` +
-      notices
-    )
-    .setFooter({ text: `쿨다운: ${formatTime(ECONOMY_CONFIG.cooldowns.farming)}` })
-    .setTimestamp();
-
-  await interaction.reply({ embeds: [embed] });
+  await interaction.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x4CC9F0)
+        .setTitle("🌾 농사는 웹사이트 전용")
+        .setDescription(
+          `디스코드에서는 농사를 실행할 수 없습니다.\n` +
+          `웹사이트에서만 플레이할 수 있도록 분리했습니다.\n\n` +
+          `[웹 농사하러 가기](${getWebGameUrl()})`
+        )
+        .setFooter({ text: "잔액과 상황만 디스코드에서 조회할 수 있습니다." })
+        .setTimestamp(),
+    ],
+    ephemeral: true,
+  });
 }
 
 // ─── 10. 인벤토리 ────────────────────────────────────────────────────────────
 async function handleInventory(interaction, userId) {
-  const inv = EconomyService.getInventory(userId);
+  const inv = await EconomyService.getInventory(userId);
 
   if (inv.length === 0) {
     const embed = new EmbedBuilder()
@@ -622,7 +621,7 @@ async function handleShop(interaction, userId) {
     return;
   }
 
-  const { coins } = EconomyService.getOrCreateUser(userId);
+  const { coins } = await EconomyService.getOrCreateUser(userId);
   if (coins < targetItem.price) {
     await interaction.reply({
       content: `❌ 코인이 부족합니다. **${targetItem.price.toLocaleString()}** 코인이 필요하지만 **${coins.toLocaleString()}** 코인만 보유 중입니다.`,
@@ -631,10 +630,10 @@ async function handleShop(interaction, userId) {
     return;
   }
 
-  EconomyService.updateCoins(userId, -targetItem.price);
-  EconomyService.updateInventory(userId, targetItem.id, 1);
+  await EconomyService.updateCoins(userId, -targetItem.price);
+  await EconomyService.updateInventory(userId, targetItem.id, 1);
 
-  const newBalance = EconomyService.getOrCreateUser(userId).coins;
+  const newBalance = (await EconomyService.getOrCreateUser(userId)).coins;
 
   const embed = new EmbedBuilder()
     .setColor(0x00FF7F)
@@ -652,7 +651,7 @@ async function handleShop(interaction, userId) {
 // ─── 12. 판매 ────────────────────────────────────────────────────────────────
 async function handleSell(interaction, userId) {
   const target = interaction.options.getString("대상") || "전체";
-  const inventory = EconomyService.getInventory(userId);
+  const inventory = await EconomyService.getInventory(userId);
 
   if (inventory.length === 0) {
     await interaction.reply({ content: "❌ 판매할 아이템이 없습니다.", ephemeral: true });
@@ -679,12 +678,12 @@ async function handleSell(interaction, userId) {
   for (const item of itemsToSell) {
     const earned = item.sellPrice * item.quantity;
     totalEarned += earned;
-    EconomyService.updateInventory(userId, item.item_id, -item.quantity);
+    await EconomyService.updateInventory(userId, item.item_id, -item.quantity);
     lines.push(`• **${item.name}** ×${item.quantity} → **+${earned.toLocaleString()}** 코인`);
   }
 
-  EconomyService.updateCoins(userId, totalEarned);
-  const newBalance = EconomyService.getOrCreateUser(userId).coins;
+  await EconomyService.updateCoins(userId, totalEarned);
+  const newBalance = (await EconomyService.getOrCreateUser(userId)).coins;
 
   const notices = await progressAndCheck(userId, "work");
 
@@ -704,7 +703,7 @@ async function handleSell(interaction, userId) {
 
 // ─── 13. 랭킹 ────────────────────────────────────────────────────────────────
 async function handleRanking(interaction) {
-  const list = EconomyService.getRankings(10);
+  const list = await EconomyService.getRankings(10);
 
   if (list.length === 0) {
     await interaction.reply({ content: "아직 경제 활동을 등록한 멤버가 없습니다." });
@@ -727,7 +726,7 @@ async function handleRanking(interaction) {
 
 // ─── 14. 업적 ────────────────────────────────────────────────────────────────
 async function handleAchievements(interaction, userId) {
-  const unlocked = EconomyQuestService.getUnlockedAchievements(userId);
+  const unlocked = await EconomyQuestService.getUnlockedAchievements(userId);
   const unlockedIds = new Set(unlocked.map(u => u.achievement_id));
 
   const lines = ECONOMY_CONFIG.achievements.map(ach => {
@@ -750,7 +749,7 @@ async function handleAchievements(interaction, userId) {
 
 // ─── 15. 일일 퀘스트 ─────────────────────────────────────────────────────────
 async function handleQuests(interaction, userId) {
-  const quests = EconomyQuestService.getDailyQuests(userId);
+  const quests = await EconomyQuestService.getDailyQuests(userId);
 
   const descLines = quests.map(q => {
     let status;
@@ -797,4 +796,167 @@ async function handleQuests(interaction, userId) {
     embeds: [embed],
     components: rows,
   });
+}
+
+// ─── 16. 레이드 설정 ─────────────────────────────────────────────────────────
+async function handleRaidConfig(interaction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  const isAdmin = interaction.member?.permissions.has(PermissionFlagsBits.Administrator) ||
+    interaction.member?.permissions.has(PermissionFlagsBits.ManageGuild);
+  if (!isAdmin) {
+    await interaction.editReply({ content: "❌ 레이드 설정은 서버 소유자 또는 관리자만 할 수 있어요." });
+    return;
+  }
+
+  const channel = interaction.options.getChannel("채널");
+  if (!channel) {
+    await interaction.editReply({ content: "❌ 채널을 선택해주세요." });
+    return;
+  }
+
+  const guildId = interaction.guildId;
+  if (!guildId) {
+    await interaction.editReply({ content: "❌ 서버에서만 사용할 수 있는 명령어입니다." });
+    return;
+  }
+
+  const webUrl = (process.env.WEB_APP_URL || "http://localhost:3000").replace(/\/$/, "");
+  let saved = false;
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    const res = await fetch(`${webUrl}/api/raid/config`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ guild_id: guildId, channel_id: channel.id }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (res.ok) saved = true;
+  } catch (e) {
+    console.error("Raid config web API failed:", e.message);
+  }
+
+  if (!saved) {
+    try {
+      const { db } = await import("../services/database.js");
+      await db.run(
+        `INSERT INTO raid_config (guild_id, channel_id, updated_at)
+         VALUES ($1, $2, NOW())
+         ON CONFLICT (guild_id) DO UPDATE SET channel_id = $2, updated_at = NOW()`,
+        [guildId, channel.id]
+      );
+      saved = true;
+    } catch (e2) {
+      console.error("Raid config DB save failed:", e2.message);
+    }
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor(0x5ce4ff)
+    .setTitle("⚔️ 레이드 알림 설정 완료")
+    .setDescription(
+      `보스 레이드 출현 알림이 <#${channel.id}> 채널로 설정되었습니다.\n\n` +
+      `이제 보스가 출현하면 해당 채널로 알림이 전송됩니다.\n` +
+      `설정을 변경하려면 다시 \`/레이드설정\` 명령어를 사용하세요.`
+    )
+    .addFields(
+      { name: "📡 알림 채널", value: `<#${channel.id}>`, inline: true },
+      { name: "🎯 알림 종류", value: "출현 알림 / HP 현황 / 처치 결과", inline: true },
+    )
+    .setFooter({ text: "FLUX 레이드 시스템" })
+    .setTimestamp();
+
+  await interaction.editReply({ embeds: [embed] });
+}
+
+async function handleRaidDeactivate(interaction) {
+  await interaction.deferReply({ ephemeral: false });
+
+  const isAdmin = interaction.member?.permissions.has(PermissionFlagsBits.Administrator) ||
+    interaction.member?.permissions.has(PermissionFlagsBits.ManageGuild);
+  if (!isAdmin) {
+    await interaction.editReply({ content: "❌ 레이드 설정은 서버 소유자 또는 관리자만 변경할 수 있어요." });
+    return;
+  }
+
+  try {
+    const { db } = await import("../services/database.js");
+    await db.run("DELETE FROM raid_config WHERE guild_id = $1", [interaction.guildId]);
+
+    const webUrl = (process.env.WEB_APP_URL || "http://localhost:3000").replace(/\/$/, "");
+    try {
+      await fetch(`${webUrl}/api/raid/config`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ guild_id: interaction.guildId }),
+        signal: AbortSignal.timeout(3000),
+      });
+    } catch (e) {
+      // web API fallback
+    }
+
+    logInfo("raid_deactivated_slash", {
+      guildId: interaction.guildId,
+      guildName: interaction.guild?.name,
+      userId: interaction.user.id,
+    });
+  } catch (e) {
+    logError("raid_deactivate_slash", interaction.guildId, e);
+    await interaction.editReply({ content: "❌ 레이드 비활성화 중 오류가 발생했습니다." });
+    return;
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor(0xf87171)
+    .setTitle("⚔️ 레이드 비활성화")
+    .setDescription("레이드 알림이 비활성화되었습니다.\n다시 활성화하려면 `/레이드_활성화` 명령어를 사용하세요.")
+    .setFooter({ text: "FLUX 레이드 시스템" })
+    .setTimestamp();
+
+  await interaction.editReply({ embeds: [embed] });
+}
+
+async function handleRaidStatus(interaction) {
+  await interaction.deferReply({ ephemeral: false });
+
+  try {
+    const { db } = await import("../services/database.js");
+    const row = await db.get("SELECT channel_id, updated_at FROM raid_config WHERE guild_id = $1", [interaction.guildId]);
+
+    if (!row) {
+      const embed = new EmbedBuilder()
+        .setColor(0x888888)
+        .setTitle("⚔️ 레이드 설정")
+        .setDescription(
+          "이 서버는 레이드가 **비활성화**되어 있어요.\n" +
+          `활성화하려면 \`/레이드_활성화\` 명령어를 사용하세요.`
+        )
+        .setFooter({ text: "FLUX 레이드 시스템" })
+        .setTimestamp();
+      await interaction.editReply({ embeds: [embed] });
+      return;
+    }
+
+    const channel = interaction.guild.channels.cache.get(row.channel_id);
+    const channelMention = channel ? `${channel}` : `<#${row.channel_id}>`;
+
+    const embed = new EmbedBuilder()
+      .setColor(0x5ce4ff)
+      .setTitle("⚔️ 레이드 설정")
+      .addFields(
+        { name: "상태", value: "✅ 활성화", inline: true },
+        { name: "공지 채널", value: channelMention, inline: true },
+        { name: "등록일", value: row.updated_at || "알 수 없음", inline: false },
+      )
+      .setDescription("매일 오전 10시에 보스가 출현하고, 홈페이지에서 레이드에 참여할 수 있어요.")
+      .setFooter({ text: "FLUX 레이드 시스템" })
+      .setTimestamp();
+    await interaction.editReply({ embeds: [embed] });
+  } catch (e) {
+    logError("raid_status_slash", interaction.guildId, e);
+    await interaction.editReply({ content: "❌ 설정 확인 중 오류가 발생했습니다." });
+  }
 }

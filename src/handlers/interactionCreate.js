@@ -14,7 +14,7 @@ import { createScheduledMessage } from "../services/scheduler.js";
 import { parseScheduleTime, scheduleChannelMap } from "../commands/scheduler.js";
 import { db } from "../services/database.js";
 import { logError } from "../logger.js";
-import { handleEconomyCommand } from "./economyHandler.js";
+import { handleEconomyCommand, handleFishingButtonClick } from "./economyHandler.js";
 import { EconomyQuestService } from "../services/economyQuestService.js";
 
 const SERVER_TOKEN_LABELS = {
@@ -60,7 +60,7 @@ export async function handleInteractionCreate(client, interaction) {
       return;
     }
 
-    const result = EconomyQuestService.claimQuestReward(userId, questId);
+    const result = await EconomyQuestService.claimQuestReward(userId, questId);
     if (!result.success) {
       await interaction.reply({ content: `❌ 수령 실패: ${result.message}`, ephemeral: true });
       return;
@@ -92,7 +92,7 @@ export async function handleInteractionCreate(client, interaction) {
         rateLimitPerUser: 10,
       });
 
-      db.prepare("INSERT OR REPLACE INTO ai_channels (channel_id, guild_id) VALUES (?, ?)").run(newChan.id, interaction.guildId);
+      await db.run("INSERT INTO ai_channels (channel_id, guild_id) VALUES ($1, $2) ON CONFLICT(channel_id) DO UPDATE SET guild_id = EXCLUDED.guild_id", [newChan.id, interaction.guildId]);
 
       await interaction.update({
         content: `✅ 카테고리 **${parent ? parent.name : "Unknown"}** 하위에 AI 전용 채널 ${newChan}을 생성했어요. (슬로우모드 10초가 적용되었습니다.)`,
@@ -110,7 +110,7 @@ export async function handleInteractionCreate(client, interaction) {
 
   // ── 예약 메시지 모달 제출 ────────────────────────────────────────────────
   if (interaction.isModalSubmit() && interaction.customId === "schedule_create_modal") {
-    const tier = getServerSubscriptionTier(interaction.guildId);
+    const tier = await getServerSubscriptionTier(interaction.guildId);
     if (tier !== "platinum") {
       await interaction.reply({
         content: "❌ 이 서버는 **플래티넘 서버(유료)** 권한이 없으므로 예약 기능을 사용할 수 없습니다. `!FLUX 플래티넘 서버 구매`를 입력해 등급을 업그레이드해 보세요!",
@@ -152,7 +152,7 @@ export async function handleInteractionCreate(client, interaction) {
       }
     }
 
-    const task = createScheduledMessage({
+    const task = await createScheduledMessage({
       guildId: interaction.guildId,
       channelId,
       userId: interaction.user.id,
@@ -207,9 +207,20 @@ export async function handleInteractionCreate(client, interaction) {
 
   const { customId } = interaction;
 
+  // 낚시 버튼
+  if (customId.startsWith("fish:")) {
+    const userId = customId.split(":")[1];
+    if (interaction.user.id !== userId) {
+      await interaction.reply({ content: "다른 사람의 낚시에 간섭할 수 없어요!", ephemeral: true });
+      return;
+    }
+    await handleFishingButtonClick(interaction, userId);
+    return;
+  }
+
   // 예약 메시지 모달 열기 버튼
   if (customId === "schedule_open_modal") {
-    const tier = getServerSubscriptionTier(interaction.guildId);
+    const tier = await getServerSubscriptionTier(interaction.guildId);
     if (tier !== "platinum") {
       await interaction.reply({
         content: "❌ 이 서버는 **플래티넘 서버(유료)** 권한이 없으므로 예약 기능을 사용할 수 없습니다. `!FLUX 플래티넘 서버 구매`를 입력해 등급을 업그레이드해 보세요!",
@@ -394,7 +405,7 @@ export async function handleInteractionCreate(client, interaction) {
     const count = parseInt(parts[5] || 1, 10);
 
     try {
-      const tokens = addServerImageToken(guildId, type, count);
+      const tokens = await addServerImageToken(guildId, type, count);
       await interaction.update({
         content: [
           `**${label} 구매 신청을 승인했습니다.**`,
@@ -471,7 +482,7 @@ export async function handleInteractionCreate(client, interaction) {
 
     try {
       const { updateServerSubscription } = await import("../services/subscription.js");
-      const { tier: updatedTier, expiresAt } = updateServerSubscription(guildId, "platinum", 30);
+      const { tier: updatedTier, expiresAt } = await updateServerSubscription(guildId, "platinum", 30);
       const displayExpiry = expiresAt ? `${expiresAt} (KST)` : "무제한";
 
       await interaction.update({
@@ -540,7 +551,7 @@ export async function handleInteractionCreate(client, interaction) {
     const [, tier, userId] = parts;
 
     try {
-      const { tier: updatedTier, expiresAt } = updateUserSubscription(userId, tier, 30);
+      const { tier: updatedTier, expiresAt } = await updateUserSubscription(userId, tier, 30);
       const displayExpiry = expiresAt ? `${expiresAt} (KST)` : "무제한";
 
       await interaction.update({

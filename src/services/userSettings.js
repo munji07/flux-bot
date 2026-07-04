@@ -1,33 +1,35 @@
 import { db } from "./database.js";
 
-export function getUserDisplayName(userId) {
-  const row = db.prepare("SELECT display_name FROM user_settings WHERE user_id = ?").get(userId);
+export async function getUserDisplayName(userId) {
+  const row = await db.get("SELECT display_name FROM user_settings WHERE user_id = $1", [userId]);
   return sanitizeDisplayName(row?.display_name);
 }
 
-export function setUserDisplayName(userId, displayName) {
+export async function setUserDisplayName(userId, displayName) {
   const sanitized = sanitizeDisplayName(displayName);
   if (!sanitized) return null;
 
-  db.prepare(`
-    INSERT INTO user_settings (user_id, display_name, updated_at)
-    VALUES (?, ?, datetime('now'))
-    ON CONFLICT(user_id) DO UPDATE SET
-      display_name = excluded.display_name,
-      updated_at = excluded.updated_at
-  `).run(userId, sanitized);
+  await db.run(
+    `INSERT INTO user_settings (user_id, display_name, updated_at)
+     VALUES ($1, $2, TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS'))
+     ON CONFLICT(user_id) DO UPDATE SET
+       display_name = EXCLUDED.display_name,
+       updated_at = EXCLUDED.updated_at`,
+    [userId, sanitized],
+  );
 
   return sanitized;
 }
 
-export function clearUserDisplayName(userId) {
-  db.prepare(`
-    INSERT INTO user_settings (user_id, display_name, updated_at)
-    VALUES (?, NULL, datetime('now'))
-    ON CONFLICT(user_id) DO UPDATE SET
-      display_name = NULL,
-      updated_at = excluded.updated_at
-  `).run(userId);
+export async function clearUserDisplayName(userId) {
+  await db.run(
+    `INSERT INTO user_settings (user_id, display_name, updated_at)
+     VALUES ($1, NULL, TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS'))
+     ON CONFLICT(user_id) DO UPDATE SET
+       display_name = NULL,
+       updated_at = EXCLUDED.updated_at`,
+    [userId],
+  );
 }
 
 function sanitizeDisplayName(value) {

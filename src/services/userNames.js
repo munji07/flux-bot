@@ -1,73 +1,57 @@
 import { db } from "./database.js";
 
-const upsertName = db.prepare(`
-  INSERT INTO user_names (user_id, guild_id, username, display_name, global_name, updated_at)
-  VALUES (?, ?, ?, ?, ?, datetime('now'))
-  ON CONFLICT(user_id, guild_id) DO UPDATE SET
-    username = excluded.username,
-    display_name = excluded.display_name,
-    global_name = excluded.global_name,
-    updated_at = excluded.updated_at
-`);
-
-const getNameByUser = db.prepare(`
-  SELECT user_id, guild_id, username, display_name, global_name
-  FROM user_names
-  WHERE user_id = ?
-  ORDER BY updated_at DESC
-  LIMIT 1
-`);
-
-const getNameByUserInGuild = db.prepare(`
-  SELECT user_id, guild_id, username, display_name, global_name
-  FROM user_names
-  WHERE user_id = ? AND guild_id = ?
-`);
-
-const getAllNamesByGuild = db.prepare(`
-  SELECT user_id, username, display_name, global_name, updated_at
-  FROM user_names
-  WHERE guild_id = ?
-  ORDER BY updated_at DESC
-`);
-
-const getAllNames = db.prepare(`
-  SELECT user_id, username, display_name, global_name, updated_at
-  FROM user_names
-  ORDER BY updated_at DESC
-`);
-
-const searchNames = db.prepare(`
-  SELECT DISTINCT user_id, username, display_name, global_name, updated_at
-  FROM user_names
-  WHERE user_id = ? OR username LIKE ? OR display_name LIKE ? OR global_name LIKE ?
-  ORDER BY updated_at DESC
-  LIMIT 20
-`);
-
-export function saveUserName(userId, guildId, username, displayName, globalName = "") {
-  upsertName.run(userId, guildId, username || "", displayName || username || "", globalName || "");
+export async function saveUserName(userId, guildId, username, displayName, globalName = "") {
+  await db.run(
+    `INSERT INTO user_names (user_id, guild_id, username, display_name, global_name, updated_at)
+     VALUES ($1, $2, $3, $4, $5, TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS'))
+     ON CONFLICT(user_id, guild_id) DO UPDATE SET
+       username = EXCLUDED.username,
+       display_name = EXCLUDED.display_name,
+       global_name = EXCLUDED.global_name,
+       updated_at = EXCLUDED.updated_at`,
+    [userId, guildId, username || "", displayName || username || "", globalName || ""],
+  );
 }
 
-export function getUserName(userId) {
-  return getNameByUser.get(userId) || null;
+export async function getUserName(userId) {
+  const row = await db.get(
+    "SELECT user_id, guild_id, username, display_name, global_name FROM user_names WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 1",
+    [userId],
+  );
+  return row || null;
 }
 
-export function getUserNameInGuild(userId, guildId) {
-  return getNameByUserInGuild.get(userId, guildId) || null;
+export async function getUserNameInGuild(userId, guildId) {
+  const row = await db.get(
+    "SELECT user_id, guild_id, username, display_name, global_name FROM user_names WHERE user_id = $1 AND guild_id = $2",
+    [userId, guildId],
+  );
+  return row || null;
 }
 
-export function getGuildNames(guildId) {
-  return getAllNamesByGuild.all(guildId);
+export async function getGuildNames(guildId) {
+  return db.all(
+    "SELECT user_id, username, display_name, global_name, updated_at FROM user_names WHERE guild_id = $1 ORDER BY updated_at DESC",
+    [guildId],
+  );
 }
 
-export function getAllUserNames() {
-  return getAllNames.all();
+export async function getAllUserNames() {
+  return db.all(
+    "SELECT user_id, username, display_name, global_name, updated_at FROM user_names ORDER BY updated_at DESC",
+  );
 }
 
-export function searchUserNames(query) {
+export async function searchUserNames(query) {
   const pattern = `%${query}%`;
-  return searchNames.all(query, pattern, pattern, pattern);
+  return db.all(
+    `SELECT DISTINCT user_id, username, display_name, global_name, updated_at
+     FROM user_names
+     WHERE user_id = $1 OR username LIKE $2 OR display_name LIKE $3 OR global_name LIKE $4
+     ORDER BY updated_at DESC
+     LIMIT 20`,
+    [query, pattern, pattern, pattern],
+  );
 }
 
 export function formatUserNameRecord(row) {

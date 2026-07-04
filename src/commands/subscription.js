@@ -1,4 +1,4 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from "discord.js";
+﻿import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from "discord.js";
 import { ADMIN_USER_ID, PREFIX } from "../config/config.js";
 import { getUserSubscription, updateUserSubscription, getDailyUsage, getServerImageTokens, getServerSubscriptionTier, TIER_LIMITS, getKstNow } from "../services/subscription.js";
 
@@ -48,7 +48,7 @@ export async function handleServerImageTokenPurchaseCommand(message, userPrompt,
   const minutes = String(now.getMinutes()).padStart(2, "0");
   const timeStr = `${hours}${minutes}`;
   const depositName = `${timeStr}-${count}-${message.guildId.slice(-4)}`; // 입금자명에 수량 포함
-  const tokens = getServerImageTokens(message.guildId);
+  const tokens = await getServerImageTokens(message.guildId);
 
   const dmContent = [
     `## ${product.label} 구매 안내`,
@@ -114,8 +114,8 @@ export async function handleSubscriptionToolCall(message, intent, loadingMessage
   };
 
   if (action === "status") {
-    const sub = getUserSubscription(message.author.id);
-    const usage = getDailyUsage(message.author.id);
+    const sub = await getUserSubscription(message.author.id);
+    const usage = await getDailyUsage(message.author.id);
     const limits = TIER_LIMITS[sub.tier];
     const aiCallLimit = limits.ai_calls === Infinity ? "무제한" : `${limits.ai_calls}회`;
     const expiresAt = sub.expires_at ? `${sub.expires_at} (KST)` : "무제한";
@@ -172,7 +172,7 @@ export async function handleSubscriptionToolCall(message, intent, loadingMessage
       const minutes = String(now.getMinutes()).padStart(2, "0");
       const timeStr = `${hours}${minutes}`;
       const depositName = `${timeStr}-${count}-${message.guildId.slice(-4)}`;
-      const tokens = getServerImageTokens(message.guildId);
+      const tokens = await getServerImageTokens(message.guildId);
 
       const dmContent = [
         `## ${product.label} 구매 안내`,
@@ -216,7 +216,7 @@ export async function handleSubscriptionToolCall(message, intent, loadingMessage
     // 2. 플래티넘 서버 구매 요청인 경우 (AI가 type을 'platinum'으로 분류)
     if (type === "platinum") {
       if (message.guildId) {
-        const serverTier = getServerSubscriptionTier(message.guildId);
+        const serverTier = await getServerSubscriptionTier(message.guildId);
         if (serverTier === "platinum") {
           await sendResponse(`⚠️ 이 서버에는 이미 **Platinum 서버**가 등록되어 있어 추가 구매할 수 없습니다.`);
           return true;
@@ -270,9 +270,9 @@ export async function handleSubscriptionToolCall(message, intent, loadingMessage
     const timeStr = `${hours}${minutes}`;
     const depositName = `${timeStr}-${message.author.id}`;
 
-    const userSub = getUserSubscription(message.author.id);
+    const userSub = await getUserSubscription(message.author.id);
     const hasUserTier = userSub.tier === "premium" || userSub.tier === "basic";
-    const serverHasPlatinum = message.guildId && getServerSubscriptionTier(message.guildId) === "platinum";
+    const serverHasPlatinum = message.guildId && await getServerSubscriptionTier(message.guildId) === "platinum";
 
     const dmContent = [
       "## FLUX봇 등급 구매 안내",
@@ -348,7 +348,7 @@ export async function handleSubscriptionToolCall(message, intent, loadingMessage
       return true;
     }
 
-    const { tier, expiresAt } = updateUserSubscription(targetUserId, targetTier, days);
+    const { tier, expiresAt } = await updateUserSubscription(targetUserId, targetTier, days);
     const displayExpiry = expiresAt ? `${expiresAt} (KST)` : "무제한";
     await sendResponse([
       "등급을 변경했어요.",
@@ -382,8 +382,8 @@ export async function handleSubscriptionCommand(message, userPrompt, loadingMess
 
   // 1. 나의 등급 조회
   if (trimmed === "나의 등급" || trimmed === "나의등급" || trimmed === "등급") {
-    const sub = getUserSubscription(message.author.id);
-    const usage = getDailyUsage(message.author.id);
+    const sub = await getUserSubscription(message.author.id);
+    const usage = await getDailyUsage(message.author.id);
     const limits = TIER_LIMITS[sub.tier];
 
     const tierName = limits.name;
@@ -425,9 +425,9 @@ export async function handleSubscriptionCommand(message, userPrompt, loadingMess
     const depositNamePlatinum = `${timeStr}-plat-${message.guildId ? message.guildId.slice(-4) : "dm"}`;
 
     // 사용자 등급 / 서버 플래티넘 상태 확인
-    const userSub = getUserSubscription(message.author.id);
+    const userSub = await getUserSubscription(message.author.id);
     const hasUserTier = userSub.tier === "premium" || userSub.tier === "basic";
-    const serverHasPlatinum = message.guildId && getServerSubscriptionTier(message.guildId) === "platinum";
+    const serverHasPlatinum = message.guildId && await getServerSubscriptionTier(message.guildId) === "platinum";
 
     // DM 내용 구성
     let dmContent = `## ✨ FLUX봇 등급 구매 안내서\n\n`;
@@ -548,7 +548,7 @@ export async function handleSubscriptionCommand(message, userPrompt, loadingMess
 
     try {
       const { updateServerSubscription } = await import("../services/subscription.js");
-      const { tier, expiresAt } = updateServerSubscription(targetGuildId, targetTier, days);
+      const { tier, expiresAt } = await updateServerSubscription(targetGuildId, targetTier, days);
       const displayExpiry = expiresAt ? `${expiresAt} (KST)` : "무제한";
       
       await sendResponse(`✅ 성공적으로 서버 등급이 변경되었습니다.\n- **대상 길드 ID**: ${targetGuildId}\n- **부여된 등급**: \`${tier.toUpperCase()}\`\n- **만료 일자**: \`${displayExpiry}\``);
@@ -587,7 +587,7 @@ export async function handleSubscriptionCommand(message, userPrompt, loadingMess
     }
 
     try {
-      const { tier, expiresAt } = updateUserSubscription(targetUserId, targetTier, days);
+      const { tier, expiresAt } = await updateUserSubscription(targetUserId, targetTier, days);
       const displayExpiry = expiresAt ? `${expiresAt} (KST)` : "무제한";
       
       await sendResponse(`✅ 성공적으로 등급이 변경되었습니다.\n- **대상 유저 ID**: ${targetUserId}\n- **부여된 등급**: \`${tier.toUpperCase()}\`\n- **만료 일자**: \`${displayExpiry}\``);
@@ -624,7 +624,7 @@ export async function handleSubscriptionCommand(message, userPrompt, loadingMess
     const days = 30;
 
     try {
-      const { tier, expiresAt } = updateUserSubscription(targetUserId, targetTier, days);
+      const { tier, expiresAt } = await updateUserSubscription(targetUserId, targetTier, days);
       const displayExpiry = expiresAt ? `${expiresAt} (KST)` : "무제한";
 
       await sendResponse(`✅ 성공적으로 등급이 설정되었습니다.\n- **대상 유저 ID**: ${targetUserId}\n- **설정된 등급**: \`${tier.toUpperCase()}\`\n- **만료 일자**: \`${displayExpiry}\``);

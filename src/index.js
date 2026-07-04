@@ -30,7 +30,7 @@ async function shutdown(signal) {
   }
 
   try {
-    db.close();
+    await db.end();
     logInfo("database_closed");
   } catch (err) {
     logError("database_close", "unknown", err);

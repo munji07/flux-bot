@@ -1,4 +1,4 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelSelectMenuBuilder, ChannelType, PermissionFlagsBits } from "discord.js";
+﻿import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelSelectMenuBuilder, ChannelType, PermissionFlagsBits } from "discord.js";
 import { PREFIX } from "../config/config.js";
 import { extractDiscordId } from "../utils/command.js";
 import {
@@ -15,7 +15,7 @@ export async function handleScheduleCommand(message, userPrompt, loadingMessage)
   const hasScheduleKeyword = /예약\s*(?:메시지)?/i.test(normalized);
   if (!hasScheduleKeyword && !isScheduleCommand(normalized)) return false;
 
-  const tier = getServerSubscriptionTier(message.guildId);
+  const tier = await getServerSubscriptionTier(message.guildId);
   if (tier !== "platinum") {
     await loadingMessage.edit(`❌ 예약 메시지 기능은 **플래티넘 서버(유료)** 전용 기능입니다.\n이 서버는 현재 플래티넘 라이선스가 없습니다. \`${PREFIX} 플래티넘 서버 구매\`를 입력하여 서버를 업그레이드해 보세요!`);
     return true;
@@ -56,7 +56,7 @@ export async function handleScheduleCommand(message, userPrompt, loadingMessage)
     return true;
   }
 
-  const task = createScheduledMessage({
+  const task = await createScheduledMessage({
     guildId: message.guildId,
     channelId: message.channelId,
     userId: message.author.id,
@@ -80,7 +80,7 @@ function isScheduleCommand(input) {
 
 async function handleScheduleList(message, loadingMessage) {
   const includeAllUsers = message.member?.permissions.has(PermissionFlagsBits.ManageMessages) ?? false;
-  const tasks = listScheduledMessages({
+  const tasks = await listScheduledMessages({
     guildId: message.guildId,
     userId: message.author.id,
     includeAllUsers,
@@ -101,7 +101,7 @@ async function handleScheduleList(message, loadingMessage) {
 
 async function handleScheduleCancel(message, loadingMessage, id) {
   const isAdmin = message.member?.permissions.has(PermissionFlagsBits.ManageMessages) ?? false;
-  const task = cancelScheduledMessage({
+  const task = await cancelScheduledMessage({
     guildId: message.guildId,
     userId: message.author.id,
     id,
@@ -123,7 +123,7 @@ async function handleScheduleTimeChange(message, loadingMessage, id, timeInput) 
   }
 
   const isAdmin = message.member?.permissions.has(PermissionFlagsBits.ManageMessages) ?? false;
-  const task = rescheduleMessage({
+  const task = await rescheduleMessage({
     guildId: message.guildId,
     userId: message.author.id,
     id,
@@ -241,7 +241,7 @@ export async function openScheduleModalButton(message, loadingMessage) {
 }
 
 export async function handleScheduleFromIntent(message, args, loadingMessage) {
-  const tier = getServerSubscriptionTier(message.guildId);
+  const tier = await getServerSubscriptionTier(message.guildId);
   if (tier !== "platinum") {
     await loadingMessage.edit(`❌ 예약 메시지 기능은 **플래티넘 서버(유료)** 전용 기능입니다.\n이 서버는 현재 플래티넘 라이선스가 없습니다. \`${PREFIX} 플래티넘 서버 구매\`를 입력하여 서버를 업그레이드해 보세요!`);
     return true;
@@ -272,7 +272,7 @@ export async function handleScheduleFromIntent(message, args, loadingMessage) {
       return true;
     }
     const isAdmin = message.member?.permissions.has(PermissionFlagsBits.ManageMessages) ?? false;
-    const task = rescheduleMessage({
+    const task = await rescheduleMessage({
       guildId: message.guildId,
       userId: message.author.id,
       id,
@@ -313,7 +313,7 @@ export async function handleScheduleFromIntent(message, args, loadingMessage) {
     }
   }
 
-  const task = createScheduledMessage({
+  const task = await createScheduledMessage({
     guildId: message.guildId,
     channelId: targetChannel.id,
     userId: message.author.id,

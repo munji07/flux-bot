@@ -13,8 +13,8 @@ export const SAFE_MESSAGE_LIMIT = 1900;
 export const MAX_STORED_HISTORY_MESSAGES = 20;
 export const HISTORY_BATCH_SIZE = 10;
 export const MAX_HISTORY_CONTENT_LENGTH = 800;
-export const GROQ_TPM_BUDGET = 4500;
-export const GROQ_MAX_COMPLETION_TOKENS = 4096;
+export const GROQ_TPM_BUDGET = 1500;
+export const GROQ_MAX_COMPLETION_TOKENS = 2048;
 export const LOADING_EMOJI = "⏳";
 
 export const CLIENT_INTENTS = [
@@ -80,7 +80,7 @@ export const SYSTEM_PROMPT = `
 `.trim();
 
 export function validateEnv() {
-  const requiredEnv = ["DISCORD_TOKEN", "HF_TOKEN", "GROQ_API_KEY", "GEMINI_API_KEY", "NVIDIA_API_KEY", "POLLINATIONS_API_KEY"];
+  const requiredEnv = ["DISCORD_TOKEN", "HF_TOKEN", "GROQ_API_KEY", "GEMINI_API_KEY", "NVIDIA_API_KEY", "POLLINATIONS_API_KEY", "DATABASE_URL"];
   const missingEnv = requiredEnv.filter((key) => !process.env[key]);
 
   if (missingEnv.length > 0) {

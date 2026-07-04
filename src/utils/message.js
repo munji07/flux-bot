@@ -7,11 +7,10 @@ export function getDisplayName(message) {
     message.member?.displayName ||
     message.author.globalName ||
     message.author.username ||
-    "친구";
+    "移쒓뎄";
 
-  return name.replace(/[\r\n[\]]/g, " ").trim().slice(0, 80) || "친구";
+  return String(name).replace(/[\r\n[\]]/g, " ").trim().slice(0, 80) || "移쒓뎄";
 }
-
 
 export async function sendChunkedAnswer(message, loadingMessage, answer) {
   const chunks = splitDiscordMessage(answer);
@@ -34,9 +33,9 @@ export function getImageAttachmentUrls(message) {
 }
 
 export function createUserMessageContent(userName, userPrompt, imageUrls = []) {
-  const imageText = imageUrls.length > 0 ? `\n[이미지 첨부: ${imageUrls.join(", ")}]` : "";
+  const imageText = imageUrls.length > 0 ? `\n[?대?吏 泥⑤?: ${imageUrls.join(", ")}]` : "";
 
-  return `[유저 이름: ${userName}]\n${userPrompt}${imageText}`;
+  return `[?좎? ?대쫫: ${userName}]\n${userPrompt}${imageText}`;
 }
 
 export function stripFancyUnicode(text) {

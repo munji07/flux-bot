@@ -26,13 +26,14 @@ const SUMMARY_SYSTEM_PROMPT = [
 ].join("\n");
 
 export async function generateChannelSummary(guildId, channelId, channelName, limit = DEFAULT_MESSAGE_LIMIT) {
-  const messages = db.prepare(`
-    SELECT user_name, content, created_at
-    FROM channel_messages
-    WHERE guild_id = ? AND channel_id = ? AND content IS NOT NULL AND content != ''
-    ORDER BY created_at DESC
-    LIMIT ?
-  `).all(guildId, channelId, limit);
+  const messages = await db.all(
+    `SELECT user_name, content, created_at
+     FROM channel_messages
+     WHERE guild_id = $1 AND channel_id = $2 AND content IS NOT NULL AND content != ''
+     ORDER BY created_at DESC
+     LIMIT $3`,
+    [guildId, channelId, limit],
+  );
 
   if (messages.length < 3) {
     return null;

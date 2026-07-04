@@ -1,4 +1,4 @@
-import { ADMIN_USER_ID, PREFIX, SAFE_MESSAGE_LIMIT, HISTORY_BATCH_SIZE, GEMINI_SEARCH_MODEL, DEEPSEEK_CHAT_MODEL, LOADING_EMOJI } from "../config/config.js";
+﻿import { ADMIN_USER_ID, PREFIX, SAFE_MESSAGE_LIMIT, HISTORY_BATCH_SIZE, GEMINI_SEARCH_MODEL, DEEPSEEK_CHAT_MODEL, LOADING_EMOJI } from "../config/config.js";
 import { UserFacingError } from "../errors.js";
 import { handleManagementToolCall, getManagementHelpText } from "../commands/management.js";
 import { handleScheduleFromIntent } from "../commands/scheduler.js";
@@ -62,31 +62,31 @@ setInterval(() => {
   }
 }, 60_000);
 
-const insertChannelMessage = db.prepare(`
-  INSERT OR IGNORE INTO channel_messages (message_id, guild_id, channel_id, user_id, user_tag, user_name, is_bot, content, created_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-`);
-
 export async function handleMessageCreate(client, message) {
   if (message.inGuild()) {
     try {
-      insertChannelMessage.run(
-        message.id,
-        message.guildId,
-        message.channelId,
-        message.author.id,
-        message.author.tag,
-        message.member?.displayName || message.author.displayName,
-        message.author.bot ? 1 : 0,
-        message.content || null,
-        new Date(message.createdTimestamp).toISOString(),
+      await db.run(
+        `INSERT INTO channel_messages (message_id, guild_id, channel_id, user_id, user_tag, user_name, is_bot, content, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         ON CONFLICT(message_id) DO NOTHING`,
+        [
+          message.id,
+          message.guildId,
+          message.channelId,
+          message.author.id,
+          message.author.tag,
+          message.member?.displayName || message.author.displayName,
+          message.author.bot ? 1 : 0,
+          message.content || null,
+          new Date(message.createdTimestamp).toISOString(),
+        ],
       );
     } catch (e) {
       logError("store_channel_message", message.guildId, e);
     }
 
     try {
-      saveUserName(
+      await saveUserName(
         message.author.id,
         message.guildId,
         message.author.username,
@@ -103,7 +103,7 @@ export async function handleMessageCreate(client, message) {
 
   let isAiChannel = false;
   try {
-    const row = db.prepare("SELECT 1 FROM ai_channels WHERE channel_id = ?").get(message.channelId);
+    const row = await db.get("SELECT 1 FROM ai_channels WHERE channel_id = $1", [message.channelId]);
     if (row) isAiChannel = true;
   } catch (e) {
     logError("check_ai_channel", message.guildId, e);
@@ -144,16 +144,17 @@ export async function handleMessageCreate(client, message) {
     // 유저 이름 설정 여부 체크 및 자동 저장 (첫 대화)
     let isFirstConversation = false;
     let displayName = null;
-    const userSettingsRow = db.prepare("SELECT display_name FROM user_settings WHERE user_id = ?").get(message.author.id);
+    const userSettingsRow = await db.get("SELECT display_name FROM user_settings WHERE user_id = $1", [message.author.id]);
     if (!userSettingsRow || !userSettingsRow.display_name) {
-      displayName = message.author.username;
-      db.prepare(`
-        INSERT INTO user_settings (user_id, display_name, updated_at)
-        VALUES (?, ?, datetime('now'))
-        ON CONFLICT(user_id) DO UPDATE SET
-          display_name = excluded.display_name,
-          updated_at = excluded.updated_at
-      `).run(message.author.id, displayName);
+      displayName = message.member?.displayName ?? message.author.username;
+      await db.run(
+        `INSERT INTO user_settings (user_id, display_name, updated_at)
+         VALUES ($1, $2, TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS'))
+         ON CONFLICT(user_id) DO UPDATE SET
+           display_name = EXCLUDED.display_name,
+           updated_at = EXCLUDED.updated_at`,
+        [message.author.id, displayName],
+      );
       isFirstConversation = true;
     } else {
       displayName = userSettingsRow.display_name;
@@ -172,7 +173,7 @@ export async function handleMessageCreate(client, message) {
     if (nameSearchMatch) {
       const query = nameSearchMatch[1].trim();
       if (query) {
-        const results = searchUserNames(query);
+        const results = await searchUserNames(query);
         if (results.length === 0) {
           await loadingMessage.edit(`\`${query}\`(와)과 일치하는 사용자를 찾지 못했어요.`);
         } else {
@@ -183,7 +184,7 @@ export async function handleMessageCreate(client, message) {
           await loadingMessage.edit(text);
         }
       } else {
-        const allNames = getAllUserNames();
+        const allNames = await getAllUserNames();
         if (allNames.length === 0) {
           await loadingMessage.edit("아직 저장된 사용자 이름이 없어요.");
         } else {
@@ -246,7 +247,7 @@ export async function handleMessageCreate(client, message) {
       });
 
       if (isPayloadTooLargeError(error)) {
-        decrementUsage(message.author.id, "ai_calls");
+        await decrementUsage(message.author.id, "ai_calls");
         await loadingMessage.edit("진단하려는 로그나 소스 파일이 너무 큽니다. AI 분석을 위해 특정 서버 ID, 특정 파일 경로, 또는 더 좁은 시간 범위를 명시해서 다시 요청해 주세요.");
         return;
   }
@@ -305,7 +306,7 @@ export async function handleMessageCreate(client, message) {
 
   if (intent.tool === "summary") {
     try {
-      usageCheck = checkAndIncrementUsage(message.author.id, "ai_calls", message.guildId);
+      usageCheck = await checkAndIncrementUsage(message.author.id, "ai_calls", message.guildId);
       if (!usageCheck.allowed) {
         const limits = TIER_LIMITS[usageCheck.tier];
         await loadingMessage.edit(createLimitExceededMessage(message.author.username, limits.name, "AI 호출", limits.ai_calls, PREFIX));
@@ -376,7 +377,7 @@ export async function handleMessageCreate(client, message) {
         await loadingMessage.edit("찾을 사용자 이름이나 ID를 입력해주세요.");
         return;
       }
-      const results = searchUserNames(query);
+      const results = await searchUserNames(query);
       if (results.length === 0) {
         await loadingMessage.edit(`\`${query}\`(와)과 일치하는 사용자를 찾지 못했어요.`);
       } else {
@@ -409,7 +410,7 @@ export async function handleMessageCreate(client, message) {
       const query = String(intent.arguments?.query || userPrompt).trim();
 
       // 사용량 체크
-      usageCheck = checkAndIncrementUsage(message.author.id, "ai_calls", message.guildId);
+      usageCheck = await checkAndIncrementUsage(message.author.id, "ai_calls", message.guildId);
       if (!usageCheck.allowed) {
         const limits = TIER_LIMITS[usageCheck.tier];
         await loadingMessage.edit(createLimitExceededMessage(message.author.username, limits.name, "AI 호출", limits.ai_calls, PREFIX));
@@ -462,7 +463,7 @@ export async function handleMessageCreate(client, message) {
   if (intent.tool === "bot_feature_info") {
     try {
       // 사용량 체크
-      usageCheck = checkAndIncrementUsage(message.author.id, "ai_calls", message.guildId);
+      usageCheck = await checkAndIncrementUsage(message.author.id, "ai_calls", message.guildId);
       if (!usageCheck.allowed) {
         const limits = TIER_LIMITS[usageCheck.tier];
         await loadingMessage.edit(createLimitExceededMessage(message.author.username, limits.name, "AI 호출", limits.ai_calls, PREFIX));
@@ -486,7 +487,7 @@ export async function handleMessageCreate(client, message) {
   if (intent.tool === "developer_diagnostics") {
     try {
       // 사용량 체크
-      usageCheck = checkAndIncrementUsage(message.author.id, "ai_calls", message.guildId);
+      usageCheck = await checkAndIncrementUsage(message.author.id, "ai_calls", message.guildId);
       if (!usageCheck.allowed) {
         const limits = TIER_LIMITS[usageCheck.tier];
         await loadingMessage.edit(createLimitExceededMessage(message.author.username, limits.name, "AI 호출", limits.ai_calls, PREFIX));
@@ -504,7 +505,7 @@ export async function handleMessageCreate(client, message) {
       });
 
       if (isPayloadTooLargeError(error)) {
-        decrementUsage(message.author.id, "ai_calls");
+        await decrementUsage(message.author.id, "ai_calls");
         await loadingMessage.edit("진단하려는 로그나 소스 파일이 너무 큽니다. AI 분석을 위해 특정 서버 ID, 특정 파일 경로, 또는 더 좁은 시간 범위를 명시해서 다시 요청해 주세요.");
         return;
       }
@@ -524,7 +525,7 @@ export async function handleMessageCreate(client, message) {
       return;
     }
 
-    usageCheck = checkAndIncrementUsage(message.author.id, "ai_calls", message.guildId);
+    usageCheck = await checkAndIncrementUsage(message.author.id, "ai_calls", message.guildId);
     if (!usageCheck.allowed) {
       const limits = TIER_LIMITS[usageCheck.tier];
       await loadingMessage.edit(createLimitExceededMessage(message.author.username, limits.name, "AI 호출", limits.ai_calls, PREFIX));
@@ -543,19 +544,19 @@ export async function handleMessageCreate(client, message) {
       });
 
       if (isPayloadTooLargeError(error)) {
-        decrementUsage(message.author.id, "ai_calls");
+        await decrementUsage(message.author.id, "ai_calls");
         await loadingMessage.edit("조회하려는 로그 데이터가 너무 많아 AI가 분석할 수 없습니다. 특정 서버 ID나 더 좁은 시간 범위를 지정해서 다시 질문해 주세요.");
         return;
       }
 
       await loadingMessage.edit("로그를 검색하는 중 문제가 생겼어요. 잠시 뒤 다시 시도해 주세요.");
-      decrementUsage(message.author.id, "ai_calls");
+      await decrementUsage(message.author.id, "ai_calls");
     }
     return;
   }
 
   if (intent.type === "image_generation") {
-    usageCheck = checkAndIncrementUsage(message.author.id, "image_generations", message.guildId);
+    usageCheck = await checkAndIncrementUsage(message.author.id, "image_generations", message.guildId);
     if (!usageCheck.allowed) {
       const limits = TIER_LIMITS[usageCheck.tier];
       await loadingMessage.edit(createLimitExceededMessage(message.author.username, limits.name, "이미지 생성", limits.image_generations, PREFIX));
@@ -565,9 +566,9 @@ export async function handleMessageCreate(client, message) {
     const success = await handleImageGenerationRequest(client, message, intent.imagePrompt, loadingMessage);
     if (!success) {
       if (usageCheck.usedServerToken) {
-        addServerImageToken(message.guildId, "image_generations");
+        await addServerImageToken(message.guildId, "image_generations");
     } else {
-        decrementUsage(message.author.id, "image_generations");
+        await decrementUsage(message.author.id, "image_generations");
     }
   }
     return;
@@ -581,7 +582,7 @@ export async function handleMessageCreate(client, message) {
   // 일반 채팅 및 이미지 판독에 대한 사용량 체크
   const usageTypeName = isImageRead ? "이미지 판독" : "AI 호출";
 
-  usageCheck = checkAndIncrementUsage(message.author.id, usageType, message.guildId);
+  usageCheck = await checkAndIncrementUsage(message.author.id, usageType, message.guildId);
   if (!usageCheck.allowed) {
     const limits = TIER_LIMITS[usageCheck.tier];
     await loadingMessage.edit(createLimitExceededMessage(message.author.username, limits.name, usageTypeName, limits[usageType], PREFIX)).catch(() => {});
@@ -711,7 +712,7 @@ export async function handleMessageCreate(client, message) {
             }
           } catch (fallbackError) {
             if (isPayloadTooLargeError(fallbackError) || isGroqRateLimitError(fallbackError)) {
-              decrementUsage(message.author.id, usageType);
+              await decrementUsage(message.author.id, usageType);
               await loadingMessage.edit("대화 내용이 너무 길어 AI가 처리할 수 없어요. 채널 히스토리가 짧은 곳에서 다시 시도하거나 질문을 짧게 입력해 주세요.");
               return;
             }
@@ -719,7 +720,7 @@ export async function handleMessageCreate(client, message) {
           }
         } else {
           await loadingMessage.edit("답변을 생성하는 중 문제가 발생했어요. 잠시 뒤 다시 시도해주세요.");
-          decrementUsage(message.author.id, usageType);
+          await decrementUsage(message.author.id, usageType);
           return;
         }
       }
@@ -750,7 +751,7 @@ export async function handleMessageCreate(client, message) {
         userName,
       });
       await loadingMessage.edit("AI가 빈 답변을 반환했어요. 잠시 뒤 다시 시도해주세요.");
-      decrementUsage(message.author.id, usageType);
+      await decrementUsage(message.author.id, usageType);
       return;
     }
 
@@ -763,7 +764,7 @@ export async function handleMessageCreate(client, message) {
       await sendChunkedAnswer(message, loadingMessage, `${answer}${modelFooter}${firstTalkFooter}`);
     }
 
-    appendConversationHistory(
+    await appendConversationHistory(
       historyKey,
       {
         guildId: message.guildId,
@@ -786,14 +787,14 @@ export async function handleMessageCreate(client, message) {
       userId: message.author.id,
       userName,
       answerLength: answer.length,
-      storedHistoryMessageCount: getStoredHistoryLength(historyKey),
+      storedHistoryMessageCount: await getStoredHistoryLength(historyKey),
     });
   } catch (error) {
     if (usageCheck && usageType) {
       if (usageCheck.usedServerToken) {
-        addServerImageToken(message.guildId, usageType);
+        await addServerImageToken(message.guildId, usageType);
       } else {
-        decrementUsage(message.author.id, usageType);
+        await decrementUsage(message.author.id, usageType);
       }
     }
 

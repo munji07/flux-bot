@@ -130,6 +130,7 @@ const COMMANDS = {
   setSystemChannel: "setSystemChannel",
   createChannel: "createChannel",
   createAiChannel: "createAiChannel",
+  setAiChannel: "setAiChannel",
   deleteChannel: "deleteChannel",
   createRole: "createRole",
   deleteRole: "deleteRole",
@@ -150,6 +151,11 @@ const COMMAND_ALIASES = {
   ai전용채널만들기: COMMANDS.createAiChannel,
   createaichannel: COMMANDS.createAiChannel,
   ai전용채널: COMMANDS.createAiChannel,
+  ai전용채널지정: COMMANDS.setAiChannel,
+  ai채널지정: COMMANDS.setAiChannel,
+  ai여기: COMMANDS.setAiChannel,
+  여기를ai로: COMMANDS.setAiChannel,
+  setaichannel: COMMANDS.setAiChannel,
   관리도움말: COMMANDS.help,
   서버관리도움말: COMMANDS.help,
   help: COMMANDS.help,
@@ -398,8 +404,10 @@ export async function handleManagementToolCall(message, intent, userPrompt, load
   if (tool !== "run_management") return false;
 
   const argsObject = intent?.arguments ?? {};
-  const command = argsObject.command;
-  const args = Array.isArray(argsObject.args) ? argsObject.args.map((arg) => String(arg)) : [];
+  const command = String(argsObject.command ?? "");
+  const args = Array.isArray(argsObject.args)
+    ? argsObject.args.map((arg) => String(arg ?? "")).filter((arg) => arg.length > 0)
+    : [];
 
   if (!Object.values(COMMANDS).includes(command)) {
     if (loadingMessage) await loadingMessage.edit("관리 작업을 이해하지 못했어요. 조금 더 구체적으로 말해 주세요.");
@@ -538,7 +546,7 @@ async function executeCommand(message, command, args, userPrompt, loadingMessage
       {
         const chan = await resolveChannel(message, args.join(" "), [ChannelType.GuildVoice]);
         if (!chan) throw new UserFacingError("AFK 채널을 찾지 못했어요. 채널 ID 또는 이름을 확인해주세요.");
-        await message.guild.setAFKChannel(chan);
+        await message.guild.setAFKChannel(chan.id);
         await loadingMessage.edit(`AFK 채널을 ${chan}(으)로 설정했어요.`);
       }
       break;
@@ -557,7 +565,7 @@ async function executeCommand(message, command, args, userPrompt, loadingMessage
       {
         const chan = await resolveChannel(message, args.join(" "), [ChannelType.GuildText]);
         if (!chan) throw new UserFacingError("시스템 메시지 채널을 찾지 못했어요. 채널 ID 또는 이름을 확인해주세요.");
-        await message.guild.setSystemChannel(chan);
+        await message.guild.setSystemChannel(chan.id);
         await loadingMessage.edit(`시스템 메시지 채널을 ${chan}(으)로 설정했어요.`);
       }
       break;
@@ -576,6 +584,10 @@ async function executeCommand(message, command, args, userPrompt, loadingMessage
     case COMMANDS.createAiChannel:
       await assertGuildPermissions(message, PermissionFlagsBits.ManageChannels);
       await createAiChannelCommand(message, args, loadingMessage);
+      break;
+    case COMMANDS.setAiChannel:
+      await assertGuildPermissions(message, PermissionFlagsBits.ManageChannels);
+      await setCurrentAiChannelCommand(message, loadingMessage);
       break;
     case COMMANDS.deleteChannel:
       await assertGuildPermissions(message, PermissionFlagsBits.ManageChannels);
@@ -1222,7 +1234,8 @@ async function resolveMember(message, token, missingMessage) {
 }
 
 function normalizeName(value) {
-  return value
+  const text = String(value ?? "");
+  return text
     .toLowerCase()
     .replace(/\s+/g, " ")
     .replace(/[^\p{L}\p{N} ]+/gu, "")
@@ -1376,14 +1389,15 @@ async function resolveVoiceChannel(message, input) {
 }
 
 async function resolveChannel(message, input, allowedTypes = null) {
-  const id = extractDiscordId(input);
+  const textInput = String(input ?? "");
+  const id = extractDiscordId(textInput);
   if (id) {
     const channel = await message.guild.channels.fetch(id).catch(() => null);
     if (channel && (!allowedTypes || allowedTypes.includes(channel.type))) return channel;
     return null;
   }
 
-  const normalizedInput = normalizeName(input);
+  const normalizedInput = normalizeName(textInput);
   const exactChannel = message.guild.channels.cache.find((c) => {
     if (allowedTypes && !allowedTypes.includes(c.type)) return false;
     return normalizeName(c.name) === normalizedInput;
@@ -1393,7 +1407,7 @@ async function resolveChannel(message, input, allowedTypes = null) {
   const fuzzyChannel = findBestChannelMatch(message, normalizedInput, allowedTypes);
   if (fuzzyChannel) return fuzzyChannel;
 
-  const aiChannel = await findAiChannelMatch(message, input, normalizedInput, allowedTypes);
+  const aiChannel = await findAiChannelMatch(message, textInput, normalizedInput, allowedTypes);
   if (aiChannel) return aiChannel;
 
   return null;
@@ -1416,6 +1430,7 @@ async function findBestChannelMatch(message, normalizedInput, allowedTypes) {
 async function findAiChannelMatch(message, input, normalizedInput, allowedTypes) {
   const allChannels = [...message.guild.channels.cache.values()]
     .filter((c) => !allowedTypes || allowedTypes.includes(c.type))
+    .filter((c) => typeof c?.name === "string")
     .slice(0, 50);
 
   if (allChannels.length === 0) return null;
@@ -1438,20 +1453,21 @@ async function findAiChannelMatch(message, input, normalizedInput, allowedTypes)
 }
 
 async function resolveRole(message, input) {
-  const id = extractDiscordId(input);
+  const textInput = String(input ?? "");
+  const id = extractDiscordId(textInput);
   if (id) {
     const role = await message.guild.roles.fetch(id).catch(() => null);
     if (role) return role;
   }
 
-  const normalizedInput = normalizeName(input);
+  const normalizedInput = normalizeName(textInput);
   const exactRole = message.guild.roles.cache.find((r) => normalizeName(r.name) === normalizedInput);
   if (exactRole) return exactRole;
 
   const fuzzyRole = findBestRoleMatch(message, normalizedInput);
   if (fuzzyRole) return fuzzyRole;
 
-  const aiRole = await findAiRoleMatch(message, input, normalizedInput);
+  const aiRole = await findAiRoleMatch(message, textInput, normalizedInput);
   if (aiRole) return aiRole;
 
   throw new UserFacingError("역할을 멘션, ID, 또는 이름으로 입력해주세요.");
@@ -1472,6 +1488,7 @@ async function findBestRoleMatch(message, normalizedInput) {
 
 async function findAiRoleMatch(message, input, normalizedInput) {
   const allRoles = [...message.guild.roles.cache.values()]
+    .filter((role) => typeof role?.name === "string")
     .sort((a, b) => b.position - a.position)
     .slice(0, 50);
 
@@ -1649,7 +1666,7 @@ export function getManagementHelpText() {
 }
 
 async function serverAnalysisCommand(message, args, loadingMessage) {
-  const tier = getServerSubscriptionTier(message.guildId);
+  const tier = await getServerSubscriptionTier(message.guildId);
   if (tier !== "platinum") {
     await loadingMessage.edit("❌ 서버 분석 기능은 **플래티넘 서버(유료)** 전용 기능입니다.\n이 서버는 현재 플래티넘 라이선스가 없습니다. `!FLUX 플래티넘 서버 구매`를 입력해 등급을 업그레이드해 보세요!");
     return;
@@ -1693,34 +1710,25 @@ async function serverAnalysisCommand(message, args, loadingMessage) {
   }
 
   // 6. DB 메시지 통계
-  const totalMsgCount = db.prepare(`
-    SELECT COUNT(*) as cnt
-    FROM channel_messages
-    WHERE guild_id = ?
-  `).get(message.guildId);
+  const totalMsgCount = await db.get(
+    "SELECT COUNT(*) as cnt FROM channel_messages WHERE guild_id = $1",
+    [message.guildId],
+  );
 
-  const todayMsgCount = db.prepare(`
-    SELECT COUNT(*) as cnt
-    FROM channel_messages
-    WHERE guild_id = ? AND date(created_at) = date('now', '+9 hours')
-  `).get(message.guildId);
+  const todayMsgCount = await db.get(
+    "SELECT COUNT(*) as cnt FROM channel_messages WHERE guild_id = $1 AND created_at::date = CURRENT_DATE",
+    [message.guildId],
+  );
 
-  const channelStats = db.prepare(`
-    SELECT channel_id, COUNT(*) as cnt 
-    FROM channel_messages 
-    WHERE guild_id = ? 
-    GROUP BY channel_id 
-    ORDER BY cnt DESC
-  `).all(message.guildId);
+  const channelStats = await db.all(
+    "SELECT channel_id, COUNT(*) as cnt FROM channel_messages WHERE guild_id = $1 GROUP BY channel_id ORDER BY cnt DESC",
+    [message.guildId],
+  );
 
-  const userStats = db.prepare(`
-    SELECT user_id, user_name, user_tag, COUNT(*) as cnt 
-    FROM channel_messages 
-    WHERE guild_id = ? AND is_bot = 0
-    GROUP BY user_id 
-    ORDER BY cnt DESC 
-    LIMIT 5
-  `).all(message.guildId);
+  const userStats = await db.all(
+    "SELECT user_id, user_name, user_tag, COUNT(*) as cnt FROM channel_messages WHERE guild_id = $1 AND is_bot = 0 GROUP BY user_id ORDER BY cnt DESC LIMIT 5",
+    [message.guildId],
+  );
 
   const activeChannelIds = new Set(channelStats.map(s => s.channel_id));
   const unusedChannels = [];
@@ -1729,11 +1737,10 @@ async function serverAnalysisCommand(message, args, loadingMessage) {
   }
 
   // 7. 최근 활동일 (마지막 메시지)
-  const lastActivity = db.prepare(`
-    SELECT MAX(created_at) as last_msg
-    FROM channel_messages
-    WHERE guild_id = ?
-  `).get(message.guildId);
+  const lastActivity = await db.get(
+    "SELECT MAX(created_at) as last_msg FROM channel_messages WHERE guild_id = $1",
+    [message.guildId],
+  );
 
   // 8. 리포트 작성
   let report = `## 📊 ${g.name} 서버 분석 보고서\n\n`;
@@ -1808,7 +1815,7 @@ async function serverAnalysisCommand(message, args, loadingMessage) {
 }
 
 async function channelAnalysisCommand(message, args, loadingMessage) {
-  const tier = getServerSubscriptionTier(message.guildId);
+  const tier = await getServerSubscriptionTier(message.guildId);
   if (tier !== "platinum") {
     await loadingMessage.edit("❌ 채널 분석 기능은 **플래티넘 서버(유료)** 전용 기능입니다.\n이 서버는 현재 플래티넘 라이선스가 없습니다. `!FLUX 플래티넘 서버 구매`를 입력해 등급을 업그레이드해 보세요!");
     return;
@@ -1859,50 +1866,50 @@ async function channelAnalysisCommand(message, args, loadingMessage) {
   const channelName = targetChannel.name;
 
   // DB에서 해당 채널의 전체 메시지 통계
-  const channelStats = db.prepare(`
-    SELECT COUNT(*) as total_messages,
-           COUNT(DISTINCT CASE WHEN is_bot = 0 THEN user_id END) as unique_users,
-           MIN(created_at) as first_message_at
-    FROM channel_messages
-    WHERE guild_id = ? AND channel_id = ?
-  `).get(message.guildId, channelId);
+  const channelStats = await db.get(
+    `SELECT COUNT(*) as total_messages,
+            COUNT(DISTINCT CASE WHEN is_bot = 0 THEN user_id END) as unique_users,
+            MIN(created_at) as first_message_at
+     FROM channel_messages
+     WHERE guild_id = $1 AND channel_id = $2`,
+    [message.guildId, channelId],
+  );
 
-  const userMsgCount = db.prepare(`
-    SELECT COUNT(*) as cnt
-    FROM channel_messages
-    WHERE guild_id = ? AND channel_id = ? AND is_bot = 0
-  `).get(message.guildId, channelId);
+  const userMsgCount = await db.get(
+    "SELECT COUNT(*) as cnt FROM channel_messages WHERE guild_id = $1 AND channel_id = $2 AND is_bot = 0",
+    [message.guildId, channelId],
+  );
 
-  const botMsgCount = db.prepare(`
-    SELECT COUNT(*) as cnt
-    FROM channel_messages
-    WHERE guild_id = ? AND channel_id = ? AND is_bot = 1
-  `).get(message.guildId, channelId);
+  const botMsgCount = await db.get(
+    "SELECT COUNT(*) as cnt FROM channel_messages WHERE guild_id = $1 AND channel_id = $2 AND is_bot = 1",
+    [message.guildId, channelId],
+  );
 
-  const topUsers = db.prepare(`
-    SELECT user_id, user_name, user_tag, COUNT(*) as cnt
-    FROM channel_messages
-    WHERE guild_id = ? AND channel_id = ? AND is_bot = 0
-    GROUP BY user_id
-    ORDER BY cnt DESC
-    LIMIT 5
-  `).all(message.guildId, channelId);
+  const topUsers = await db.all(
+    `SELECT user_id, user_name, user_tag, COUNT(*) as cnt
+     FROM channel_messages
+     WHERE guild_id = $1 AND channel_id = $2 AND is_bot = 0
+     GROUP BY user_id
+     ORDER BY cnt DESC
+     LIMIT 5`,
+    [message.guildId, channelId],
+  );
 
   // 최근 활동 시간
-  const lastActivity = db.prepare(`
-    SELECT MAX(created_at) as last_message_at
-    FROM channel_messages
-    WHERE guild_id = ? AND channel_id = ?
-  `).get(message.guildId, channelId);
+  const lastActivity = await db.get(
+    "SELECT MAX(created_at) as last_message_at FROM channel_messages WHERE guild_id = $1 AND channel_id = $2",
+    [message.guildId, channelId],
+  );
 
   // 시간대별 활동량 (KST 기준)
-  const hourlyStats = db.prepare(`
-    SELECT CAST(strftime('%H', created_at, '+9 hours') AS INTEGER) as hour, COUNT(*) as cnt
-    FROM channel_messages
-    WHERE guild_id = ? AND channel_id = ?
-    GROUP BY hour
-    ORDER BY cnt DESC
-  `).all(message.guildId, channelId);
+  const hourlyStats = await db.all(
+    `SELECT EXTRACT(HOUR FROM (created_at::timestamp + INTERVAL '9 hours'))::integer as hour, COUNT(*) as cnt
+     FROM channel_messages
+     WHERE guild_id = $1 AND channel_id = $2
+     GROUP BY hour
+     ORDER BY cnt DESC`,
+    [message.guildId, channelId],
+  );
 
   // Discord 실시간 정보
   const discordChannel = targetChannel;
@@ -1994,7 +2001,7 @@ async function createAiChannelCommand(message, args, loadingMessage) {
   // 1. 카테고리가 없는 경우 카테고리 없이 생성
   if (categories.size === 0) {
     const newChan = await message.guild.channels.create({ name, type: ChannelType.GuildText, rateLimitPerUser: 10 });
-    db.prepare("INSERT OR REPLACE INTO ai_channels (channel_id, guild_id) VALUES (?, ?)").run(newChan.id, message.guildId);
+    await db.run("INSERT INTO ai_channels (channel_id, guild_id) VALUES ($1, $2) ON CONFLICT(channel_id) DO UPDATE SET guild_id = EXCLUDED.guild_id", [newChan.id, message.guildId]);
     await loadingMessage.edit(`서버에 카테고리가 존재하지 않아, 최상위에 AI 전용 채널 ${newChan}을 생성했어요. (슬로우모드 10초가 적용되었습니다.)`);
     return;
   }
@@ -2005,7 +2012,7 @@ async function createAiChannelCommand(message, args, loadingMessage) {
     if (matched.size === 1) {
       const parent = matched.first();
       const newChan = await message.guild.channels.create({ name, type: ChannelType.GuildText, parent: parent.id, rateLimitPerUser: 10 });
-      db.prepare("INSERT OR REPLACE INTO ai_channels (channel_id, guild_id) VALUES (?, ?)").run(newChan.id, message.guildId);
+      await db.run("INSERT INTO ai_channels (channel_id, guild_id) VALUES ($1, $2) ON CONFLICT(channel_id) DO UPDATE SET guild_id = EXCLUDED.guild_id", [newChan.id, message.guildId]);
       await loadingMessage.edit(`카테고리 **${parent.name}** 하위에 AI 전용 채널 ${newChan}을 생성했어요. (슬로우모드 10초가 적용되었습니다.)`);
       return;
     }
@@ -2021,13 +2028,19 @@ async function createAiChannelCommand(message, args, loadingMessage) {
   if (currentParentId) {
     const parent = message.guild.channels.cache.get(currentParentId);
     const newChan = await message.guild.channels.create({ name, type: ChannelType.GuildText, parent: currentParentId, rateLimitPerUser: 10 });
-    db.prepare("INSERT OR REPLACE INTO ai_channels (channel_id, guild_id) VALUES (?, ?)").run(newChan.id, message.guildId);
+    await db.run("INSERT INTO ai_channels (channel_id, guild_id) VALUES ($1, $2) ON CONFLICT(channel_id) DO UPDATE SET guild_id = EXCLUDED.guild_id", [newChan.id, message.guildId]);
     await loadingMessage.edit(`현재 카테고리 **${parent ? parent.name : 'Unknown'}** 하위에 AI 전용 채널 ${newChan}을 생성했어요. (슬로우모드 10초가 적용되었습니다.)`);
     return;
   }
 
   // 만약 현재 채널이 카테고리 하위에 속하지 않았다면, 전체 카테고리 리스트를 보여주어 선택하게 함
   await sendCategorySelectMenu(message, name, categories, loadingMessage);
+}
+
+async function setCurrentAiChannelCommand(message, loadingMessage) {
+  const channelId = message.channelId;
+  await db.run("INSERT INTO ai_channels (channel_id, guild_id) VALUES ($1, $2) ON CONFLICT(channel_id) DO UPDATE SET guild_id = EXCLUDED.guild_id", [channelId, message.guildId]);
+  await loadingMessage.edit(`✅ 현재 채널 ${message.channel}을(를) AI 전용 채널로 지정했어요.`);
 }
 
 async function sendCategorySelectMenu(message, name, categories, loadingMessage) {
