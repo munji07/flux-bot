@@ -3,7 +3,9 @@ import { EconomyService } from "../services/economyService.js";
 import { EconomyQuestService } from "../services/economyQuestService.js";
 import { ECONOMY_CONFIG } from "../config/economyConfig.js";
 import { getUserSubscriptionTier } from "../services/subscription.js";
+import { ADMIN_USER_ID } from "../config/models.js";
 import { logError, logInfo } from "../logger.js";
+import { db } from "../services/database.js";
 
 function getWebGameUrl() {
   return (process.env.WEB_APP_URL || process.env.BASE_URL || "http://localhost:3000").replace(/\/$/, "");
@@ -87,6 +89,8 @@ export async function handleEconomyCommand(interaction) {
       case "레이드_활성화": return await handleRaidConfig(interaction);
       case "레이드_비활성화": return await handleRaidDeactivate(interaction);
       case "레이드_상태": return await handleRaidStatus(interaction);
+      case "레이드_테스트": return await handleRaidTest(interaction);
+      case "농장알림": return await handleCropNotification(interaction, userId);
     }
   } catch (error) {
     logError("economy_command", interaction.guildId, error, {
@@ -959,4 +963,201 @@ async function handleRaidStatus(interaction) {
     logError("raid_status_slash", interaction.guildId, e);
     await interaction.editReply({ content: "❌ 설정 확인 중 오류가 발생했습니다." });
   }
+}
+
+// ─── 17. 레이드 테스트 (개발자 전용) ──────────────────────────────────────────
+async function handleRaidTest(interaction) {
+  if (interaction.user.id !== ADMIN_USER_ID) {
+    await interaction.reply({ content: "❌ 이 명령어는 개발자만 사용할 수 있습니다.", ephemeral: true });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: false });
+
+  const hp = interaction.options.getInteger("hp") || 10000;
+  const bossName = interaction.options.getString("이름") || "테스트 보스";
+  const rewardPool = Math.floor(hp * 0.3);
+
+  const webUrl = getWebGameUrl();
+  const secret = process.env.WEBHOOK_SECRET || "";
+
+  try {
+    const res = await fetch(`${webUrl}/api/raid/spawn-global`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        maxHp: hp,
+        bossName,
+        rewardPool,
+        guildIds: [],
+        secret,
+      }),
+      signal: AbortSignal.timeout(5000),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      await interaction.editReply({ content: `❌ 레이드 소환 실패 (HTTP ${res.status}): ${text}` });
+      return;
+    }
+
+    const data = await res.json();
+    if (!data.spawned) {
+      await interaction.editReply({ content: "❌ 레이드 소환에 실패했습니다. 이미 활성화된 레이드가 있는지 확인하세요." });
+      return;
+    }
+
+    const embed = new EmbedBuilder()
+      .setColor(0x5ce4ff)
+      .setTitle("⚔️ 테스트 레이드 소환 완료!")
+      .setDescription(
+        `**${bossName}**이(가) 소환되었습니다!\n\n` +
+        `> HP: ${hp.toLocaleString()}\n` +
+        `> 보상 풀: ${rewardPool.toLocaleString()} 코인\n` +
+        `> 소환자: ${interaction.user.tag}\n\n` +
+        `🌐 홈페이지에서 공격하세요!\n${webUrl}/raid`
+      )
+      .setFooter({ text: "FLUX 레이드 시스템 • 개발자 전용" })
+      .setTimestamp();
+
+    await interaction.editReply({ embeds: [embed] });
+
+    logInfo("raid_test_spawned", {
+      userId: interaction.user.id,
+      bossName,
+      hp,
+      rewardPool,
+    });
+  } catch (e) {
+    logError("raid_test_spawn", null, e);
+    await interaction.editReply({ content: `❌ 레이드 소환 중 오류 발생: ${e.message}` });
+  }
+}
+
+const KNOWN_CROPS = [
+  { id: "wheat", name: "밀" }, { id: "carrot", name: "당근" }, { id: "potato", name: "감자" },
+  { id: "tomato", name: "토마토" }, { id: "strawberry", name: "딸기" }, { id: "blueberry", name: "블루베리" },
+  { id: "pumpkin", name: "호박" }, { id: "golden_corn", name: "황금 옥수수" }, { id: "magic_bean", name: "마법 콩" },
+  { id: "flux_fruit", name: "플럭스 열매" }, { id: "nightshade", name: "야광 버섯" }, { id: "time_flower", name: "시간의 꽃" },
+  { id: "cosmic_gem", name: "코스믹 젬" },
+];
+
+function getCropIdFromName(input) {
+  const direct = KNOWN_CROPS.find(c => c.id === input);
+  if (direct) return direct.id;
+  const byName = KNOWN_CROPS.find(c => c.name === input || input.includes(c.name));
+  return byName?.id || null;
+}
+
+// ─── 18. 농장알림 (Crop Notification) ─────────────────────────────────────────
+async function handleCropNotification(interaction, userId) {
+  const subcommand = interaction.options.getSubcommand();
+  const tier = await getUserSubscriptionTier(userId);
+
+  if (tier !== "premium") {
+    await interaction.reply({
+      content: "❌ 작물 수확 알림은 **Premium** 등급 이상만 사용할 수 있습니다.\n`!FLUX 등급 구매` 명령어로 업그레이드하세요!",
+      ephemeral: true,
+    });
+    return;
+  }
+
+  switch (subcommand) {
+    case "추가": return await handleNotifAdd(interaction, userId);
+    case "제거": return await handleNotifRemove(interaction, userId);
+    case "목록": return await handleNotifList(interaction, userId);
+    case "전체활성화": return await handleNotifEnableAll(interaction, userId);
+    case "전체비활성화": return await handleNotifDisableAll(interaction, userId);
+    default:
+      await interaction.reply({ content: "❌ 알 수 없는 하위 명령어입니다.", ephemeral: true });
+  }
+}
+
+async function handleNotifAdd(interaction, userId) {
+  const cropInput = interaction.options.getString("작물");
+  const cropId = getCropIdFromName(cropInput);
+  if (!cropId) {
+    await interaction.reply({
+      content: `❌ \`${cropInput}\`에 해당하는 작물을 찾을 수 없습니다.\n작물 이름: 밀, 당근, 감자, 토마토, 딸기, 블루베리, 호박, 황금 옥수수, 마법 콩, 플럭스 열매, 야광 버섯, 시간의 꽃, 코스믹 젬`,
+      ephemeral: true,
+    });
+    return;
+  }
+
+  await db.run(
+    `INSERT INTO crop_notification_settings (user_id, crop_id, enabled)
+     VALUES ($1, $2, 1)
+     ON CONFLICT (user_id, crop_id) DO UPDATE SET enabled = 1`,
+    [userId, cropId]
+  );
+
+  await interaction.reply({ content: `✅ **${getCropName(cropId)}** 수확 알림이 켜졌습니다.`, ephemeral: true });
+}
+
+async function handleNotifRemove(interaction, userId) {
+  const cropInput = interaction.options.getString("작물");
+  const cropId = getCropIdFromName(cropInput);
+  if (!cropId) {
+    await interaction.reply({ content: "❌ 해당 작물을 찾을 수 없습니다.", ephemeral: true });
+    return;
+  }
+
+  await db.run(
+    "DELETE FROM crop_notification_settings WHERE user_id = $1 AND crop_id = $2",
+    [userId, cropId]
+  );
+
+  await interaction.reply({ content: `✅ **${getCropName(cropId)}** 수확 알림이 제거되었습니다.`, ephemeral: true });
+}
+
+async function handleNotifList(interaction, userId) {
+  const rows = await db.all(
+    "SELECT crop_id FROM crop_notification_settings WHERE user_id = $1 AND enabled = 1 ORDER BY crop_id",
+    [userId]
+  );
+
+  if (rows.length === 0) {
+    await interaction.reply({
+      embeds: [new EmbedBuilder()
+        .setColor(0x888888)
+        .setTitle("🌾 농장 알림 설정")
+        .setDescription("현재 알림이 설정된 작물이 없습니다.\n`/농장알림 추가 [작물]` 로 알림을 추가하세요.")],
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const lines = rows.map(r => `• **${getCropName(r.crop_id)}** (\`${r.crop_id}\`)`);
+  const embed = new EmbedBuilder()
+    .setColor(0x4CC9F0)
+    .setTitle("🌾 농장 알림 설정된 작물")
+    .setDescription(lines.join("\n"))
+    .setFooter({ text: "작물이 수확 가능해지면 DM으로 알려드립니다." })
+    .setTimestamp();
+
+  await interaction.reply({ embeds: [embed], ephemeral: true });
+}
+
+async function handleNotifEnableAll(interaction, userId) {
+  for (const crop of KNOWN_CROPS) {
+    await db.run(
+      `INSERT INTO crop_notification_settings (user_id, crop_id, enabled)
+       VALUES ($1, $2, 1)
+       ON CONFLICT (user_id, crop_id) DO UPDATE SET enabled = 1`,
+      [userId, crop.id]
+    );
+  }
+  await interaction.reply({ content: "✅ 모든 작물에 대한 수확 알림이 켜졌습니다.", ephemeral: true });
+}
+
+async function handleNotifDisableAll(interaction, userId) {
+  await db.run(
+    "DELETE FROM crop_notification_settings WHERE user_id = $1",
+    [userId]
+  );
+  await interaction.reply({ content: "✅ 모든 작물에 대한 수확 알림이 꺼졌습니다.", ephemeral: true });
+}
+
+function getCropName(cropId) {
+  return KNOWN_CROPS.find(c => c.id === cropId)?.name || cropId;
 }

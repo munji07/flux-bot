@@ -230,6 +230,7 @@ async function ensureSchema() {
       last_mining TEXT,
       last_farming TEXT,
       last_daily TEXT,
+      display_name TEXT DEFAULT '',
       created_at TEXT NOT NULL DEFAULT TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS'),
       updated_at TEXT NOT NULL DEFAULT TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS')
     );
@@ -263,7 +264,17 @@ async function ensureSchema() {
       updated_at TEXT NOT NULL DEFAULT TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS')
     );
 
+    CREATE TABLE IF NOT EXISTS crop_notification_settings (
+      user_id TEXT NOT NULL,
+      crop_id TEXT NOT NULL DEFAULT 'all',
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS'),
+      PRIMARY KEY (user_id, crop_id)
+    );
+
   `);
+
+  try { await db.exec("ALTER TABLE eco_users ADD COLUMN display_name TEXT DEFAULT ''"); } catch (e) { /* already exists */ }
 }
 
 await ensureSchema();

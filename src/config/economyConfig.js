@@ -87,6 +87,9 @@ export const ECONOMY_CONFIG = {
     { id: "pickaxe_iron", name: "철 곡괭이", price: 200, type: "tool", description: "돌을 더 빠르게 깰 수 있는 튼튼한 곡괭이입니다." },
     { id: "fertilizer", name: "유기농 비료", price: 50, type: "usable", description: "작물을 더 풍성하게 자라나게 해주는 친환경 비료입니다." },
     { id: "rpg_sword", name: "강철 검", price: 1000, type: "weapon", description: "기본적인 무기입니다. 추후 RPG 시스템이 업데이트되면 장착할 수 있습니다." },
+    { id: "dynamite", name: "다이너마이트", price: 300, type: "usable", description: "한 번에 300 대미지를 주는 채굴용 폭발물입니다." },
+    { id: "lucky_charm", name: "행운의 부적", price: 200, type: "usable", description: "5회 동안 희귀 광석 발견 확률이 2배 증가합니다." },
+    { id: "drill", name: "드릴", price: 500, type: "usable", description: "10회 동안 채굴 데미지가 1.5배 증가합니다." },
   ],
 
   // 업적 정의
@@ -96,6 +99,10 @@ export const ECONOMY_CONFIG = {
     { id: "earn_10k", name: "자산가", description: "보유 코인이 10,000개 이상이 되세요.", reward: 1000 },
     { id: "fish_legendary", name: "도시 어부", description: "황금 잉어를 낚는 데 성공하세요.", reward: 2000 },
     { id: "mine_netherite", name: "고고학자", description: "고대 잔해를 채굴하는 데 성공하세요.", reward: 2000 },
+    { id: "floor_10", name: "광부의 시작", description: "채굴 10층에 도달하세요.", reward: 1000 },
+    { id: "floor_30", name: "깊은 광부", description: "채굴 30층에 도달하세요.", reward: 3000 },
+    { id: "floor_50", name: "심해 광부", description: "채굴 50층에 도달하세요.", reward: 6000 },
+    { id: "floor_100", name: "전설의 광부", description: "채굴 100층에 도달하세요.", reward: 15000 },
   ],
 
   // 일일 퀘스트 정의

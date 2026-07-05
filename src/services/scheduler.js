@@ -42,6 +42,9 @@ export function startScheduler(client) {
     checkRaidDefeated(client).catch((error) => {
       logError("raid_defeated_check_failed", null, error);
     });
+    checkCropNotifications(client).catch((error) => {
+      logError("crop_notification_check_failed", null, error);
+    });
   }, SCHEDULER_INTERVAL_MS);
 
   return () => {
@@ -259,19 +262,12 @@ async function checkRaidDefeated(client) {
 
       const guildContribs = new Map();
       for (const c of contribs) {
-        let userGuildId = null;
-        for (const [gid] of client.guilds.cache) {
-          const guild = client.guilds.cache.get(gid);
-          if (guild && guild.members.cache.has(c.user_id)) {
-            userGuildId = gid;
-            break;
-          }
-        }
-        if (!userGuildId) continue;
-        const existing = guildContribs.get(userGuildId) || { totalDamage: 0, users: [] };
+        const gid = c.guild_id;
+        if (!gid) continue;
+        const existing = guildContribs.get(gid) || { totalDamage: 0, users: [] };
         existing.totalDamage += c.damage_dealt;
         existing.users.push(c);
-        guildContribs.set(userGuildId, existing);
+        guildContribs.set(gid, existing);
       }
 
       let winningGuildId = null;
@@ -323,6 +319,12 @@ async function checkRaidDefeated(client) {
     }
   } catch (e) {
     const now = Date.now();
+    const isNetworkError = e?.cause?.code === 'ECONNREFUSED' || e?.cause?.code === 'ECONNRESET' || e?.message?.includes('fetch failed') || e?.message?.includes('connect ECONNREFUSED');
+    if (isNetworkError) {
+      homepageDownSince = now;
+      lastHomepageStatus = false;
+      return;
+    }
     if (lastHomepageStatus || !homepageDownSince || (now - homepageDownSince) >= 300_000) {
       logError("check_raid_defeated", null, e);
       homepageDownSince = now;
@@ -332,6 +334,123 @@ async function checkRaidDefeated(client) {
 }
 
 const TIER_LABELS = { free: "Free", basic: "Basic", premium: "Premium", platinum: "Platinum" };
+
+const MUT_BASE = {
+  mut_wheat: 120, mut_carrot: 180, mut_potato: 240, mut_tomato: 400,
+  mut_strawberry: 800, mut_blueberry: 1600, mut_pumpkin: 3200,
+  mut_golden_corn: 4800, mut_magic_bean: 9600, mut_flux_fruit: 14400,
+  mut_nightshade: 28800, mut_time_flower: 43200, mut_cosmic_gem: 57600,
+};
+
+const CROP_NAMES = {
+  wheat: "밀", carrot: "당근", potato: "감자", tomato: "토마토",
+  strawberry: "딸기", blueberry: "블루베리", pumpkin: "호박",
+  golden_corn: "황금 옥수수", magic_bean: "마법 콩", flux_fruit: "플럭스 열매",
+  nightshade: "야광 버섯", time_flower: "시간의 꽃", cosmic_gem: "코스믹 젬",
+  mut_wheat: "별빛 밀", mut_carrot: "무지개 당근", mut_potato: "황금 감자",
+  mut_tomato: "다이아 토마토", mut_strawberry: "별빛 딸기", mut_blueberry: "신비 블루베리",
+  mut_pumpkin: "마법 호박", mut_golden_corn: "플럭스 옥수수", mut_magic_bean: "전설의 콩",
+  mut_flux_fruit: "코스믹 플럭스", mut_nightshade: "어둠 버섯", mut_time_flower: "영원의 꽃",
+  mut_cosmic_gem: "프라임 젬",
+};
+
+const CROP_EMOJIS = {
+  wheat: "🌾", carrot: "🥕", potato: "🥔", tomato: "🍅",
+  strawberry: "🍓", blueberry: "🫐", pumpkin: "🎃",
+  golden_corn: "🌽", magic_bean: "🫘", flux_fruit: "🔮",
+  nightshade: "🍄", time_flower: "🌺", cosmic_gem: "💎",
+  mut_wheat: "🌟", mut_carrot: "🌈", mut_potato: "🥔",
+  mut_tomato: "💎", mut_strawberry: "⭐", mut_blueberry: "🔮",
+  mut_pumpkin: "🎃", mut_golden_corn: "🌽", mut_magic_bean: "🫘",
+  mut_flux_fruit: "🌌", mut_nightshade: "🍄", mut_time_flower: "🌺",
+  mut_cosmic_gem: "💎",
+};
+
+const notifiedCrops = new Set();
+
+async function checkCropNotifications(client) {
+  const settings = await db.all(
+    "SELECT user_id, crop_id FROM crop_notification_settings WHERE enabled = 1"
+  );
+  if (settings.length === 0) return;
+
+  const userCropMap = new Map();
+  for (const s of settings) {
+    if (!userCropMap.has(s.user_id)) userCropMap.set(s.user_id, []);
+    userCropMap.get(s.user_id).push(s.crop_id);
+  }
+
+  for (const [userId, cropIds] of userCropMap) {
+    try {
+      const plots = await db.all(
+        `SELECT crop_id, planted_at_ms FROM farm_plots
+         WHERE user_id = $1 AND crop_id IS NOT NULL`,
+        [userId]
+      );
+      if (plots.length === 0) continue;
+
+      const sub = await db.get("SELECT tier FROM user_subscriptions WHERE user_id = $1", [userId]);
+      const tier = sub?.tier || "free";
+      const tierMult = { free: 1, basic: 1.25, premium: 1.5 }[tier] || 1;
+
+      const now = Date.now();
+      const readyCrops = [];
+
+      for (const plot of plots) {
+        if (!plot.planted_at_ms) continue;
+        if (!cropIds.includes(plot.crop_id) && !cropIds.includes("all")) continue;
+
+        const planted = Number(plot.planted_at_ms);
+        const elapsed = (now - planted) / 1000;
+        const growthTime = getCropGrowthTime(plot.crop_id);
+        if (!growthTime) continue;
+        if (elapsed >= growthTime / tierMult) {
+          readyCrops.push(plot.crop_id);
+        }
+      }
+
+      if (readyCrops.length === 0) continue;
+
+      const unique = [...new Set(readyCrops)];
+      const dedupKey = `crop_${userId}_${unique.sort().join("_")}`;
+      if (notifiedCrops.has(dedupKey)) continue;
+      notifiedCrops.add(dedupKey);
+      if (notifiedCrops.size > 2000) notifiedCrops.clear();
+
+      const lines = unique.map(id => `• ${CROP_EMOJIS[id] || "🌱"} **${CROP_NAMES[id] || id}**`);
+
+      const user = await client.users.fetch(userId).catch(() => null);
+      if (!user) continue;
+
+      await user.send({
+        embeds: [{
+          color: 0x4CC9F0,
+          title: "🌾 작물이 성장했습니다!",
+          description:
+            `다음 작물이 수확 가능합니다!\n\n${lines.join("\n")}\n\n` +
+            `🌐 [농장에서 수확하기](${WEB_APP_URL}/farming)`,
+          timestamp: new Date().toISOString(),
+          footer: { text: "FLUX 농장 알림" },
+        }],
+      });
+
+      logInfo("crop_notification_sent", { userId, crops: unique });
+    } catch (e) {
+      logError("crop_notification_user", userId, e);
+    }
+  }
+}
+
+function getCropGrowthTime(cropId) {
+  const times = {
+    wheat: 180, carrot: 240, potato: 360, tomato: 600,
+    strawberry: 1200, blueberry: 2400, pumpkin: 4800,
+    golden_corn: 7200, magic_bean: 14400, flux_fruit: 21600,
+    nightshade: 43200, time_flower: 64800, cosmic_gem: 86400,
+    ...MUT_BASE,
+  };
+  return times[cropId] || null;
+}
 
 async function checkExpiringSubscriptions(client) {
   const now = new Date();

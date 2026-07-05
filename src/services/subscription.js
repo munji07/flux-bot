@@ -1,5 +1,11 @@
 import { db } from "./database.js";
 
+export const TIER_BENEFITS = {
+  free: { miningMult: 1, growthMult: 1 },
+  basic: { miningMult: 1.25, growthMult: 1.25 },
+  premium: { miningMult: 1.5, growthMult: 1.5 },
+};
+
 export const TIER_LIMITS = {
   free: {
     name: "Free",
