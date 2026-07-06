@@ -105,6 +105,19 @@ export const ECONOMY_CONFIG = {
     { id: "floor_100", name: "전설의 광부", description: "채굴 100층에 도달하세요.", reward: 15000 },
   ],
 
+  // 레이드 보상 설정
+  raid: {
+    // reward_pool 분배 비율 (합계 1.0)
+    distribution: {
+      baseShare: 0.50,  // 균등 기본 보상
+      propShare: 0.30,  // 기여도 비례
+      rankShare: 0.15,  // 순위 보너스 (1위 50%, 2위 30%, 3위 20%)
+      killShare: 0.05,  // 막타 보너스
+    },
+    // reward_pool 계산 공식: basePool + members * perUser
+    poolFormula: { basePool: 5000, perUser: 1000 },
+  },
+
   // 일일 퀘스트 정의
   dailyQuests: [
     { id: "quest_daily", name: "출석 체크", type: "daily", target: 1, reward: 500, description: "일일 출석 보상을 1회 받으세요." },

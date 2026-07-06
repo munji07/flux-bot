@@ -218,11 +218,11 @@ function getDailyBossName() {
   return bosses[dayIndex % bosses.length];
 }
 
-function calculateRewardPool(totalMembers) {
-  const basePool = 2000;
-  const poolPerUser = 50;
-  return basePool + totalMembers * poolPerUser;
-}
+  function calculateRewardPool(totalMembers) {
+    const basePool = 5000;
+    const poolPerUser = 1000;
+    return basePool + totalMembers * poolPerUser;
+  }
 
 async function checkRaidDefeated(client) {
   try {

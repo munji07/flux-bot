@@ -15,14 +15,14 @@ export async function handleVideoAnalysis(message, userPrompt, loadingMessage) {
   }
 
   const prompt = userPrompt || "이 영상의 내용을 아주 상세하게 분석해줘. 영상의 흐름을 시간대별로 나누어 각 부분에서 어떤 일이 일어나는지 요약하고, 영상 전체에서 전달하고자 하는 핵심 주제나 결론을 포함해서 아주 자세하게 설명해줘.";
-  const userName = getDisplayName(message);
+  const userName = await getDisplayName(message);
   
   let usageCheck = null;
   await loadingMessage.edit(`-# ${LOADING_EMOJI} FLUX봇이 영상을 분석 중이에요... 잠시만 기다려 주세요!`);
 
   try {
     // 사용량 체크
-    usageCheck = checkAndIncrementUsage(message.author.id, "video_analysis", message.guildId);
+    usageCheck = await checkAndIncrementUsage(message.author.id, "video_analysis", message.guildId);
     if (!usageCheck.allowed) {
       await loadingMessage.edit("죄송해요! 영상 분석은 프리미엄 등급에게 하루 3회까지만 제공돼요. `!FLUX 등급 구매`를 통해 프리미엄 등급을 이용해보세요!");
       return true;

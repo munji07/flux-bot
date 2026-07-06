@@ -1,15 +1,15 @@
 import { DISCORD_MESSAGE_LIMIT, SAFE_MESSAGE_LIMIT } from "../config/config.js";
 import { getUserDisplayName } from "../services/userSettings.js";
 
-export function getDisplayName(message) {
+export async function getDisplayName(message) {
   const name =
-    getUserDisplayName(message.author.id) ||
+    (await getUserDisplayName(message.author.id)) ||
     message.member?.displayName ||
     message.author.globalName ||
     message.author.username ||
-    "移쒓뎄";
+    "알 수 없음";
 
-  return String(name).replace(/[\r\n[\]]/g, " ").trim().slice(0, 80) || "移쒓뎄";
+  return String(name).replace(/[\r\n[\]]/g, " ").trim().slice(0, 80) || "알 수 없음";
 }
 
 export async function sendChunkedAnswer(message, loadingMessage, answer) {
@@ -33,9 +33,9 @@ export function getImageAttachmentUrls(message) {
 }
 
 export function createUserMessageContent(userName, userPrompt, imageUrls = []) {
-  const imageText = imageUrls.length > 0 ? `\n[?대?吏 泥⑤?: ${imageUrls.join(", ")}]` : "";
+  const imageText = imageUrls.length > 0 ? `\n[이미지 URL: ${imageUrls.join(", ")}]` : "";
 
-  return `[?좎? ?대쫫: ${userName}]\n${userPrompt}${imageText}`;
+  return `[유저 이름: ${userName}]\n${userPrompt}${imageText}`;
 }
 
 export function stripFancyUnicode(text) {

@@ -19,7 +19,6 @@ import {
   classifyRequestIntent,
   createApiUserMessage,
   createChatCompletion,
-  createChatCompletionStream,
   fetchChannelContext,
   isGroqModel,
   isGroqRateLimitError,
@@ -649,7 +648,6 @@ export async function handleMessageCreate(client, message) {
 
     currentStep = "request_ai_completion";
     let answer;
-    let answerAlreadySent = false;
 
     if (imageUrls.length === 0) {
       try {
@@ -756,13 +754,11 @@ export async function handleMessageCreate(client, message) {
     }
 
     currentStep = "send_ai_answer";
-    if (!answerAlreadySent) {
-      const modelFooter = `\n\n-# 🤖 모델: ${getModelDisplayName(usedModel)}`;
-      const firstTalkFooter = isFirstConversation 
-        ? `\n\n-# 👋 처음 대화하시는 것이라 **${displayName}**님이라고 부를게요. 이름을 바꾸고 싶으시다면 \`${PREFIX} 이름변경 [새이름]\`을 입력해주세요!`
-        : "";
-      await sendChunkedAnswer(message, loadingMessage, `${answer}${modelFooter}${firstTalkFooter}`);
-    }
+    const modelFooter = `\n\n-# 🤖 모델: ${getModelDisplayName(usedModel)}`;
+    const firstTalkFooter = isFirstConversation 
+      ? `\n\n-# 👋 처음 대화하시는 것이라 **${displayName}**님이라고 부를게요. 이름을 바꾸고 싶으시다면 \`${PREFIX} 이름변경 [새이름]\`을 입력해주세요!`
+      : "";
+    await sendChunkedAnswer(message, loadingMessage, `${answer}${modelFooter}${firstTalkFooter}`);
 
     await appendConversationHistory(
       historyKey,
@@ -861,68 +857,5 @@ function getModelDisplayName(model) {
   return map[model] || "Qwen3 32B";
 }
 
-async function sendStreamingAnswer(message, loadingMessage, stream, usedModel, isFirstConversation = false, displayName = "") {
-  let fullAnswer = "";
-  let sentText = "";
-  let currentMessage = loadingMessage;
-  let lastEditAt = 0;
 
-  try {
-    for await (const chunk of stream) {
-      const delta = chunk.choices?.[0]?.delta?.content ?? "";
-      if (!delta) continue;
-
-      fullAnswer += delta;
-      const visible = stripFancyUnicode(stripCodeBlocks(stripReasoningTags(stripModelFooter(fullAnswer))));
-      let currentChunk = visible.slice(sentText.length);
-
-      while (currentChunk.length > SAFE_MESSAGE_LIMIT) {
-        const toSend = currentChunk.slice(0, SAFE_MESSAGE_LIMIT);
-        if (currentMessage) {
-          await currentMessage.edit(toSend).catch(() => {});
-        } else {
-          currentMessage = await message.channel.send(toSend);
-        }
-        sentText += toSend;
-        currentChunk = visible.slice(sentText.length);
-        currentMessage = null;
-        lastEditAt = Date.now();
-      }
-
-      if (currentChunk.trim() && Date.now() - lastEditAt >= 1200) {
-        if (currentMessage) {
-          await currentMessage.edit(currentChunk).catch(async () => {
-            currentMessage = await message.channel.send(currentChunk);
-          });
-        } else {
-          currentMessage = await message.channel.send(currentChunk);
-        }
-        lastEditAt = Date.now();
-      }
-    }
-  } catch (error) {
-    logError("streaming_process_error", message.guildId, error);
-  }
-
-  const finalVisible = stripFancyUnicode(stripCodeBlocks(stripReasoningTags(stripModelFooter(fullAnswer))));
-  const finalRemaining = finalVisible.slice(sentText.length).trim();
-  const modelFooter = `\n\n-# 🤖 모델: ${getModelDisplayName(usedModel)}`;
-  const firstTalkFooter = isFirstConversation
-    ? `\n\n-# 👋 처음 대화하시는 것이라 **${displayName}**님이라고 부를게요. 이름을 바꾸고 싶으시다면 \`${PREFIX} 이름변경 [새이름]\`을 입력해주세요!`
-    : "";
-
-  if (finalRemaining) {
-    const textToSend = finalRemaining + modelFooter + firstTalkFooter;
-    if (currentMessage) {
-      await currentMessage.edit(textToSend).catch(() => message.channel.send(textToSend));
-    } else {
-      await message.channel.send(textToSend);
-    }
-  } else if (currentMessage) {
-    const lastContent = (await currentMessage.fetch()).content;
-    await currentMessage.edit(lastContent + modelFooter + firstTalkFooter).catch(() => {});
-  }
-
-  return finalVisible;
-}
 
