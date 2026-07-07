@@ -3,6 +3,9 @@ import { logError, logInfo } from "../logger.js";
 
 const SCHEDULER_INTERVAL_MS = 60_000;
 const WEB_APP_URL = process.env.WEB_APP_URL || process.env.BASE_URL || "http://localhost:3000";
+if (!process.env.WEB_APP_URL && !process.env.BASE_URL) {
+  console.warn("WARNING: neither WEB_APP_URL nor BASE_URL is set. Scheduler will use fallback http://localhost:3000. Set one in .env for proper operation.");
+}
 
 let schedulerTimer = null;
 
@@ -146,8 +149,8 @@ async function checkDailyRaidSpawn(client) {
     }
   }
 
-  const baseHp = 5000;
-  const hpPerUser = 100;
+  const baseHp = 30000;
+  const hpPerUser = 7000;
   const maxHp = baseHp + totalMembers * hpPerUser;
   const bossName = getDailyBossName();
   const rewardPool = calculateRewardPool(totalMembers);

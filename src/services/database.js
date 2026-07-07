@@ -2,8 +2,13 @@ import "dotenv/config";
 import pg from "pg";
 
 function getDatabaseUrl() {
-  const rawUrl = process.env.DATABASE_URL;
+  let rawUrl = process.env.DATABASE_URL;
   if (!rawUrl) return null;
+
+  rawUrl = rawUrl.trim();
+  if ((rawUrl.startsWith("'") && rawUrl.endsWith("'")) || (rawUrl.startsWith('"') && rawUrl.endsWith('"'))) {
+    rawUrl = rawUrl.slice(1, -1);
+  }
 
   const url = new URL(rawUrl);
   url.searchParams.delete("sslmode");
@@ -275,6 +280,9 @@ async function ensureSchema() {
   `);
 
   try { await db.exec("ALTER TABLE eco_users ADD COLUMN display_name TEXT DEFAULT ''"); } catch (e) { /* already exists */ }
+  try { await db.exec("ALTER TABLE eco_users ADD COLUMN fishing_streak INTEGER DEFAULT 0"); } catch (e) { /* already exists */ }
+  try { await db.exec("ALTER TABLE eco_users ADD COLUMN game_streak INTEGER DEFAULT 0"); } catch (e) { /* already exists */ }
+  try { await db.exec("ALTER TABLE eco_users ADD COLUMN highest_roulette_win INTEGER DEFAULT 0"); } catch (e) { /* already exists */ }
 }
 
 await ensureSchema();

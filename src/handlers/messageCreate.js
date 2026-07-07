@@ -62,43 +62,42 @@ setInterval(() => {
 }, 60_000);
 
 export async function handleMessageCreate(client, message) {
-  if (message.inGuild()) {
-    try {
-      await db.run(
-        `INSERT INTO channel_messages (message_id, guild_id, channel_id, user_id, user_tag, user_name, is_bot, content, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         ON CONFLICT(message_id) DO NOTHING`,
-        [
-          message.id,
-          message.guildId,
-          message.channelId,
-          message.author.id,
-          message.author.tag,
-          message.member?.displayName || message.author.displayName,
-          message.author.bot ? 1 : 0,
-          message.content || null,
-          new Date(message.createdTimestamp).toISOString(),
-        ],
-      );
-    } catch (e) {
-      logError("store_channel_message", message.guildId, e);
-    }
+  if (message.author.bot || !message.inGuild()) return;
 
-    try {
-      await saveUserName(
-        message.author.id,
+  if (message.content && message.content.trim().startsWith('&')) return;
+
+  try {
+    await db.run(
+      `INSERT INTO channel_messages (message_id, guild_id, channel_id, user_id, user_tag, user_name, is_bot, content, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       ON CONFLICT(message_id) DO NOTHING`,
+      [
+        message.id,
         message.guildId,
-        message.author.username,
+        message.channelId,
+        message.author.id,
+        message.author.tag,
         message.member?.displayName || message.author.displayName,
-        message.author.globalName || "",
-      );
-    } catch (e) {
-      logError("save_user_name", message.guildId, e);
-    }
+        0,
+        message.content || null,
+        new Date(message.createdTimestamp).toISOString(),
+      ],
+    );
+  } catch (e) {
+    logError("store_channel_message", message.guildId, e);
   }
 
-  if (message.author.bot || !message.inGuild()) return;
-  if (message.content && message.content.trim().startsWith('&')) return;
+  try {
+    await saveUserName(
+      message.author.id,
+      message.guildId,
+      message.author.username,
+      message.member?.displayName || message.author.displayName,
+      message.author.globalName || "",
+    );
+  } catch (e) {
+    logError("save_user_name", message.guildId, e);
+  }
 
   let isAiChannel = false;
   try {

@@ -5,7 +5,6 @@ import { ADMIN_USER_ID, GROQ_BASE_URL, MODELS, NVIDIA_BASE_URL } from "./models.
 export const PREFIX = "!FLUX";
 export { ADMIN_USER_ID, GROQ_BASE_URL, NVIDIA_BASE_URL, MODELS };
 export const DEEPSEEK_CHAT_MODEL = MODELS.DEEPSEEK_FLASH;
-export const GEMINI_WEB_SEARCH_MODEL = MODELS.GEMINI_WEB_SEARCH_MODEL;
 export const GEMINI_SEARCH_MODEL = MODELS.GOOGLE_SEARCH;
 export const IMAGE_GENERATION_MODEL = MODELS.IMAGE_GENERATION_RUNTIME;
 export const DISCORD_MESSAGE_LIMIT = 2000;
@@ -43,7 +42,7 @@ export const SYSTEM_PROMPT = `
 - 항상 존댓말로 답변하되 너무 딱딱하지 않게 ~요, ~입니다, ~할게요 등을 사용해.
 - 사용자를 부를 땐 '사용자님', '유저님', '손님', '여러분' 같은 호칭을 써.
 - 채팅 메시지 앞에 작성된 [유저 이름: OOO] 형식을 확인하고 그 이름에 맞춰서 답변하되, 해당 이름 뒤에 '님'을 붙여서 불러줘.
-- 항상 한국어를 사용하여 답을 하다록 한다.
+- 항상 한국어를 사용하여 답변하도록 한다.
 
 3. 금지사항
 - 개인정보를 물어보거나 요청하는 일은 절대 하지 마.

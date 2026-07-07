@@ -33,23 +33,54 @@ export const ECONOMY_CONFIG = {
       "⭐": 25,
     },
     twoMatchMultiplier: 1.5, // 2개 일치 시 배율
+    // 연승 보너스 (도박 streak 공유)
+    streakBonusPerWin: 0.1,
+    maxStreakBonus: 1.0,
+    streakThreshold: 3,
   },
 
   dice: {
     minBet: 10,
     maxBet: 10000,
-    winMultiplier: 2.0, // 승리 시 배율
+    winMultiplier: 2.0,
+    // 크리티컬 히트
+    criticalRate: 0.05,
+    criticalMultiplier: 3,
+    // 연승 보너스
+    streakBonusPerWin: 0.1,
+    maxStreakBonus: 1.0,
+    streakThreshold: 3,
   },
 
   coinflip: {
     minBet: 10,
     maxBet: 10000,
-    winMultiplier: 1.9, // 승리 시 배율
+    winMultiplier: 1.9,
+    // 연승 보너스
+    streakBonusPerWin: 0.08,
+    maxStreakBonus: 0.8,
+    streakThreshold: 3,
+  },
+
+  // 🎰 룰렛 설정
+  roulette: {
+    minBet: 10,
+    maxBet: 50000,
+    straightWinMultiplier: 36,
+    outsideWinMultiplier: 2,
+    dozenWinMultiplier: 3,
+    redNumbers: [1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36],
   },
 
   // 컨텐츠 보상 및 확률
   fishing: {
     successRate: 0.85,
+    // 연속 낚시 성공 시 성공률 보너스
+    streakSuccessBonus: 0.02,     // 연속 성공 1회당 +2%
+    maxStreakBonus: 0.20,         // 최대 +20% (10연속)
+    // 특별 이벤트 (해일/대박)
+    specialEventRate: 0.015,      // 1.5% 확률로 특별 이벤트
+    specialEventMultiplier: 5,    // 5배 보상
     rewards: [
       { id: "fish_trash", name: "찌그러진 캔", weight: 40, sellPrice: 10, description: "바다에 버려진 쓰레기입니다." },
       { id: "fish_normal_1", name: "고등어", weight: 35, sellPrice: 50, description: "신선한 등푸른 생선입니다." },

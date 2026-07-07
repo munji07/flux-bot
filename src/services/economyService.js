@@ -83,19 +83,24 @@ export class EconomyService {
 
       const allItemDefinitions = [
         ...ECONOMY_CONFIG.fishing.rewards,
+        ...ECONOMY_CONFIG.mining.rewards,
+        ...ECONOMY_CONFIG.farming.rewards,
         ...ECONOMY_CONFIG.shop,
       ];
 
-      return items.map(invItem => {
-        const definition = allItemDefinitions.find(def => def.id === invItem.item_id);
-        return {
-          item_id: invItem.item_id,
-          quantity: invItem.quantity,
-          name: definition ? definition.name : invItem.item_id,
-          description: definition ? definition.description : "상세 설명이 없습니다.",
-          sellPrice: definition ? (definition.sellPrice || 0) : 0,
-        };
-      });
+      return items
+        .map(invItem => {
+          const definition = allItemDefinitions.find(def => def.id === invItem.item_id);
+          if (!definition) return null;
+          return {
+            item_id: invItem.item_id,
+            quantity: invItem.quantity,
+            name: definition.name,
+            description: definition.description || "상세 설명이 없습니다.",
+            sellPrice: definition.sellPrice || 0,
+          };
+        })
+        .filter(Boolean);
     } catch (error) {
       logError("economy_get_inventory", null, error, { userId });
       return [];

@@ -1,4 +1,5 @@
-﻿import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits } from "discord.js";
+﻿import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits, MessageFlags } from "discord.js";
+import { randomInt } from "crypto";
 import { EconomyService } from "../services/economyService.js";
 import { EconomyQuestService } from "../services/economyQuestService.js";
 import { ECONOMY_CONFIG } from "../config/economyConfig.js";
@@ -61,6 +62,121 @@ async function progressAndCheck(userId, actionType) {
   return notices;
 }
 
+// ─── 스트릭/도파민 유틸리티 ──────────────────────────────────────────────────
+
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+async function getStreak(userId, type) {
+  const user = await db.get(`SELECT ${type}_streak FROM eco_users WHERE user_id = $1`, [userId]);
+  return user ? (user[`${type}_streak`] || 0) : 0;
+}
+
+async function updateStreak(userId, type, isWin) {
+  const user = await EconomyService.getOrCreateUser(userId);
+  const current = user[`${type}_streak`] || 0;
+  const newStreak = isWin ? current + 1 : 0;
+  await db.run(`UPDATE eco_users SET ${type}_streak = $1 WHERE user_id = $2`, [newStreak, userId]);
+  return newStreak;
+}
+
+function getStreakEmoji(streak) {
+  if (streak >= 10) return "🔥🔥🔥";
+  if (streak >= 7) return "🔥🔥";
+  if (streak >= 5) return "🔥";
+  if (streak >= 3) return "⚡";
+  return "";
+}
+
+function getStreakBonus(streak, config) {
+  if (streak < config.streakThreshold) return 1.0;
+  const bonus = Math.min((streak - config.streakThreshold + 1) * config.streakBonusPerWin, config.maxStreakBonus);
+  return 1.0 + bonus;
+}
+
+// ─── 낚시 세션 관리 (랜덤 바이트 + 버튼 클릭) ────────────────────────────
+const fishingSessions = new Map();
+
+function clearFishingSession(userId) {
+  const session = fishingSessions.get(userId);
+  if (session) {
+    session.active = false;
+    clearTimeout(session.biteTimer);
+    clearTimeout(session.expireTimer);
+    fishingSessions.delete(userId);
+  }
+}
+
+async function onFishBite(session) {
+  if (!session.active) return;
+
+  try {
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`fish_catch:${session.userId}`)
+        .setLabel("낚아채기!")
+        .setStyle(ButtonStyle.Success)
+        .setEmoji("🎣")
+    );
+
+    await session.interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xFFD700)
+          .setTitle("🐟 물고기가 찌를 물었습니다!")
+          .setDescription(
+            "**지금입니다!** 아래 버튼을 눌러 낚아채세요!\n\n" +
+            "⏰ **5초** 안에 버튼을 누르지 않으면 물고기가 도망갑니다!"
+          )
+          .setFooter({ text: "⏰ 5초 안에 버튼을 누르세요!" })
+          .setTimestamp()
+      ],
+      components: [row],
+    });
+
+    session.expireTimer = setTimeout(() => onFishExpire(session), 5000);
+  } catch (e) {
+    clearFishingSession(session.userId);
+  }
+}
+
+async function onFishExpire(session) {
+  if (!session.active) return;
+  clearFishingSession(session.userId);
+
+  try {
+    await updateStreak(session.userId, "fishing", false);
+    const streakLoss = session.streak >= 3
+      ? `\n💔 ${session.streak}연속 성공이 끊겼습니다...`
+      : "";
+
+    await session.interaction.editReply({
+      content: "",
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x888888)
+          .setTitle("🎣 낚시 실패!")
+          .setDescription(
+            `💤 **늦었습니다!** 물고기가 미끼만 빼먹고 도망갔어요...\n다음에는 재빨리 낚아채세요!${streakLoss}`
+          )
+          .setFooter({ text: `쿨다운: ${formatTime(ECONOMY_CONFIG.cooldowns.fishing)}` })
+          .setTimestamp()
+      ],
+      components: [],
+    });
+  } catch (e) {
+    // interaction expired or invalid, nothing to do
+  }
+}
+
+/** 큰 당첨을 채널에 공지 */
+async function announceBigWin(channel, userId, game, amount, detail) {
+  if (amount < 10000) return;
+  const emoji = amount >= 50000 ? "🌟💫🌟" : amount >= 25000 ? "🎉🎉" : "🎉";
+  await channel.send({
+    content: `${emoji} **JACKPOT!** <@${userId}>님이 **${game}**에서 ${detail}\n**+${amount.toLocaleString()}** 코인 획득! ${emoji}`
+  }).catch(() => {});
+}
+
 // ─── 명령어 핸들러 ────────────────────────────────────────────────────────────
 
 export async function handleEconomyCommand(interaction) {
@@ -73,6 +189,7 @@ export async function handleEconomyCommand(interaction) {
       case "상황":      return await handleStatus(interaction, userId);
       case "송금":      return await handleTransfer(interaction, userId);
       case "일출":      return await handleDaily(interaction, userId);
+      case "룰렛":      return await handleRoulette(interaction, userId);
       case "슬롯머신":  return await handleSlots(interaction, userId);
       case "주사위":    return await handleDice(interaction, userId);
       case "동전":      return await handleCoinflip(interaction, userId);
@@ -100,7 +217,7 @@ export async function handleEconomyCommand(interaction) {
     const method = interaction.replied || interaction.deferred ? "followUp" : "reply";
     await interaction[method]({
       content: "❌ 명령 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     }).catch(() => {});
   }
 }
@@ -182,7 +299,7 @@ async function handleStatus(interaction, userId) {
     .setFooter({ text: "채굴/농사 실행은 웹사이트에서 진행됩니다." })
     .setTimestamp();
 
-  await interaction.reply({ embeds: [embed], ephemeral: true });
+  await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 }
 
 // ─── 2. 송금 ──────────────────────────────────────────────────────────────────
@@ -191,7 +308,7 @@ async function handleTransfer(interaction, userId) {
   const amount = interaction.options.getInteger("금액");
 
   if (targetUser.bot) {
-    await interaction.reply({ content: "❌ 봇에게는 송금할 수 없습니다.", ephemeral: true });
+    await interaction.reply({ content: "❌ 봇에게는 송금할 수 없습니다.", flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -202,7 +319,7 @@ async function handleTransfer(interaction, userId) {
 
   const result = await EconomyService.transferCoins(userId, targetUser.id, amount);
   if (!result.success) {
-    await interaction.reply({ content: `❌ 송금 실패: ${result.errorMessage}`, ephemeral: true });
+    await interaction.reply({ content: `❌ 송금 실패: ${result.errorMessage}`, flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -233,7 +350,7 @@ async function handleDaily(interaction, userId) {
   if (cooldown.isCooldown) {
     await interaction.reply({
       content: `⏰ 이미 오늘의 보상을 수령했습니다. 다음 수령까지 **${formatTime(cooldown.remaining)}** 남았습니다.`,
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -275,7 +392,7 @@ async function handleSlots(interaction, userId) {
   if (userData.coins < cost) {
     await interaction.reply({
       content: `❌ 코인이 부족합니다. 슬롯머신 플레이에는 **${cost.toLocaleString()}** 코인이 필요합니다.`,
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -319,12 +436,24 @@ async function handleSlots(interaction, userId) {
     }
   }
 
+  // 연승/스트릭
+  const isWin = reward > 0;
+  const newStreak = await updateStreak(userId, "game", isWin);
+  const sEmoji = getStreakEmoji(newStreak);
+  const streakText = isWin && newStreak >= 3 ? `\n${sEmoji} **${newStreak}연속 당첨!**` : "";
+
+  // 큰 당첨 공지
+  if (reward >= 5000) {
+    await announceBigWin(interaction.channel, userId, "슬롯머신", reward, `🎰 ${s[0]}${s[1]}${s[2]}`);
+  }
+
   const embed = new EmbedBuilder()
     .setColor(color)
     .setTitle("🎰 슬롯머신")
     .setDescription(
       `## ┃ ${s[0]} ┃ ${s[1]} ┃ ${s[2]} ┃\n\n` +
       resultLine +
+      streakText +
       `\n현재 잔액: **${currentBalance.toLocaleString()}** 코인` +
       notices + achievementNotice
     )
@@ -336,23 +465,39 @@ async function handleSlots(interaction, userId) {
 // ─── 5. 주사위 ────────────────────────────────────────────────────────────────
 async function handleDice(interaction, userId) {
   const bet = interaction.options.getInteger("배팅금");
-  const { maxBet, winMultiplier } = ECONOMY_CONFIG.dice;
+  const { maxBet, winMultiplier, criticalRate, criticalMultiplier } = ECONOMY_CONFIG.dice;
 
   if (bet > maxBet) {
     await interaction.reply({
       content: `❌ 최대 배팅금은 **${maxBet.toLocaleString()}** 코인입니다.`,
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
 
   const userData = await EconomyService.getOrCreateUser(userId);
   if (userData.coins < bet) {
-    await interaction.reply({ content: "❌ 보유 코인이 배팅금보다 적습니다.", ephemeral: true });
+    await interaction.reply({ content: "❌ 보유 코인이 배팅금보다 적습니다.", flags: MessageFlags.Ephemeral });
     return;
   }
 
   await EconomyService.updateCoins(userId, -bet);
+
+  // 연승 정보 조회
+  const streak = await getStreak(userId, "game");
+  const streakEmoji = getStreakEmoji(streak);
+  const streakMult = getStreakBonus(streak, ECONOMY_CONFIG.dice);
+  const isCrit = Math.random() < criticalRate;
+
+  // 주사위 굴리기 애니메이션
+  await interaction.reply({
+    content: "🎲 **주사위를 굴리는 중...** 🎲\n`🥌        `",
+  });
+  await sleep(600);
+  await interaction.editReply({ content: "🎲 **굴러간다 굴러간다~** 🎲\n`   🥌     `" });
+  await sleep(600);
+  await interaction.editReply({ content: "🎲 **두구두구두구...** 🎲\n`      🥌  `" });
+  await sleep(700);
 
   const myRoll  = Math.floor(Math.random() * 6) + 1;
   const botRoll = Math.floor(Math.random() * 6) + 1;
@@ -360,16 +505,31 @@ async function handleDice(interaction, userId) {
   let reward = 0;
   let resultLine = "";
   let color = 0x888888;
+  let critText = "";
+  let streakText = "";
+  let isWin = false;
 
   if (myRoll > botRoll) {
-    reward = Math.floor(bet * winMultiplier);
-    resultLine = `🎉 **승리!** x${winMultiplier} = **+${reward.toLocaleString()}** 코인`;
+    isWin = true;
+    let effectiveMult = winMultiplier * streakMult;
+    reward = Math.floor(bet * effectiveMult);
+    if (isCrit) {
+      reward = Math.floor(reward * criticalMultiplier);
+      critText = "\n💥 **크리티컬 히트!** ×3 데미지!";
+    }
+    const streakCount = await updateStreak(userId, "game", true);
+    const sEmoji = getStreakEmoji(streakCount);
+    if (streakCount >= 3) streakText = `\n${sEmoji} **${streakCount}연승!** (x${effectiveMult.toFixed(1)})`;
+    resultLine = `🎉 **승리!** x${effectiveMult.toFixed(1)} = **+${reward.toLocaleString()}** 코인`;
+    if (isCrit) resultLine += critText;
     color = 0x00FF00;
   } else if (myRoll < botRoll) {
+    await updateStreak(userId, "game", false);
     resultLine = "💀 **패배...** 배팅금을 잃었습니다.";
     color = 0xFF0000;
   } else {
     reward = bet;
+    isWin = true;
     resultLine = "🤝 **무승부!** 배팅금을 돌려받습니다.";
     color = 0x888888;
   }
@@ -379,42 +539,70 @@ async function handleDice(interaction, userId) {
   const currentBalance = (await EconomyService.getOrCreateUser(userId)).coins;
   const notices = await progressAndCheck(userId, "gamble");
 
+  // 주사위 시각 표현
+  const diceEmoji = ["", "⚀", "⚁", "⚂", "⚃", "⚄", "⚅"];
+  const myDiceEmoji = diceEmoji[myRoll];
+  const botDiceEmoji = diceEmoji[botRoll];
+
+  // 큰 당첨 공지
+  if (reward > bet) {
+    await announceBigWin(interaction.channel, userId, "주사위", reward - bet, `${myRoll} vs ${botRoll}로 승리`);
+  }
+
+  const desc = [
+    `${streakText}`,
+    `${resultLine}`,
+    ``,
+    `현재 잔액: **${currentBalance.toLocaleString()}** 코인`,
+  ].filter(Boolean).join("\n");
+
   const embed = new EmbedBuilder()
     .setColor(color)
-    .setTitle("🎲 주사위 대결")
+    .setTitle("🎲 주사위 대결" + (isCrit ? " 💥" : ""))
     .addFields(
-      { name: "🧑 나의 주사위", value: `**${myRoll}**`, inline: true },
-      { name: "🤖 봇의 주사위", value: `**${botRoll}**`, inline: true },
+      { name: "🧑 나", value: `${myDiceEmoji} **${myRoll}**`, inline: true },
+      { name: "🤖 봇", value: `${botDiceEmoji} **${botRoll}**`, inline: true },
     )
-    .setDescription(
-      `\n${resultLine}\n현재 잔액: **${currentBalance.toLocaleString()}** 코인` + notices
-    )
+    .setDescription(desc + notices)
     .setTimestamp();
 
-  await interaction.reply({ embeds: [embed] });
+  await interaction.editReply({ content: "", embeds: [embed] });
 }
 
 // ─── 6. 동전 던지기 ───────────────────────────────────────────────────────────
 async function handleCoinflip(interaction, userId) {
   const pick = interaction.options.getString("선택");
   const bet  = interaction.options.getInteger("배팅금");
-  const { maxBet, winMultiplier } = ECONOMY_CONFIG.coinflip;
+  const { maxBet, winMultiplier, streakBonusPerWin, maxStreakBonus, streakThreshold } = ECONOMY_CONFIG.coinflip;
 
   if (bet > maxBet) {
     await interaction.reply({
       content: `❌ 최대 배팅금은 **${maxBet.toLocaleString()}** 코인입니다.`,
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
 
   const userData = await EconomyService.getOrCreateUser(userId);
   if (userData.coins < bet) {
-    await interaction.reply({ content: "❌ 보유 코인이 배팅금보다 적습니다.", ephemeral: true });
+    await interaction.reply({ content: "❌ 보유 코인이 배팅금보다 적습니다.", flags: MessageFlags.Ephemeral });
     return;
   }
 
   await EconomyService.updateCoins(userId, -bet);
+
+  // 동전 던지기 애니메이션
+  await interaction.reply({
+    content: "🪙 **동전을 던지는 중...** 🪙\n`🪙        `",
+  });
+  await sleep(500);
+  await interaction.editReply({ content: "🪙 **빙글빙글~** 🪙\n`  🪙      `" });
+  await sleep(500);
+  await interaction.editReply({ content: "🪙 **돌아간다 돌아간다~** 🪙\n`    🪙    `" });
+  await sleep(600);
+
+  const streak = await getStreak(userId, "game");
+  const streakMult = getStreakBonus(streak, ECONOMY_CONFIG.coinflip);
 
   const result   = Math.random() < 0.5 ? "front" : "back";
   const resultKo = result === "front" ? "앞면 🟡" : "뒷면 ⚪";
@@ -425,10 +613,15 @@ async function handleCoinflip(interaction, userId) {
   let color = 0xFF0000;
 
   if (pick === result) {
-    reward = Math.floor(bet * winMultiplier);
-    resultLine = `🎉 **적중!** x${winMultiplier} = **+${reward.toLocaleString()}** 코인`;
+    const effectiveMult = winMultiplier * streakMult;
+    reward = Math.floor(bet * effectiveMult);
+    const newStreak = await updateStreak(userId, "game", true);
+    const sEmoji = getStreakEmoji(newStreak);
+    const streakText = newStreak >= 3 ? `\n${sEmoji} **${newStreak}연승!** (x${effectiveMult.toFixed(1)})` : "";
+    resultLine = `🎉 **적중!** x${effectiveMult.toFixed(1)} = **+${reward.toLocaleString()}** 코인${streakText}`;
     color = 0x00FF00;
   } else {
+    await updateStreak(userId, "game", false);
     resultLine = `💀 **오답!** 배팅금을 잃었습니다.`;
   }
 
@@ -436,6 +629,10 @@ async function handleCoinflip(interaction, userId) {
 
   const currentBalance = (await EconomyService.getOrCreateUser(userId)).coins;
   const notices = await progressAndCheck(userId, "gamble");
+
+  if (reward > bet) {
+    await announceBigWin(interaction.channel, userId, "동전던지기", reward - bet, `${pickKo} 선택`);
+  }
 
   const embed = new EmbedBuilder()
     .setColor(color)
@@ -449,34 +646,309 @@ async function handleCoinflip(interaction, userId) {
     )
     .setTimestamp();
 
-  await interaction.reply({ embeds: [embed] });
+  await interaction.editReply({ content: "", embeds: [embed] });
 }
 
-// ─── 7. 낚시 ─────────────────────────────────────────────────────────────────
+// ─── 6.5. 🎰 룰렛 ──────────────────────────────────────────────────────────────
+async function handleRoulette(interaction, userId) {
+  const bet = interaction.options.getInteger("배팅금");
+  const betType = interaction.options.getString("종류");
+  const betChoice = interaction.options.getString("선택").toLowerCase().trim();
+
+  const { minBet, maxBet, straightWinMultiplier, outsideWinMultiplier, dozenWinMultiplier, redNumbers } = ECONOMY_CONFIG.roulette;
+
+  if (bet < minBet) {
+    await interaction.reply({ content: `❌ 최소 배팅금은 **${minBet.toLocaleString()}** 코인입니다.`, flags: MessageFlags.Ephemeral });
+    return;
+  }
+  if (bet > maxBet) {
+    await interaction.reply({ content: `❌ 최대 배팅금은 **${maxBet.toLocaleString()}** 코인입니다.`, flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  const userData = await EconomyService.getOrCreateUser(userId);
+  if (userData.coins < bet) {
+    await interaction.reply({ content: "❌ 보유 코인이 배팅금보다 적습니다.", flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  // 배팅 금액 차감
+  await EconomyService.updateCoins(userId, -bet);
+
+  // 스트릭 정보
+  const streak = await getStreak(userId, "game");
+  const streakEmoji = getStreakEmoji(streak);
+
+  // 룰렛 스핀 애니메이션
+  await interaction.reply({
+    content: "🎰 **룰렛을 돌리는 중...**\n`⚙️         `",
+  });
+  await sleep(700);
+  await interaction.editReply({ content: "🎰 **돌아간다 돌아간다~** 🎰\n`  ⚙️       `" });
+  await sleep(700);
+  await interaction.editReply({ content: "🎰 **어디에 멈출까...** 🎰\n`     ⚙️    `" });
+  await sleep(700);
+  await interaction.editReply({ content: "🎰 🎰 🎰 **두구두구두구!** 🎰 🎰 🎰\n`        ⚙️  `" });
+  await sleep(700);
+
+  // 결과 생성
+  const result = Math.floor(Math.random() * 37); // 0-36
+  const isRed = redNumbers.includes(result);
+  const resultColor = result === 0 ? "초록" : isRed ? "빨강" : "검정";
+  const resultColorEmoji = result === 0 ? "💚" : isRed ? "🔴" : "⚫";
+  const resultParity = result === 0 ? "제로" : (result % 2 === 0 ? "짝수" : "홀수");
+  const resultRange = result === 0 ? "-" : (result <= 18 ? "1-18" : "19-36");
+  const resultDozen = result === 0 ? "-" : (result <= 12 ? "1st 12" : result <= 24 ? "2nd 12" : "3rd 12");
+
+  // 당첨 판정
+  let win = false;
+  let multiplier = 0;
+  let betLabel = "";
+
+  switch (betType) {
+    case "number": {
+      const num = parseInt(betChoice);
+      if (isNaN(num) || num < 0 || num > 36) {
+        await EconomyService.updateCoins(userId, bet);
+        await interaction.editReply({ content: "❌ 올바른 숫자를 입력하세요 (0-36). 배팅금을 돌려드립니다." });
+        return;
+      }
+      win = result === num;
+      multiplier = straightWinMultiplier;
+      betLabel = `숫자 **${num}**`;
+      break;
+    }
+    case "red_black": {
+      if (betChoice === "빨강" || betChoice === "red") {
+        win = isRed;
+        betLabel = "🔴 빨강";
+      } else {
+        win = !isRed && result !== 0;
+        betLabel = "⚫ 검정";
+      }
+      multiplier = outsideWinMultiplier;
+      break;
+    }
+    case "odd_even": {
+      if (result === 0) { win = false; }
+      else if (betChoice === "홀" || betChoice === "odd") { win = result % 2 === 1; }
+      else { win = result % 2 === 0; }
+      multiplier = outsideWinMultiplier;
+      betLabel = betChoice === "홀" || betChoice === "odd" ? "홀수" : "짝수";
+      break;
+    }
+    case "high_low": {
+      if (result === 0) { win = false; }
+      else if (betChoice === "low" || betChoice === "1-18") { win = result <= 18; }
+      else { win = result >= 19; }
+      multiplier = outsideWinMultiplier;
+      betLabel = betChoice === "low" || betChoice === "1-18" ? "1-18" : "19-36";
+      break;
+    }
+    case "dozen": {
+      if (result === 0) { win = false; }
+      else if (betChoice === "1st" || betChoice === "1-12") { win = result <= 12; }
+      else if (betChoice === "2nd" || betChoice === "13-24") { win = result >= 13 && result <= 24; }
+      else { win = result >= 25; }
+      multiplier = dozenWinMultiplier;
+      const dozenLabel = betChoice === "1st" || betChoice === "1-12" ? "1st 12" : betChoice === "2nd" || betChoice === "13-24" ? "2nd 12" : "3rd 12";
+      betLabel = dozenLabel;
+      break;
+    }
+  }
+
+  let reward = 0;
+  let resultLine = "";
+  let embedColor = 0xFF0000;
+  let isWin = false;
+
+  if (win) {
+    isWin = true;
+    reward = Math.floor(bet * multiplier);
+    await EconomyService.updateCoins(userId, reward);
+
+    // 연승 갱신
+    const newStreak = await updateStreak(userId, "game", true);
+    const sEmoji = getStreakEmoji(newStreak);
+    const streakText = newStreak >= 3 ? `\n${sEmoji} **${newStreak}연승!**` : "";
+
+    resultLine = `🎉 **적중!** x${multiplier} = **+${reward.toLocaleString()}** 코인!${streakText}`;
+    embedColor = reward >= bet * 10 ? 0xFFD700 : 0x00FF00;
+  } else {
+    await updateStreak(userId, "game", false);
+    const streakLoss = streak >= 3 ? `\n💔 ${streak}연승이 끊겼습니다...` : "";
+    resultLine = `💀 **미스...** 배팅금 **${bet.toLocaleString()}**코인을 잃었습니다.${streakLoss}`;
+    embedColor = 0xFF0000;
+  }
+
+  const currentBalance = (await EconomyService.getOrCreateUser(userId)).coins;
+  const notices = await progressAndCheck(userId, "gamble");
+
+  // 높은 당첨금 기록 갱신
+  const highest = userData.highest_roulette_win || 0;
+  if (reward > highest) {
+    await db.run("UPDATE eco_users SET highest_roulette_win = $1 WHERE user_id = $2", [reward, userId]);
+  }
+
+  // 큰 당첨 공지
+  if (reward > bet) {
+    await announceBigWin(interaction.channel, userId, "룰렛", reward - bet, `${betLabel}에 배팅하여 당첨!`);
+  }
+
+  // 결과 필드
+  const resultField = [
+    `**${result}** ${resultColorEmoji}`,
+    `${resultColor} · ${resultParity}`,
+    `${resultRange} · ${resultDozen}`,
+  ].join("\n");
+
+  const embed = new EmbedBuilder()
+    .setColor(embedColor)
+    .setTitle("🎰 룰렛 결과")
+    .addFields(
+      { name: "🎯 배팅", value: `\`${bet.toLocaleString()}\`코인 → ${betLabel}`, inline: true },
+      { name: "🎳 룰렛 공", value: resultField, inline: true },
+    )
+    .setDescription(
+      `\n━━━━━━━━━━━━━━━━\n${resultLine}\n━━━━━━━━━━━━━━━━\n` +
+      `현재 잔액: **${currentBalance.toLocaleString()}** 코인` +
+      notices
+    )
+    .setTimestamp();
+
+  await interaction.editReply({ content: "", embeds: [embed] });
+}
+
+// ─── 7. 낚시 (랜덤 타이밍 + 버튼 클릭) ─────────────────────────────────────
 async function handleFishing(interaction, userId) {
+  // 쿨다운 체크 (세션 시작 시 바로 소모 - 놓쳐도 쿨다운 감)
   const cooldown = await EconomyService.checkAndSetCooldown(userId, "fishing");
   if (cooldown.isCooldown) {
     await interaction.reply({
       content: `⏰ 낚싯줄이 엉켰습니다. **${formatTime(cooldown.remaining)}** 후에 다시 시도하세요.`,
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
 
-  const success = Math.random() < ECONOMY_CONFIG.fishing.successRate;
-  if (!success) {
+  // 기존 세션 정리
+  clearFishingSession(userId);
+
+  // 스트릭 조회
+  const streak = await getStreak(userId, "fishing");
+  const streakEmoji = getStreakEmoji(streak);
+
+  const streakText = streak >= 3
+    ? `${streakEmoji} **${streak}연속 낚시 성공 중!**\n\n`
+    : "";
+
+  await interaction.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x00BFFF)
+        .setTitle("🎣 낚시 시작!")
+        .setDescription(
+          `${streakText}낚시대를 던졌습니다...\n` +
+          `물고기가 찌를 물 때까지 **기다려주세요!** 🎣\n\n` +
+          `물고기가 물면 버튼이 나타납니다!\n` +
+          `**5초** 안에 버튼을 눌러야 잡을 수 있어요!`
+        )
+        .setFooter({ text: "기다리는 중..." })
+        .setTimestamp()
+    ],
+  });
+
+  // 랜덤 시간 (3~10초) 후 바이트
+  const biteDelay = randomInt(3000, 10001);
+
+  const session = {
+    interaction,
+    userId,
+    streak,
+    active: true,
+    biteTimer: null,
+    expireTimer: null,
+  };
+
+  session.biteTimer = setTimeout(() => onFishBite(session), biteDelay);
+  fishingSessions.set(userId, session);
+}
+
+// ─── 낚시 버튼 클릭 처리 ───────────────────────────────────────────────────
+export async function handleFishingCatch(interaction, userId) {
+  const session = fishingSessions.get(userId);
+  if (!session || !session.active) {
     await interaction.reply({
-      content: "🎣 물고기가 미끼를 물었다가 도망쳤습니다! 낚시에 실패했습니다.",
+      content: "⏰ 이미 시간이 지났거나 낚시 세션이 만료되었어요! `/낚시` 로 다시 시작하세요.",
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
 
-  const item = drawReward(ECONOMY_CONFIG.fishing.rewards);
-  await EconomyService.updateInventory(userId, item.id, 1);
+  clearFishingSession(userId);
+  await interaction.deferUpdate();
+
+  const streak = session.streak;
+  const newStreak = streak + 1;
+  const streakEmojiNew = getStreakEmoji(newStreak);
+
+  // 연속 성공률 보너스
+  const effectiveRate = Math.min(
+    ECONOMY_CONFIG.fishing.successRate + (streak * ECONOMY_CONFIG.fishing.streakSuccessBonus),
+    ECONOMY_CONFIG.fishing.successRate + ECONOMY_CONFIG.fishing.maxStreakBonus
+  );
+
+  const success = Math.random() < effectiveRate;
+  if (!success) {
+    await updateStreak(userId, "fishing", false);
+    const streakLoss = streak >= 3 ? `\n💔 ${streak}연속 성공이 끊겼습니다...` : "";
+    await interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x888888)
+          .setTitle("🎣 낚시 실패!")
+          .setDescription(
+            `힘껏 낚아챘지만... 물고기가 너무 강했습니다!${streakLoss}\n다음 기회를 노려보세요!`
+          )
+          .setFooter({ text: `쿨다운: ${formatTime(ECONOMY_CONFIG.cooldowns.fishing)}` })
+          .setTimestamp()
+      ],
+      components: [],
+    });
+    return;
+  }
+
+  // 특별 이벤트 체크 (해일/대박)
+  const isSpecial = Math.random() < ECONOMY_CONFIG.fishing.specialEventRate;
+
+  // 스트릭 갱신
+  await updateStreak(userId, "fishing", true);
+
+  let rewardMultiplier = 1;
+  let eventText = "";
+  if (isSpecial) {
+    rewardMultiplier = ECONOMY_CONFIG.fishing.specialEventMultiplier;
+    eventText = "\n🌊 **해일이 몰려왔다!** 대박 터졌다! 🌊";
+  }
+
+  // 아이템 선택 (스트릭이 높을수록 희귀도 증가)
+  let rewards = [...ECONOMY_CONFIG.fishing.rewards];
+  if (newStreak >= 5) {
+    rewards = rewards.map(r => {
+      if (r.id === "fish_trash") return { ...r, weight: Math.max(5, r.weight - 15) };
+      if (r.id === "fish_legendary") return { ...r, weight: r.weight + 3 };
+      return r;
+    });
+  }
+
+  const item = drawReward(rewards);
+  const quantity = isSpecial ? Math.floor(Math.random() * 3) + 1 : 1;
+  const totalSellValue = item.sellPrice * quantity * rewardMultiplier;
+
+  await EconomyService.updateInventory(userId, item.id, quantity);
 
   const notices = await progressAndCheck(userId, "work");
 
-  // 황금 잉어 업적
   let achievementNotice = "";
   if (item.id === "fish_legendary") {
     const unlocked = await EconomyQuestService.checkAndUnlockAchievement(userId, "fish_legendary");
@@ -494,24 +966,37 @@ async function handleFishing(interaction, userId) {
     fish_trash:     0x888888,
   };
 
+  const streakText = newStreak >= 3
+    ? `${streakEmojiNew} **${newStreak}연속 낚시 성공!**\n`
+    : "";
+
+  const itemQuantityText = quantity > 1 ? `×${quantity}` : "";
+  const specialBonusText = isSpecial
+    ? `\n💰 **판매가 x${rewardMultiplier} = ${totalSellValue.toLocaleString()}코인!**`
+    : `\n💰 판매가: **${item.sellPrice.toLocaleString()}** 코인/개`;
+
+  const desc = [
+    streakText,
+    `✨ **${item.name}** ${itemQuantityText}`,
+    `*${item.description}*`,
+    specialBonusText,
+  ].filter(Boolean).join("\n");
+
   const embed = new EmbedBuilder()
     .setColor(rarityColor[item.id] ?? 0x00FFFF)
-    .setTitle("🎣 낚시 성공!")
-    .setDescription(
-      `바다에서 무언가를 낚아 올렸습니다!\n\n` +
-      `✨ **${item.name}** (1개)\n` +
-      `*${item.description}*\n` +
-      `판매가: **${item.sellPrice.toLocaleString()}** 코인` +
-      notices + achievementNotice
-    )
+    .setTitle(`🎣 낚시 성공!${isSpecial ? " 🌊💥" : ""}`)
+    .setDescription(eventText + "\n" + desc + notices + achievementNotice)
     .setFooter({ text: `쿨다운: ${formatTime(ECONOMY_CONFIG.cooldowns.fishing)}` })
     .setTimestamp();
 
-  await interaction.reply({ embeds: [embed] });
-}
+  if (item.id === "fish_legendary" || isSpecial) {
+    await announceBigWin(interaction.channel, userId, "낚시", totalSellValue, `${item.name} 낚시 성공!`);
+  }
 
-export async function handleFishingButtonClick(interaction, userId) {
-  return handleFishing(interaction, userId);
+  await interaction.editReply({
+    embeds: [embed],
+    components: [],
+  });
 }
 
 // ─── 8. 채굴 ─────────────────────────────────────────────────────────────────
@@ -529,7 +1014,7 @@ async function handleMining(interaction, userId) {
         .setFooter({ text: "잔액과 상황만 디스코드에서 조회할 수 있습니다." })
         .setTimestamp(),
     ],
-    ephemeral: true,
+    flags: MessageFlags.Ephemeral,
   });
 }
 
@@ -548,7 +1033,7 @@ async function handleFarming(interaction, userId) {
         .setFooter({ text: "잔액과 상황만 디스코드에서 조회할 수 있습니다." })
         .setTimestamp(),
     ],
-    ephemeral: true,
+    flags: MessageFlags.Ephemeral,
   });
 }
 
@@ -621,7 +1106,7 @@ async function handleShop(interaction, userId) {
   // 구매 처리
   const targetItem = ECONOMY_CONFIG.shop.find(item => item.id === itemId);
   if (!targetItem) {
-    await interaction.reply({ content: "❌ 존재하지 않는 아이템입니다.", ephemeral: true });
+    await interaction.reply({ content: "❌ 존재하지 않는 아이템입니다.", flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -629,7 +1114,7 @@ async function handleShop(interaction, userId) {
   if (coins < targetItem.price) {
     await interaction.reply({
       content: `❌ 코인이 부족합니다. **${targetItem.price.toLocaleString()}** 코인이 필요하지만 **${coins.toLocaleString()}** 코인만 보유 중입니다.`,
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -658,7 +1143,7 @@ async function handleSell(interaction, userId) {
   const inventory = await EconomyService.getInventory(userId);
 
   if (inventory.length === 0) {
-    await interaction.reply({ content: "❌ 판매할 아이템이 없습니다.", ephemeral: true });
+    await interaction.reply({ content: "❌ 판매할 아이템이 없습니다.", flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -672,7 +1157,7 @@ async function handleSell(interaction, userId) {
   }
 
   if (itemsToSell.length === 0) {
-    await interaction.reply({ content: "❌ 판매 가능한 아이템이 없거나 해당 아이템을 찾을 수 없습니다.", ephemeral: true });
+    await interaction.reply({ content: "❌ 판매 가능한 아이템이 없거나 해당 아이템을 찾을 수 없습니다.", flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -804,7 +1289,7 @@ async function handleQuests(interaction, userId) {
 
 // ─── 16. 레이드 설정 ─────────────────────────────────────────────────────────
 async function handleRaidConfig(interaction) {
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const isAdmin = interaction.member?.permissions.has(PermissionFlagsBits.Administrator) ||
     interaction.member?.permissions.has(PermissionFlagsBits.ManageGuild);
@@ -877,7 +1362,7 @@ async function handleRaidConfig(interaction) {
 }
 
 async function handleRaidDeactivate(interaction) {
-  await interaction.deferReply({ ephemeral: false });
+  await interaction.deferReply();
 
   const isAdmin = interaction.member?.permissions.has(PermissionFlagsBits.Administrator) ||
     interaction.member?.permissions.has(PermissionFlagsBits.ManageGuild);
@@ -924,7 +1409,7 @@ async function handleRaidDeactivate(interaction) {
 }
 
 async function handleRaidStatus(interaction) {
-  await interaction.deferReply({ ephemeral: false });
+  await interaction.deferReply();
 
   try {
     const { db } = await import("../services/database.js");
@@ -968,11 +1453,11 @@ async function handleRaidStatus(interaction) {
 // ─── 17. 레이드 테스트 (개발자 전용) ──────────────────────────────────────────
 async function handleRaidTest(interaction) {
   if (interaction.user.id !== ADMIN_USER_ID) {
-    await interaction.reply({ content: "❌ 이 명령어는 개발자만 사용할 수 있습니다.", ephemeral: true });
+    await interaction.reply({ content: "❌ 이 명령어는 개발자만 사용할 수 있습니다.", flags: MessageFlags.Ephemeral });
     return;
   }
 
-  await interaction.deferReply({ ephemeral: false });
+  await interaction.deferReply();
 
   const hp = interaction.options.getInteger("hp") || 10000;
   const bossName = interaction.options.getString("이름") || "테스트 보스";
@@ -1057,7 +1542,7 @@ async function handleCropNotification(interaction, userId) {
   if (tier !== "premium") {
     await interaction.reply({
       content: "❌ 작물 수확 알림은 **Premium** 등급 이상만 사용할 수 있습니다.\n`!FLUX 등급 구매` 명령어로 업그레이드하세요!",
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -1069,7 +1554,7 @@ async function handleCropNotification(interaction, userId) {
     case "전체활성화": return await handleNotifEnableAll(interaction, userId);
     case "전체비활성화": return await handleNotifDisableAll(interaction, userId);
     default:
-      await interaction.reply({ content: "❌ 알 수 없는 하위 명령어입니다.", ephemeral: true });
+      await interaction.reply({ content: "❌ 알 수 없는 하위 명령어입니다.", flags: MessageFlags.Ephemeral });
   }
 }
 
@@ -1079,7 +1564,7 @@ async function handleNotifAdd(interaction, userId) {
   if (!cropId) {
     await interaction.reply({
       content: `❌ \`${cropInput}\`에 해당하는 작물을 찾을 수 없습니다.\n작물 이름: 밀, 당근, 감자, 토마토, 딸기, 블루베리, 호박, 황금 옥수수, 마법 콩, 플럭스 열매, 야광 버섯, 시간의 꽃, 코스믹 젬`,
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -1091,14 +1576,14 @@ async function handleNotifAdd(interaction, userId) {
     [userId, cropId]
   );
 
-  await interaction.reply({ content: `✅ **${getCropName(cropId)}** 수확 알림이 켜졌습니다.`, ephemeral: true });
+  await interaction.reply({ content: `✅ **${getCropName(cropId)}** 수확 알림이 켜졌습니다.`, flags: MessageFlags.Ephemeral });
 }
 
 async function handleNotifRemove(interaction, userId) {
   const cropInput = interaction.options.getString("작물");
   const cropId = getCropIdFromName(cropInput);
   if (!cropId) {
-    await interaction.reply({ content: "❌ 해당 작물을 찾을 수 없습니다.", ephemeral: true });
+    await interaction.reply({ content: "❌ 해당 작물을 찾을 수 없습니다.", flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -1107,7 +1592,7 @@ async function handleNotifRemove(interaction, userId) {
     [userId, cropId]
   );
 
-  await interaction.reply({ content: `✅ **${getCropName(cropId)}** 수확 알림이 제거되었습니다.`, ephemeral: true });
+  await interaction.reply({ content: `✅ **${getCropName(cropId)}** 수확 알림이 제거되었습니다.`, flags: MessageFlags.Ephemeral });
 }
 
 async function handleNotifList(interaction, userId) {
@@ -1122,7 +1607,7 @@ async function handleNotifList(interaction, userId) {
         .setColor(0x888888)
         .setTitle("🌾 농장 알림 설정")
         .setDescription("현재 알림이 설정된 작물이 없습니다.\n`/농장알림 추가 [작물]` 로 알림을 추가하세요.")],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -1135,7 +1620,7 @@ async function handleNotifList(interaction, userId) {
     .setFooter({ text: "작물이 수확 가능해지면 DM으로 알려드립니다." })
     .setTimestamp();
 
-  await interaction.reply({ embeds: [embed], ephemeral: true });
+  await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 }
 
 async function handleNotifEnableAll(interaction, userId) {
@@ -1147,7 +1632,7 @@ async function handleNotifEnableAll(interaction, userId) {
       [userId, crop.id]
     );
   }
-  await interaction.reply({ content: "✅ 모든 작물에 대한 수확 알림이 켜졌습니다.", ephemeral: true });
+  await interaction.reply({ content: "✅ 모든 작물에 대한 수확 알림이 켜졌습니다.", flags: MessageFlags.Ephemeral });
 }
 
 async function handleNotifDisableAll(interaction, userId) {
@@ -1155,7 +1640,7 @@ async function handleNotifDisableAll(interaction, userId) {
     "DELETE FROM crop_notification_settings WHERE user_id = $1",
     [userId]
   );
-  await interaction.reply({ content: "✅ 모든 작물에 대한 수확 알림이 꺼졌습니다.", ephemeral: true });
+  await interaction.reply({ content: "✅ 모든 작물에 대한 수확 알림이 꺼졌습니다.", flags: MessageFlags.Ephemeral });
 }
 
 function getCropName(cropId) {

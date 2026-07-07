@@ -3,6 +3,7 @@ import {
   ButtonBuilder,
   ButtonStyle,
   ChannelType,
+  MessageFlags,
   ModalBuilder,
   PermissionFlagsBits,
   TextInputBuilder,
@@ -14,7 +15,7 @@ import { createScheduledMessage } from "../services/scheduler.js";
 import { parseScheduleTime, scheduleChannelMap } from "../commands/scheduler.js";
 import { db } from "../services/database.js";
 import { logError } from "../logger.js";
-import { handleEconomyCommand, handleFishingButtonClick } from "./economyHandler.js";
+import { handleEconomyCommand, handleFishingCatch } from "./economyHandler.js";
 import { EconomyQuestService } from "../services/economyQuestService.js";
 
 const SERVER_TOKEN_LABELS = {
@@ -46,7 +47,7 @@ export async function handleInteractionCreate(client, interaction) {
       const replyMethod = interaction.replied || interaction.deferred ? "followUp" : "reply";
       await interaction[replyMethod]({
         content: "❌ 명령어를 실행하는 중 내부 오류가 발생했습니다.",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       }).catch(() => {});
     }
     return;
@@ -56,13 +57,13 @@ export async function handleInteractionCreate(client, interaction) {
   if (interaction.isButton() && interaction.customId.startsWith("claim_quest:")) {
     const [, questId, userId] = interaction.customId.split(":");
     if (interaction.user.id !== userId) {
-      await interaction.reply({ content: "❌ 본인의 퀘스트 보상만 수령할 수 있습니다.", ephemeral: true });
+      await interaction.reply({ content: "❌ 본인의 퀘스트 보상만 수령할 수 있습니다.", flags: MessageFlags.Ephemeral });
       return;
     }
 
     const result = await EconomyQuestService.claimQuestReward(userId, questId);
     if (!result.success) {
-      await interaction.reply({ content: `❌ 수령 실패: ${result.message}`, ephemeral: true });
+      await interaction.reply({ content: `❌ 수령 실패: ${result.message}`, flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -75,7 +76,7 @@ export async function handleInteractionCreate(client, interaction) {
     if (!interaction.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
       await interaction.reply({
         content: "❌ 채널 관리 권한(`ManageChannels`)이 없어 AI 전용 채널을 생성할 수 없습니다.",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
@@ -102,7 +103,7 @@ export async function handleInteractionCreate(client, interaction) {
       logError("ai_channel_create_interaction_failed", interaction.guildId, error);
       await interaction.reply({
         content: `❌ 채널 생성 중 오류가 발생했습니다: ${error.message}`,
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     }
     return;
@@ -114,7 +115,7 @@ export async function handleInteractionCreate(client, interaction) {
     if (tier !== "platinum") {
       await interaction.reply({
         content: "❌ 이 서버는 **플래티넘 서버(유료)** 권한이 없으므로 예약 기능을 사용할 수 없습니다. `!FLUX 플래티넘 서버 구매`를 입력해 등급을 업그레이드해 보세요!",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
@@ -126,7 +127,7 @@ export async function handleInteractionCreate(client, interaction) {
     if (!parsed || !content) {
       await interaction.reply({
         content: "예약 시간이나 메시지를 이해하지 못했어요. 예: `10분 뒤`, `내일 09:30`, `2026-06-20 18:30`",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
@@ -167,7 +168,7 @@ export async function handleInteractionCreate(client, interaction) {
         `- 시간: \`${task.execute_at} KST\``,
         `- 채널: <#${task.channel_id}>`,
       ].join("\n"),
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -207,14 +208,14 @@ export async function handleInteractionCreate(client, interaction) {
 
   const { customId } = interaction;
 
-  // 낚시 버튼
-  if (customId.startsWith("fish:")) {
+  // 낚시 버튼 (랜덤 바이트 후 나타남)
+  if (customId.startsWith("fish_catch:")) {
     const userId = customId.split(":")[1];
     if (interaction.user.id !== userId) {
-      await interaction.reply({ content: "다른 사람의 낚시에 간섭할 수 없어요!", ephemeral: true });
+      await interaction.reply({ content: "다른 사람의 낚시에 간섭할 수 없어요!", flags: MessageFlags.Ephemeral });
       return;
     }
-    await handleFishingButtonClick(interaction, userId);
+    await handleFishingCatch(interaction, userId);
     return;
   }
 
@@ -224,7 +225,7 @@ export async function handleInteractionCreate(client, interaction) {
     if (tier !== "platinum") {
       await interaction.reply({
         content: "❌ 이 서버는 **플래티넘 서버(유료)** 권한이 없으므로 예약 기능을 사용할 수 없습니다. `!FLUX 플래티넘 서버 구매`를 입력해 등급을 업그레이드해 보세요!",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
@@ -307,13 +308,13 @@ export async function handleInteractionCreate(client, interaction) {
           `- **신청 등급**: \`${uppercaseTier}\`\n` +
           (isPlatinum ? `- **대상 길드 ID**: \`${guildId}\`\n` : "") +
           `\n개발자가 입금 확인 후 등급을 부여해 드립니다. 처리가 완료되면 DM으로 알려드릴게요! 잠시만 기다려주세요. ✨`,
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     } catch (error) {
       console.error("Error processing sub_complete interaction:", error);
       await interaction.reply({
         content: "❌ 송금 완료 처리 중 오류가 발생했습니다. 개발자에게 직접 문의해주세요.",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       }).catch(() => {});
     }
     return;
@@ -328,7 +329,7 @@ export async function handleInteractionCreate(client, interaction) {
     const count = parseInt(countStr || "1", 10);
     const label = SERVER_TOKEN_LABELS[type];
     if (!label) {
-      await interaction.reply({ content: "알 수 없는 서버 토큰 상품이에요.", ephemeral: true });
+      await interaction.reply({ content: "알 수 없는 서버 토큰 상품이에요.", flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -376,13 +377,13 @@ export async function handleInteractionCreate(client, interaction) {
           "",
           "관리자가 입금을 확인하면 서버 토큰이 추가됩니다.",
         ].join("\n"),
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     } catch (error) {
       console.error("Error processing server token interaction:", error);
       await interaction.reply({
         content: "서버 토큰 구매 신청 처리 중 오류가 발생했어요. 개발자에게 직접 문의해 주세요.",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       }).catch(() => {});
     }
     return;
@@ -391,7 +392,7 @@ export async function handleInteractionCreate(client, interaction) {
   // 3. 서버 토큰 승인 버튼
   if (customId.startsWith("server_token_approve:")) {
     if (interaction.user.id !== ADMIN_USER_ID) {
-      await interaction.reply({ content: "권한이 없습니다.", ephemeral: true });
+      await interaction.reply({ content: "권한이 없습니다.", flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -431,7 +432,7 @@ export async function handleInteractionCreate(client, interaction) {
       }
     } catch (error) {
       console.error("Database error during server token approval:", error);
-      await interaction.reply({ content: "서버 토큰 승인 처리 중 DB 오류가 발생했어요.", ephemeral: true }).catch(() => {});
+      await interaction.reply({ content: "서버 토큰 승인 처리 중 DB 오류가 발생했어요.", flags: MessageFlags.Ephemeral }).catch(() => {});
     }
     return;
   }
@@ -439,7 +440,7 @@ export async function handleInteractionCreate(client, interaction) {
   // 4. 서버 토큰 반려 버튼
   if (customId.startsWith("server_token_reject:")) {
     if (interaction.user.id !== ADMIN_USER_ID) {
-      await interaction.reply({ content: "권한이 없습니다.", ephemeral: true });
+      await interaction.reply({ content: "권한이 없습니다.", flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -472,7 +473,7 @@ export async function handleInteractionCreate(client, interaction) {
   // 5. 플래티넘 서버 승인 버튼
   if (customId.startsWith("admin_approve_platinum:")) {
     if (interaction.user.id !== ADMIN_USER_ID) {
-      await interaction.reply({ content: "❌ 권한이 없습니다.", ephemeral: true });
+      await interaction.reply({ content: "❌ 권한이 없습니다.", flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -503,7 +504,7 @@ export async function handleInteractionCreate(client, interaction) {
       }
     } catch (dbError) {
       console.error("Database error during platinum approval:", dbError);
-      await interaction.reply({ content: "❌ 플래티넘 서버 등급 부여 중 DB 오류가 발생했습니다.", ephemeral: true }).catch(() => {});
+      await interaction.reply({ content: "❌ 플래티넘 서버 등급 부여 중 DB 오류가 발생했습니다.", flags: MessageFlags.Ephemeral }).catch(() => {});
     }
     return;
   }
@@ -511,7 +512,7 @@ export async function handleInteractionCreate(client, interaction) {
   // 6. 플래티넘 서버 반려 버튼
   if (customId.startsWith("admin_reject_platinum:")) {
     if (interaction.user.id !== ADMIN_USER_ID) {
-      await interaction.reply({ content: "❌ 권한이 없습니다.", ephemeral: true });
+      await interaction.reply({ content: "❌ 권한이 없습니다.", flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -542,7 +543,7 @@ export async function handleInteractionCreate(client, interaction) {
   // 7. 개발자 등급 승인 버튼
   if (customId.startsWith("admin_approve:")) {
     if (interaction.user.id !== ADMIN_USER_ID) {
-      await interaction.reply({ content: "❌ 권한이 없습니다.", ephemeral: true });
+      await interaction.reply({ content: "❌ 권한이 없습니다.", flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -571,7 +572,7 @@ export async function handleInteractionCreate(client, interaction) {
       }
     } catch (dbError) {
       console.error("Database error during admin approval:", dbError);
-      await interaction.reply({ content: "❌ 등급 부여 처리 중 DB 오류가 발생했습니다.", ephemeral: true }).catch(() => {});
+      await interaction.reply({ content: "❌ 등급 부여 처리 중 DB 오류가 발생했습니다.", flags: MessageFlags.Ephemeral }).catch(() => {});
     }
     return;
   }
@@ -579,7 +580,7 @@ export async function handleInteractionCreate(client, interaction) {
   // 8. 개발자 등급 반려 버튼
   if (customId.startsWith("admin_reject:")) {
     if (interaction.user.id !== ADMIN_USER_ID) {
-      await interaction.reply({ content: "❌ 권한이 없습니다.", ephemeral: true });
+      await interaction.reply({ content: "❌ 권한이 없습니다.", flags: MessageFlags.Ephemeral });
       return;
     }
 

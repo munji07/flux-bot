@@ -36,11 +36,15 @@ export function logError(step, guildId, error, details = {}) {
 }
 
 function writeLogFile(record) {
-  appendFile(LOG_FILE, `${JSON.stringify(record)}\n`, "utf8").catch(() => {});
+  appendFile(LOG_FILE, `${JSON.stringify(record)}\n`, "utf8").catch((err) => {
+    console.error("Failed to write bot.log:", err?.message ?? err);
+  });
 }
 
 function errorLogFile(record) {
-  appendFile(ERROR_LOG_FILE, `${JSON.stringify(record)}\n`, "utf8").catch(() => {});
+  appendFile(ERROR_LOG_FILE, `${JSON.stringify(record)}\n`, "utf8").catch((err) => {
+    console.error("Failed to write error.log:", err?.message ?? err);
+  });
 }
 
 function writeConsoleInfo(record) {
@@ -72,14 +76,14 @@ function writeConsoleInfo(record) {
 }
 
 function writeConsoleError(record) {
-  const server = record.guildName ?? record.guildId ?? "알 수 없는 서버";
+  const server = record.guildName || record.guildId || "알 수 없는 서버";
   const message = record.error?.message ?? "알 수 없는 오류";
 
   console.error(`[${formatTime(record.occurredAt)}] ${server} 서버에서 오류 발생(${record.step}): ${message}`);
 }
 
 function formatCommandLine(record, aiModel) {
-  const server = record.guildName ?? record.guildId ?? "알 수 없는 서버";
+  const server = record.guildName || record.guildId || "알 수 없는 서버";
   const user = record.userName ?? record.userTag ?? record.userId ?? "알 수 없는 유저";
   const command = record.commandText ?? record.command ?? "알 수 없는 명령";
   const taskLabel = record.task ? ` ${record.task}` : "";
