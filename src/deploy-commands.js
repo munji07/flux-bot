@@ -132,7 +132,7 @@ const commands = [
     .setDescription("레이드를 활성화하고 공지 채널을 지정합니다.")
     .addChannelOption(option =>
       option.setName("채널")
-        .setDescription("매일 10시 레이드 공지를 보낼 채널을 선택하세요")
+        .setDescription("매일 22시 레이드 공지를 보낼 채널을 선택하세요")
         .setRequired(true)),
   new SlashCommandBuilder()
     .setName("레이드_비활성화")

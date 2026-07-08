@@ -70,7 +70,7 @@ function isKstTime(hour, minute) {
 }
 
 async function checkRaidPreWarning(client) {
-  if (!isKstTime(9, 55) && !isKstTime(9, 56)) return;
+  if (!isKstTime(21, 55) && !isKstTime(21, 56)) return;
 
   const today = getKstDateString();
   if (lastRaidWarningDate === today) return;
@@ -96,7 +96,7 @@ async function checkRaidPreWarning(client) {
     color: 0xfbbf24,
     title: "⏰ 레이드 보스가 곧 출현합니다!",
     description:
-      `**5분 후** 오전 10시에 보스가 출현합니다.\n\n` +
+      `**5분 후** 오후 10시에 보스가 출현합니다.\n\n` +
       `**${bossName}**\n` +
       `> 예상 HP: ${estimatedHp.toLocaleString()}\n` +
       `> 참여 서버: ${configsWithMembers.length}개\n` +
@@ -127,7 +127,7 @@ async function checkRaidPreWarning(client) {
 }
 
 async function checkDailyRaidSpawn(client) {
-  if (!isKstTime(10, 0) && !isKstTime(10, 1) && !isKstTime(10, 2) && !isKstTime(10, 3) && !isKstTime(10, 4)) return;
+  if (!isKstTime(22, 0) && !isKstTime(22, 1) && !isKstTime(22, 2) && !isKstTime(22, 3) && !isKstTime(22, 4)) return;
 
   const today = getKstDateString();
   if (lastRaidSpawnDate === today) return;

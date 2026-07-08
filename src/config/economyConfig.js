@@ -14,7 +14,7 @@ export const ECONOMY_CONFIG = {
   cooldowns: {
     fishing: 30 * 1000, // 30초
     mining: 45 * 1000,  // 45초
-    farming: 60 * 1000, // 1분
+    farming: 30 * 1000, // 30초
     daily: 24 * 60 * 60 * 1000, // 24시간
   },
 
@@ -151,8 +151,8 @@ export const ECONOMY_CONFIG = {
 
   // 일일 퀘스트 정의
   dailyQuests: [
-    { id: "quest_daily", name: "출석 체크", type: "daily", target: 1, reward: 500, description: "일일 출석 보상을 1회 받으세요." },
-    { id: "quest_gamble", name: "도박 묵시록", type: "gamble", target: 5, reward: 300, description: "도박(슬롯, 주사위, 동전)을 총 5회 플레이하세요." },
-    { id: "quest_work", name: "오늘도 땀 흘려", type: "work", target: 8, reward: 400, description: "생산 활동(낚시, 채굴, 농사)을 총 8회 성공하세요." },
+    { id: "quest_daily", name: "출석 체크", type: "daily", target: 1, reward: 1000, description: "일일 출석 보상을 1회 받으세요." },
+    { id: "quest_gamble", name: "도박 묵시록", type: "gamble", target: 5, reward: 500, description: "도박(슬롯, 주사위, 동전)을 총 5회 플레이하세요." },
+    { id: "quest_work", name: "오늘도 땀 흘려", type: "work", target: 8, reward: 500, description: "생산 활동(낚시, 채굴, 농사)을 총 8회 성공하세요." },
   ]
 };

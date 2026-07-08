@@ -1440,7 +1440,7 @@ async function handleRaidStatus(interaction) {
         { name: "공지 채널", value: channelMention, inline: true },
         { name: "등록일", value: row.updated_at || "알 수 없음", inline: false },
       )
-      .setDescription("매일 오전 10시에 보스가 출현하고, 홈페이지에서 레이드에 참여할 수 있어요.")
+      .setDescription("매일 오후 10시에 보스가 출현하고, 홈페이지에서 레이드에 참여할 수 있어요.")
       .setFooter({ text: "FLUX 레이드 시스템" })
       .setTimestamp();
     await interaction.editReply({ embeds: [embed] });
