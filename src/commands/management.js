@@ -1662,6 +1662,9 @@ export function getManagementHelpText() {
     "## 📊 분석 (플래티넘)",
     `\`${PREFIX} 서버분석\` — 서버 활동량 리포트`,
     `\`${PREFIX} 채널분석 [#채널/ID]\` — 채널 활동 통계`,
+    "",
+    "**💬 도움 및 문의**",
+    `- 궁금한 점이 있다면 [서포트 서버](https://discord.gg/9bbXkkfcZv)에 방문해주세요!`,
   ].join("\n");
 }
 

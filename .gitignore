@@ -6,3 +6,4 @@ data/
 docs/
 AGENTS.md
 .gitignore
+*.zip

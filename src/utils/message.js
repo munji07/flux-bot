@@ -44,7 +44,7 @@ export function stripFancyUnicode(text) {
     .replace(/[\u{2100}-\u{214F}]/gu, "")
     .replace(/[\u{2460}-\u{24FF}]/gu, "")
     .replace(/[\u{2500}-\u{27BF}]/gu, "")
-    .replace(/\s+/g, " ")
+    .replace(/[^\S\r\n]+/g, " ")
     .trim();
 }
 
