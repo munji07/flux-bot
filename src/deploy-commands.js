@@ -133,7 +133,12 @@ const commands = [
     .addChannelOption(option =>
       option.setName("채널")
         .setDescription("매일 22시 레이드 공지를 보낼 채널을 선택하세요")
-        .setRequired(true)),
+        .setRequired(true))
+    .addStringOption(option =>
+      option.setName("역할이름")
+        .setDescription("레이드 참여자에게 부여할 역할 이름 (기본: 레이드 참여자)")
+        .setRequired(false)
+        .setMaxLength(100)),
   new SlashCommandBuilder()
     .setName("레이드_비활성화")
     .setDescription("이 서버의 레이드를 비활성화합니다."),
@@ -151,6 +156,9 @@ const commands = [
       option.setName("이름")
         .setDescription("보스 이름 (기본: 테스트 보스)")
         .setRequired(false)),
+  new SlashCommandBuilder()
+    .setName("레이드_참여")
+    .setDescription("레이드 참여 역할을 받고 레이드 알림 멘션 대상이 됩니다."),
   new SlashCommandBuilder()
     .setName("농장알림")
     .setDescription("작물 수확 알림을 관리합니다. (Premium 전용)")

@@ -7,6 +7,7 @@ import { getUserSubscriptionTier } from "../services/subscription.js";
 import { ADMIN_USER_ID } from "../config/models.js";
 import { logError, logInfo } from "../logger.js";
 import { db } from "../services/database.js";
+import { ensureRaidRole, addRaidRoleToMember, getRaidRoleId, mentionRaidRole } from "../services/raidRoleService.js";
 
 function getWebGameUrl() {
   return (process.env.WEB_APP_URL || process.env.BASE_URL || "http://localhost:3000").replace(/\/$/, "");
@@ -207,6 +208,7 @@ export async function handleEconomyCommand(interaction) {
       case "레이드_비활성화": return await handleRaidDeactivate(interaction);
       case "레이드_상태": return await handleRaidStatus(interaction);
       case "레이드_테스트": return await handleRaidTest(interaction);
+      case "레이드_참여": return await handleRaidJoin(interaction);
       case "농장알림": return await handleCropNotification(interaction, userId);
     }
   } catch (error) {
@@ -1304,6 +1306,8 @@ async function handleRaidConfig(interaction) {
     return;
   }
 
+  const roleName = interaction.options.getString("역할이름") || "레이드 참여자";
+
   const guildId = interaction.guildId;
   if (!guildId) {
     await interaction.editReply({ content: "❌ 서버에서만 사용할 수 있는 명령어입니다." });
@@ -1343,6 +1347,26 @@ async function handleRaidConfig(interaction) {
     }
   }
 
+  let roleId = null;
+  try {
+    const guild = interaction.guild;
+    if (guild) {
+      const role = await ensureRaidRole(guild, roleName);
+      roleId = role?.id || null;
+      if (roleId) {
+        const syncRes = await fetch(`${webUrl}/api/raid/config/role`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ guild_id: guildId, role_id: roleId }),
+          signal: new AbortController().signal,
+        }).catch(() => null);
+        if (syncRes && syncRes.ok) saved = true;
+      }
+    }
+  } catch (e) {
+    console.error("Raid role ensure failed:", e.message);
+  }
+
   const embed = new EmbedBuilder()
     .setColor(0x5ce4ff)
     .setTitle("⚔️ 레이드 알림 설정 완료")
@@ -1354,6 +1378,7 @@ async function handleRaidConfig(interaction) {
     .addFields(
       { name: "📡 알림 채널", value: `<#${channel.id}>`, inline: true },
       { name: "🎯 알림 종류", value: "출현 알림 / HP 현황 / 처치 결과", inline: true },
+      { name: "👥 참여 역할", value: roleId ? `<@&${roleId}> (${roleName})` : "역할 생성 실패", inline: true },
     )
     .setFooter({ text: "FLUX 레이드 시스템" })
     .setTimestamp();
@@ -1517,6 +1542,39 @@ async function handleRaidTest(interaction) {
     logError("raid_test_spawn", null, e);
     await interaction.editReply({ content: `❌ 레이드 소환 중 오류 발생: ${e.message}` });
   }
+}
+
+// ─── 18. 레이드 참여 (역할 부여) ────────────────────────────────────────────
+async function handleRaidJoin(interaction) {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const guild = interaction.guild;
+  if (!guild) {
+    await interaction.editReply({ content: "❌ 서버에서만 사용할 수 있는 명령어입니다." });
+    return;
+  }
+
+  const added = await addRaidRoleToMember(guild, interaction.user.id);
+  if (!added) {
+    await interaction.editReply({ content: "❌ 레이드 참여 역할을 부여하지 못했습니다. 잠시 후 다시 시도해주세요." });
+    return;
+  }
+
+  const roleId = await getRaidRoleId(guild.id);
+  const webUrl = getWebGameUrl();
+  try {
+    await fetch(`${webUrl}/api/raid/config/role`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ guild_id: guild.id, role_id: roleId }),
+    }).catch(() => {});
+  } catch { /* 웹 동기화 실패는 무시 */ }
+
+  await interaction.editReply({
+    content: roleId
+      ? `✅ 레이드 참여 역할 ${mentionRaidRole(roleId)} 을(를) 받았어요! 이제 레이드 알림 시 멘션됩니다. 🌐 ${webUrl}/raid 에서 공격하세요!`
+      : "✅ 레이드 참여 역할을 받았어요! (역할 동기화는 실패했지만 멘션 대상엔 포함됩니다.)",
+  });
 }
 
 const KNOWN_CROPS = [

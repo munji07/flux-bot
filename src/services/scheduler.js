@@ -75,7 +75,7 @@ async function checkRaidPreWarning(client) {
   const today = getKstDateString();
   if (lastRaidWarningDate === today) return;
 
-  const configs = await db.all("SELECT guild_id, channel_id FROM raid_config");
+  const configs = await db.all("SELECT guild_id, channel_id, role_id FROM raid_config");
   if (configs.length === 0) return;
 
   lastRaidWarningDate = today;
@@ -113,7 +113,8 @@ async function checkRaidPreWarning(client) {
       if (!guild) continue;
       const channel = guild.channels.cache.get(cfg.channel_id);
       if (!channel || !channel.isTextBased()) continue;
-      await channel.send({ embeds: [embed] });
+      const mention = cfg.role_id ? `<@&${cfg.role_id}> ` : "";
+      await channel.send({ content: `${mention}⏰ 보스가 5분 후 출현합니다!`, embeds: [embed] });
     } catch (e) {
       logError("raid_prewarning_send_failed", cfg.guild_id, e);
     }
@@ -132,7 +133,7 @@ async function checkDailyRaidSpawn(client) {
   const today = getKstDateString();
   if (lastRaidSpawnDate === today) return;
 
-  const configs = await db.all("SELECT guild_id, channel_id FROM raid_config");
+  const configs = await db.all("SELECT guild_id, channel_id, role_id FROM raid_config");
   if (configs.length === 0) return;
 
   lastRaidSpawnDate = today;
@@ -200,7 +201,8 @@ async function checkDailyRaidSpawn(client) {
       if (!guild) continue;
       const channel = guild.channels.cache.get(cfg.channel_id);
       if (!channel || !channel.isTextBased()) continue;
-      await channel.send({ content: "@everyone 보스 출현! ⚔️", embeds: [embed] });
+      const mention = cfg.role_id ? `<@&${cfg.role_id}> 보스 출현! ⚔️` : "@everyone 보스 출현! ⚔️";
+      await channel.send({ content: mention, embeds: [embed] });
     } catch (e) {
       logError("raid_announce_failed", cfg.guild_id, e);
     }

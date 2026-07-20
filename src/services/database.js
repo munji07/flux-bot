@@ -19,9 +19,15 @@ function getDatabaseUrl() {
 const pool = new pg.Pool({
   connectionString: getDatabaseUrl(),
   ssl: { rejectUnauthorized: false },
-  max: 20,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 10000,
+  max: Number(process.env.PG_POOL_MAX || 15),
+  idleTimeoutMillis: Number(process.env.PG_IDLE_TIMEOUT_MS || 25000),
+  connectionTimeoutMillis: 5000,
+  keepAlive: true,
+  maxUses: 7500,
+});
+
+pool.on("connect", (client) => {
+  client.query("SET statement_timeout = 15000").catch(() => {});
 });
 
 pool.on("error", (err) => {
@@ -266,6 +272,7 @@ async function ensureSchema() {
     CREATE TABLE IF NOT EXISTS raid_config (
       guild_id TEXT PRIMARY KEY,
       channel_id TEXT NOT NULL,
+      role_id TEXT,
       updated_at TEXT NOT NULL DEFAULT TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS')
     );
 
