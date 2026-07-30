@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { extname, relative, resolve, sep } from "node:path";
-import { ADMIN_USER_ID } from "../config/config.js";
+import { ADMIN_USER_ID } from "../config.js";
 import { nvidiaClient, stripReasoningTags } from "./ai.js";
 
 const PROJECT_ROOT = resolve(fileURLToPath(new URL("../../", import.meta.url)));

@@ -1,6 +1,6 @@
 import { db } from "./database.js";
 import { logError, logInfo } from "../logger.js";
-import { ECONOMY_CONFIG } from "../config/economyConfig.js";
+import { ECONOMY_CONFIG } from "../config.js";
 import { getUserSubscriptionTier } from "./subscription.js";
 
 export class EconomyService {

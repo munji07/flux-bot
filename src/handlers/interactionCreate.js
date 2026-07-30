@@ -9,7 +9,7 @@ import {
   TextInputBuilder,
   TextInputStyle,
 } from "discord.js";
-import { ADMIN_USER_ID } from "../config/config.js";
+import { ADMIN_USER_ID } from "../config.js";
 import { addServerImageToken, updateUserSubscription, getServerSubscriptionTier } from "../services/subscription.js";
 import { createScheduledMessage } from "../services/scheduler.js";
 import { parseScheduleTime, scheduleChannelMap } from "../commands/scheduler.js";

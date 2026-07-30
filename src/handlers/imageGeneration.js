@@ -1,8 +1,8 @@
 import { AttachmentBuilder } from "discord.js";
 import { generateImage } from "../services/ai.js";
 import { logError, logInfo } from "../logger.js";
-import { getDisplayName } from "../utils/message.js";
-import { LOADING_EMOJI } from "../config/config.js";
+import { getDisplayName } from "../utils.js";
+import { LOADING_EMOJI } from "../config.js";
 
 
 export async function handleImageGenerationRequest(client, message, imagePrompt, loadingMessage = null) {

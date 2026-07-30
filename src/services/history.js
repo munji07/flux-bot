@@ -2,7 +2,7 @@ import {
   HISTORY_BATCH_SIZE,
   MAX_HISTORY_CONTENT_LENGTH,
   MAX_STORED_HISTORY_MESSAGES,
-} from "../config/config.js";
+} from "../config.js";
 import { db } from "./database.js";
 
 export function getHistoryKey(message) {

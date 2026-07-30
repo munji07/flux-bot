@@ -11,11 +11,11 @@ import {
   GuildVerificationLevel,
   PermissionFlagsBits,
 } from "discord.js";
-import { PREFIX, ADMIN_USER_ID } from "../config/config.js";
-import { UserFacingError } from "../errors.js";
+import { PREFIX, ADMIN_USER_ID } from "../config.js";
+import { UserFacingError } from "../logger.js";
 import { logError, logInfo } from "../logger.js";
-import { extractDiscordId, normalizeCommand, splitArgs } from "../utils/command.js";
-import { getDisplayName } from "../utils/message.js";
+import { extractDiscordId, normalizeCommand, splitArgs } from "../utils.js";
+import { getDisplayName } from "../utils.js";
 import { matchServerMember, matchServerChannel, matchServerRole } from "../services/ai.js";
 import { db } from "../services/database.js";
 import { updateUserSubscription, TIER_LIMITS, getServerSubscriptionTier } from "../services/subscription.js";

@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { relative, resolve, sep } from "node:path";
 import { nvidiaClient, stripReasoningTags } from "./ai.js";
-import { PREFIX } from "../config/config.js";
+import { PREFIX } from "../config.js";
 
 const PROJECT_ROOT = resolve(fileURLToPath(new URL("../../", import.meta.url)));
 const MAX_DISCORD_EDIT_CHARS = 1900;

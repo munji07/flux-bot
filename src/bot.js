@@ -1,5 +1,5 @@
 import { Client, Events, ActivityType, Partials } from "discord.js";
-import { CLIENT_INTENTS, validateEnv } from "./config/config.js";
+import { CLIENT_INTENTS, validateEnv } from "./config.js";
 import { handleMessageCreate } from "./handlers/messageCreate.js";
 import { handleInteractionCreate } from "./handlers/interactionCreate.js";
 import { logError, logInfo } from "./logger.js";

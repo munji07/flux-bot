@@ -1,5 +1,5 @@
-﻿import { ADMIN_USER_ID, PREFIX, SAFE_MESSAGE_LIMIT, HISTORY_BATCH_SIZE, GEMINI_SEARCH_MODEL, DEEPSEEK_CHAT_MODEL, LOADING_EMOJI } from "../config/config.js";
-import { UserFacingError } from "../errors.js";
+﻿import { ADMIN_USER_ID, PREFIX, SAFE_MESSAGE_LIMIT, HISTORY_BATCH_SIZE, GEMINI_SEARCH_MODEL, DEEPSEEK_CHAT_MODEL, LOADING_EMOJI } from "../config.js";
+import { UserFacingError } from "../logger.js";
 import { handleManagementToolCall, getManagementHelpText } from "../commands/management.js";
 import { handleScheduleFromIntent } from "../commands/scheduler.js";
 import { handleSubscriptionToolCall, handleSubscriptionCommand } from "../commands/subscription.js";
@@ -39,8 +39,8 @@ import {
   getImageAttachmentUrls,
   sendChunkedAnswer,
   stripFancyUnicode,
-} from "../utils/message.js";
-import { getPronunciationReply } from "../utils/phonetics.js";
+} from "../utils.js";
+import { getPronunciationReply } from "../utils.js";
 
 function createLimitExceededMessage(username, tierName, usageTypeName, limit, prefix) {
   const limitText = limit === Infinity ? "무제한" : `${limit}회`;

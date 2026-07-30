@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, statSync, openSync, readSync, closeSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { ADMIN_USER_ID } from "../config/config.js";
-import { UserFacingError } from "../errors.js";
+import { ADMIN_USER_ID } from "../config.js";
+import { UserFacingError } from "../logger.js";
 import { createLogSearchAnswer } from "./ai.js";
 import { decrementUsage } from "./subscription.js";
 

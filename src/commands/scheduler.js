@@ -1,6 +1,6 @@
 ﻿import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelSelectMenuBuilder, ChannelType, PermissionFlagsBits } from "discord.js";
-import { PREFIX } from "../config/config.js";
-import { extractDiscordId } from "../utils/command.js";
+import { PREFIX } from "../config.js";
+import { extractDiscordId } from "../utils.js";
 import {
   cancelScheduledMessage,
   createScheduledMessage,

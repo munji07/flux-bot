@@ -1,5 +1,5 @@
 import { db } from "./database.js";
-import { ECONOMY_CONFIG } from "../config/economyConfig.js";
+import { ECONOMY_CONFIG } from "../config.js";
 import { EconomyService } from "./economyService.js";
 import { logError } from "../logger.js";
 

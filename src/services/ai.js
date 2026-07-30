@@ -8,9 +8,9 @@ import {
   GROQ_MAX_COMPLETION_TOKENS,
   HISTORY_BATCH_SIZE,
   IMAGE_GENERATION_MODEL,
-} from "../config/config.js";
+} from "../config.js";
 import { logError, logInfo } from "../logger.js";
-import { createUserMessageContent } from "../utils/message.js";
+import { createUserMessageContent } from "../utils.js";
 import { checkAndIncrementUsage } from "./subscription.js";
 
 export const groqClient = new Groq({

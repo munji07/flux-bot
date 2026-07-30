@@ -1,5 +1,5 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { GEMINI_SEARCH_MODEL } from "../config/config.js";
+import { GEMINI_SEARCH_MODEL } from "../config.js";
 import { logError } from "../logger.js";
 
 /**

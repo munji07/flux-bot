@@ -1,5 +1,5 @@
 ﻿import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from "discord.js";
-import { ADMIN_USER_ID, PREFIX } from "../config/config.js";
+import { ADMIN_USER_ID, PREFIX } from "../config.js";
 import { getUserSubscription, updateUserSubscription, getDailyUsage, getServerImageTokens, getServerSubscriptionTier, TIER_LIMITS, getKstNow } from "../services/subscription.js";
 
 const SERVER_IMAGE_TOKEN_PRODUCTS = {

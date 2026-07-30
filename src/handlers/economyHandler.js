@@ -2,9 +2,9 @@
 import { randomInt } from "crypto";
 import { EconomyService } from "../services/economyService.js";
 import { EconomyQuestService } from "../services/economyQuestService.js";
-import { ECONOMY_CONFIG } from "../config/economyConfig.js";
+import { ECONOMY_CONFIG } from "../config.js";
 import { getUserSubscriptionTier } from "../services/subscription.js";
-import { ADMIN_USER_ID } from "../config/models.js";
+import { ADMIN_USER_ID } from "../config.js";
 import { logError, logInfo } from "../logger.js";
 import { db } from "../services/database.js";
 import { ensureRaidRole, addRaidRoleToMember, getRaidRoleId, mentionRaidRole } from "../services/raidRoleService.js";

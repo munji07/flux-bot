@@ -1,4 +1,4 @@
-import { ADMIN_USER_ID } from "../config/config.js";
+import { ADMIN_USER_ID } from "../config.js";
 import { logError, logInfo } from "../logger.js";
 
 /**

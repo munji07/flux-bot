@@ -1,134 +1,131 @@
-import { UserFacingError } from "../errors.js";
+import { UserFacingError } from "./logger.js";
+import { DISCORD_MESSAGE_LIMIT, SAFE_MESSAGE_LIMIT } from "./config.js";
+import { getUserDisplayName } from "./services/userSettings.js";
+
+export function splitArgs(input) {
+  const text = String(input ?? "");
+  return text.match(/"[^"]*"|'[^']*'|\S+/g)?.map((token) => token.replace(/^["']|["']$/g, "")) ?? [];
+}
+
+export function normalizeCommand(command) {
+  const text = String(command ?? "");
+  return text.toLowerCase().replace(/[\s_-]/g, "");
+}
+
+export function extractDiscordId(value) {
+  if (!value) return null;
+  const text = String(value);
+  return text.match(/^<[@#&]!?(\d+)>$/)?.[1] ?? text.match(/^\d{16,22}$/)?.[0] ?? null;
+}
+
+export async function getDisplayName(message) {
+  const name =
+    (await getUserDisplayName(message.author.id)) ||
+    message.member?.displayName ||
+    message.author.globalName ||
+    message.author.username ||
+    "알 수 없음";
+
+  return String(name).replace(/[\r\n[\]]/g, " ").trim().slice(0, 80) || "알 수 없음";
+}
+
+export async function sendChunkedAnswer(message, loadingMessage, answer) {
+  const chunks = splitDiscordMessage(answer);
+  const [firstChunk, ...restChunks] = chunks;
+
+  await loadingMessage.edit(firstChunk).catch(async () => {
+    await message.channel.send(firstChunk);
+  });
+
+  for (const chunk of restChunks) {
+    await message.channel.send(chunk);
+  }
+}
+
+export function getImageAttachmentUrls(message) {
+  return [...message.attachments.values()]
+    .filter((attachment) => isImageAttachment(attachment))
+    .map((attachment) => attachment.url)
+    .slice(0, 5);
+}
+
+export function createUserMessageContent(userName, userPrompt, imageUrls = []) {
+  const imageText = imageUrls.length > 0 ? `\n[이미지 URL: ${imageUrls.join(", ")}]` : "";
+
+  return `[유저 이름: ${userName}]\n${userPrompt}${imageText}`;
+}
+
+export function stripFancyUnicode(text) {
+  return text
+    .replace(/[\u{1D400}-\u{1D7FF}]/gu, "")
+    .replace(/[\u{2100}-\u{214F}]/gu, "")
+    .replace(/[\u{2460}-\u{24FF}]/gu, "")
+    .replace(/[\u{2500}-\u{27BF}]/gu, "")
+    .replace(/[^\S\r\n]+/g, " ")
+    .trim();
+}
+
+function isImageAttachment(attachment) {
+  if (attachment.contentType?.startsWith("image/")) return true;
+
+  return /\.(png|jpe?g|gif|webp|bmp|avif)$/i.test(attachment.name ?? attachment.url);
+}
+
+function splitDiscordMessage(text) {
+  if (text.length <= DISCORD_MESSAGE_LIMIT) return [text];
+
+  const chunks = [];
+  let remaining = text;
+
+  while (remaining.length > 0) {
+    if (remaining.length <= SAFE_MESSAGE_LIMIT) {
+      chunks.push(remaining);
+      break;
+    }
+
+    const slice = remaining.slice(0, SAFE_MESSAGE_LIMIT);
+    const splitAt = findBestSplitIndex(slice);
+
+    chunks.push(remaining.slice(0, splitAt).trimEnd());
+    remaining = remaining.slice(splitAt).trimStart();
+  }
+
+  return chunks;
+}
+
+function findBestSplitIndex(text) {
+  const preferredBreaks = ["\n\n", "\n", ". ", "! ", "? ", " "];
+
+  for (const marker of preferredBreaks) {
+    const index = text.lastIndexOf(marker);
+    if (index >= SAFE_MESSAGE_LIMIT * 0.5) {
+      return index + marker.length;
+    }
+  }
+
+  return SAFE_MESSAGE_LIMIT;
+}
 
 const KOREAN_SYLLABLE_START = 0xac00;
 const KOREAN_INITIALS = [
-  "g",
-  "kk",
-  "n",
-  "d",
-  "tt",
-  "r",
-  "m",
-  "b",
-  "pp",
-  "s",
-  "ss",
-  "ng",
-  "j",
-  "jj",
-  "ch",
-  "k",
-  "t",
-  "p",
-  "h",
+  "g", "kk", "n", "d", "tt", "r", "m", "b", "pp", "s", "ss", "ng", "j", "jj", "ch", "k", "t", "p", "h",
 ];
 const KOREAN_MEDIALS = [
-  "a",
-  "ae",
-  "ya",
-  "yae",
-  "eo",
-  "e",
-  "yeo",
-  "ye",
-  "o",
-  "wa",
-  "wae",
-  "oe",
-  "yo",
-  "u",
-  "weo",
-  "we",
-  "wi",
-  "yu",
-  "eu",
-  "ui",
-  "i",
+  "a", "ae", "ya", "yae", "eo", "e", "yeo", "ye", "o", "wa", "wae", "oe", "yo", "u", "weo", "we", "wi", "yu", "eu", "ui", "i",
 ];
 const KOREAN_FINALS = [
-  "",
-  "k",
-  "k",
-  "ks",
-  "n",
-  "nj",
-  "nh",
-  "t",
-  "l",
-  "lk",
-  "lm",
-  "lb",
-  "ls",
-  "lt",
-  "lp",
-  "lh",
-  "m",
-  "p",
-  "ps",
-  "t",
-  "t",
-  "ng",
-  "t",
-  "ch",
-  "k",
-  "t",
-  "p",
-  "h",
+  "", "k", "k", "ks", "n", "nj", "nh", "t", "l", "lk", "lm", "lb", "ls", "lt", "lp", "lh", "m", "p", "ps", "t", "t", "ng", "t", "ch", "k", "t", "p", "h",
 ];
 
 const ENGLISH_VOWELS = new Set(["a", "e", "i", "o", "u"]);
 const ENGLISH_ONSETS = {
-  b: "ㅂ",
-  c: "ㅋ",
-  d: "ㄷ",
-  f: "ㅍ",
-  g: "ㄱ",
-  h: "ㅎ",
-  j: "ㅈ",
-  k: "ㅋ",
-  l: "ㄹ",
-  m: "ㅁ",
-  n: "ㄴ",
-  p: "ㅍ",
-  q: "ㅋ",
-  r: "ㄹ",
-  s: "ㅅ",
-  t: "ㅌ",
-  v: "ㅂ",
-  w: "ㅂ",
-  x: "ㄱ",
-  y: "ㅇ",
-  z: "ㅈ",
+  b: "ㅂ", c: "ㅋ", d: "ㄷ", f: "ㅍ", g: "ㄱ", h: "ㅎ", j: "ㅈ", k: "ㅋ", l: "ㄹ", m: "ㅁ", n: "ㄴ", p: "ㅍ", q: "ㅋ", r: "ㄹ", s: "ㅅ", t: "ㅌ", v: "ㅂ", w: "ㅂ", x: "ㄱ", y: "ㅇ", z: "ㅈ",
 };
 const ENGLISH_VOWEL_TO_MEDIAL = {
-  a: "ㅏ",
-  e: "ㅔ",
-  i: "ㅣ",
-  o: "ㅗ",
-  u: "ㅜ",
+  a: "ㅏ", e: "ㅔ", i: "ㅣ", o: "ㅗ", u: "ㅜ",
 };
 const CONSONANT_NAME = {
-  b: "브",
-  c: "크",
-  d: "드",
-  f: "프",
-  g: "그",
-  h: "흐",
-  j: "즈",
-  k: "크",
-  l: "르",
-  m: "므",
-  n: "은",
-  p: "프",
-  q: "큐",
-  r: "르",
-  s: "스",
-  t: "트",
-  v: "브",
-  w: "우",
-  x: "엑스",
-  y: "와이",
-  z: "즈",
+  b: "브", c: "크", d: "드", f: "프", g: "그", h: "흐", j: "즈", k: "크", l: "르", m: "므", n: "은", p: "프", q: "큐", r: "르", s: "스", t: "트", v: "브", w: "우", x: "엑스", y: "와이", z: "즈",
 };
 
 const ENGLISH_PHRASE_OVERRIDES = [
@@ -163,8 +160,7 @@ export function getPronunciationReply(userPrompt) {
     return `영어 발음을 한글로: ${transliterateEnglishToKorean(commandText)}`;
   }
 
-  return `발음 변환 결과:
-${convertMixedPronunciation(commandText)}`;
+  return `발음 변환 결과:\n${convertMixedPronunciation(commandText)}`;
 }
 
 function romanizeKorean(text) {
