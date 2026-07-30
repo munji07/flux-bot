@@ -105,7 +105,8 @@ export class EconomyQuestService {
           [userId, questId, todayStr],
         );
 
-        await EconomyService.updateCoins(userId, definition.reward);
+        const rewardResult = await EconomyService.updateCoins(userId, definition.reward, tx);
+        if (!rewardResult.success) throw new Error("QUEST_REWARD_FAILED");
 
         return { success: true, reward: definition.reward, message: "보상을 받았습니다!" };
       });

@@ -4,12 +4,12 @@ import { ECONOMY_CONFIG } from "../config/economyConfig.js";
 import { getUserSubscriptionTier } from "./subscription.js";
 
 export class EconomyService {
-  static async getOrCreateUser(userId) {
+  static async getOrCreateUser(userId, query = db) {
     try {
-      let user = await db.get("SELECT * FROM eco_users WHERE user_id = $1", [userId]);
+      let user = await query.get("SELECT * FROM eco_users WHERE user_id = $1", [userId]);
       if (!user) {
-        await db.run("INSERT INTO eco_users (user_id, coins) VALUES ($1, 0) ON CONFLICT(user_id) DO NOTHING", [userId]);
-        user = await db.get("SELECT * FROM eco_users WHERE user_id = $1", [userId]);
+        await query.run("INSERT INTO eco_users (user_id, coins) VALUES ($1, 0) ON CONFLICT(user_id) DO NOTHING", [userId]);
+        user = await query.get("SELECT * FROM eco_users WHERE user_id = $1", [userId]);
       }
       return user;
     } catch (error) {
@@ -18,20 +18,18 @@ export class EconomyService {
     }
   }
 
-  static async updateCoins(userId, amount) {
+  static async updateCoins(userId, amount, query = null) {
     try {
-      return await db.transact(async (tx) => {
-        const user = await this.getOrCreateUser(userId);
-        const newBalance = user.coins + amount;
-
-        if (newBalance < 0) {
-          return { success: false, balance: user.coins };
-        }
-
-        await tx.run("UPDATE eco_users SET coins = $1, updated_at = TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS') WHERE user_id = $2", [newBalance, userId]);
-
-        return { success: true, balance: newBalance };
-      });
+      if (query) {
+        const user = await this.getOrCreateUser(userId, query);
+        const updated = await query.get(
+          "UPDATE eco_users SET coins = coins + $1, updated_at = TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS') WHERE user_id = $2 AND coins + $1 >= 0 RETURNING coins",
+          [amount, userId],
+        );
+        if (!updated) return { success: false, balance: user.coins };
+        return { success: true, balance: updated.coins };
+      }
+      return await db.transact(tx => this.updateCoins(userId, amount, tx));
     } catch (error) {
       logError("economy_update_coins", null, error, { userId, amount });
       return { success: false, balance: 0 };
@@ -53,8 +51,12 @@ export class EconomyService {
 
     try {
       return await db.transact(async (tx) => {
-        const sender = await this.getOrCreateUser(senderId);
-        if (sender.coins < totalDeducted) {
+        const sender = await this.getOrCreateUser(senderId, tx);
+        const senderUpdate = await tx.get(
+          "UPDATE eco_users SET coins = coins - $1, updated_at = TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS') WHERE user_id = $2 AND coins >= $1 RETURNING coins",
+          [totalDeducted, senderId],
+        );
+        if (!senderUpdate) {
           return {
             success: false,
             senderBalance: sender.coins,
@@ -63,13 +65,11 @@ export class EconomyService {
           };
         }
 
-        await this.getOrCreateUser(receiverId);
+        await this.getOrCreateUser(receiverId, tx);
 
-        await tx.run("UPDATE eco_users SET coins = coins - $1, updated_at = TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS') WHERE user_id = $2", [totalDeducted, senderId]);
         await tx.run("UPDATE eco_users SET coins = coins + $1, updated_at = TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS') WHERE user_id = $2", [amount, receiverId]);
 
-        const updatedSender = await this.getOrCreateUser(senderId);
-        return { success: true, senderBalance: updatedSender.coins, fee, errorMessage: null };
+        return { success: true, senderBalance: senderUpdate.coins, fee, errorMessage: null };
       });
     } catch (error) {
       logError("economy_transfer_coins", null, error, { senderId, receiverId, amount, fee });
