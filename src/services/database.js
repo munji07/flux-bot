@@ -189,7 +189,7 @@ async function ensureSchema() {
     CREATE TABLE IF NOT EXISTS user_settings (
       user_id TEXT PRIMARY KEY,
       display_name TEXT,
-      chat_model TEXT DEFAULT 'qwen/qwen3-32b',
+      chat_model TEXT DEFAULT 'openai/gpt-oss-20b',
       updated_at TEXT NOT NULL DEFAULT TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS')
     );
 

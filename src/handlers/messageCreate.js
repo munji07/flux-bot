@@ -590,7 +590,7 @@ export async function handleMessageCreate(client, message) {
   let typingInterval;
   let currentStep = "command_detected";
 
-  const usedModel = attachedImageUrls.length > 0 ? "google/diffusiongemma-26b-a4b-it" : "qwen/qwen3-32b";
+  const usedModel = attachedImageUrls.length > 0 ? "google/diffusiongemma-26b-a4b-it" : "openai/gpt-oss-20b";
 
   try {
     const historyKey = getHistoryKey(message); // 로깅 및 DB 저장을 위해 유지
@@ -849,7 +849,7 @@ function stripModelFooter(text) {
 
 function getModelDisplayName(model) {
   const map = {
-    "qwen/qwen3-32b": "Qwen3 32B",
+    "openai/gpt-oss-20b": "GPT-OSS 20B",
     "google/diffusiongemma-26b-a4b-it": "DiffusionGemma 26B",
     "deepseek-ai/deepseek-v4-flash": "DeepSeek V4 Flash",
   };

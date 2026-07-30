@@ -79,7 +79,7 @@ function getClientForModel(model) {
 }
 
 export function isGroqModel(model) {
-  return Boolean(model && model.startsWith("qwen/"));
+  return Boolean(model && model.startsWith("openai/"));
 }
 
 export function isGroqRateLimitError(error) {
@@ -169,13 +169,13 @@ function buildChatMessages({
 }
 
 export function getChatModel(imageUrls) {
-  return imageUrls.length > 0 ? "google/diffusiongemma-26b-a4b-it" : "qwen/qwen3-32b";
+  return imageUrls.length > 0 ? "google/diffusiongemma-26b-a4b-it" : "openai/gpt-oss-20b";
 }
 
 function normalizeChatModel(model) {
   if (!model) return model;
   if (model.includes("diffusiongemma")) return model;
-  return "qwen/qwen3-32b";
+  return "openai/gpt-oss-20b";
 }
 
 export function getChatTask(imageUrls) {
@@ -639,7 +639,7 @@ export async function createChatCompletion({
   model: userModel = null,
 }) {
   const task = intent || getChatTask(imageUrls);
-  const model = normalizeChatModel(userModel) || (imageUrls.length > 0 ? "google/diffusiongemma-26b-a4b-it" : "qwen/qwen3-32b");
+  const model = normalizeChatModel(userModel) || (imageUrls.length > 0 ? "google/diffusiongemma-26b-a4b-it" : "openai/gpt-oss-20b");
 
   logInfo("ai_call", {
     ...logContext,
@@ -695,7 +695,7 @@ export async function createChatCompletionStream({
   logContext = {},
   model: userModel = null,
 }) {
-  const model = normalizeChatModel(userModel) || "qwen/qwen3-32b";
+  const model = normalizeChatModel(userModel) || "openai/gpt-oss-20b";
   logInfo("ai_call", {
     ...logContext,
     task: "chat_stream",
@@ -777,7 +777,7 @@ export async function createLogSearchAnswer({
   requester,
   logContext = {},
 }) {
-  const model = "qwen/qwen3-32b";
+  const model = "openai/gpt-oss-20b";
   logInfo("ai_call", {
     ...logContext,
     task: "log_search_summary",

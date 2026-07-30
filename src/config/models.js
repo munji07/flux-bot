@@ -10,7 +10,7 @@ export const ADMIN_USER_ID = "1269575955626725390";
 
 export const MODELS = {
   INTENT: "meta/llama-3.1-8b-instruct",
-  CONVERSATION: "qwen/qwen3-32b",
+  CONVERSATION: "openai/gpt-oss-20b",
   IMAGE_ANALYSIS: "google/diffusiongemma-26b-a4b-it",
   IMAGE_GENERATION_RUNTIME: "gptimage",
   VIDEO_ANALYSIS: "google/diffusiongemma-26b-a4b-it",
@@ -20,9 +20,9 @@ export const MODELS = {
   DEEPSEEK_PRO: "deepseek-ai/deepseek-v4-pro",
   LLAMA_33: "meta/llama-3.3-70b-instruct",
   INTENT_FALLBACK: "meta/llama-3.1-8b-instruct",
-  CHAT_TEXT: "qwen/qwen3-32b",
+  CHAT_TEXT: "openai/gpt-oss-20b",
   VIDEO_RUNTIME: "nvidia/nemotron-nano-12b-v2-vl",
-  LOG_SUMMARY: "qwen/qwen3-32b",
+  LOG_SUMMARY: "openai/gpt-oss-20b",
   WEB_SEARCH_CLASSIFIER: "meta/llama-3.1-8b-instruct",
   MEMBER_MATCHER: "meta/llama-3.1-8b-instruct",
   GOOGLE_SEARCH: "gemini-2.5-flash",
