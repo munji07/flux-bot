@@ -29,16 +29,17 @@ export async function getDisplayName(message) {
   return String(name).replace(/[\r\n[\]]/g, " ").trim().slice(0, 80) || "알 수 없음";
 }
 
-export async function sendChunkedAnswer(message, loadingMessage, answer) {
+export async function sendChunkedAnswer(message, loadingMessage, answer, messageOptions = {}) {
   const chunks = splitDiscordMessage(answer);
   const [firstChunk, ...restChunks] = chunks;
 
-  await loadingMessage.edit(firstChunk).catch(async () => {
-    await message.channel.send(firstChunk);
+  await loadingMessage.edit({ content: firstChunk, ...messageOptions }).catch(async (error) => {
+    if (error?.code !== 10008) throw error;
+    await message.channel.send({ content: firstChunk, ...messageOptions });
   });
 
   for (const chunk of restChunks) {
-    await message.channel.send(chunk);
+    await message.channel.send({ content: chunk, ...messageOptions });
   }
 }
 
@@ -60,7 +61,7 @@ export function stripFancyUnicode(text) {
     .replace(/[\u{1D400}-\u{1D7FF}]/gu, "")
     .replace(/[\u{2100}-\u{214F}]/gu, "")
     .replace(/[\u{2460}-\u{24FF}]/gu, "")
-    .replace(/[\u{2500}-\u{27BF}]/gu, "")
+    .replace(/[\u{2500}-\u{259F}]/gu, "")
     .replace(/[^\S\r\n]+/g, " ")
     .trim();
 }

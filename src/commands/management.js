@@ -204,9 +204,7 @@ const COMMAND_ALIASES = {
   음성연결끊기: COMMANDS.disconnectMember,
   disconnect: COMMANDS.disconnectMember,
   disconnectmember: COMMANDS.disconnectMember,
-  닉네임: COMMANDS.changeNickname,
-  닉변: COMMANDS.changeNickname,
-  changenickname: COMMANDS.changeNickname,
+
   오토모드: COMMANDS.autoMod,
   automod: COMMANDS.autoMod,
   감사로그: COMMANDS.auditLog,
@@ -830,7 +828,9 @@ async function purgeMessagesCommand(message, args, loadingMessage) {
   }
 
   const deleted = await message.channel.bulkDelete(amount, true);
-  await loadingMessage.edit(`최근 메시지 ${deleted.size}개를 정리했어요.`);
+  await loadingMessage.edit(`최근 메시지 ${deleted.size}개를 정리했어요.`).catch((error) => {
+    if (error?.code !== 10008) throw error;
+  });
 }
 
 async function slowModeCommand(message, args, loadingMessage) {
@@ -1182,6 +1182,9 @@ async function roleMemberCommand(message, args, action, loadingMessage) {
 
   const target = await resolveMember(message, args[0], "역할을 설정할 유저를 멘션하거나 ID로 입력해주세요.");
   const role = await resolveRole(message, args.slice(1).join(" "));
+  if (!role) {
+    throw new UserFacingError("역할을 찾지 못했어요. 역할 이름이나 ID를 확인해 주세요.");
+  }
 
   if (action === "add") {
     await target.roles.add(role, createReason(message, "add role"));
@@ -1662,6 +1665,9 @@ export function getManagementHelpText() {
     "## 📊 분석 (플래티넘)",
     `\`${PREFIX} 서버분석\` — 서버 활동량 리포트`,
     `\`${PREFIX} 채널분석 [#채널/ID]\` — 채널 활동 통계`,
+    "",
+    "**💬 전체 기능 안내**",
+    `- \`${PREFIX} 도움말\` — 모든 기능(대화, 이미지, 후원, 예약 등) 안내`,
     "",
     "**💬 도움 및 문의**",
     `- 궁금한 점이 있다면 [서포트 서버](https://discord.gg/9bbXkkfcZv)에 방문해주세요!`,

@@ -1,7 +1,6 @@
 import { Groq } from "groq-sdk";
 import { OpenAI } from "openai";
 import {
-  DEEPSEEK_CHAT_MODEL,
   ADMIN_USER_ID,
   SYSTEM_PROMPT,
   GROQ_TPM_BUDGET,
@@ -10,16 +9,12 @@ import {
   IMAGE_GENERATION_MODEL,
 } from "../config.js";
 import { logError, logInfo } from "../logger.js";
+import { notifyApiFailure, recordAiRequest } from "./runtimeMetrics.js";
 import { createUserMessageContent } from "../utils.js";
 import { checkAndIncrementUsage } from "./subscription.js";
 
 export const groqClient = new Groq({
   apiKey: process.env.GROQ_API_KEY,
-});
-
-export const deepseekClient = new OpenAI({
-  baseURL: "https://integrate.api.nvidia.com/v1",
-  apiKey: process.env.NVIDIA_API_KEY,
 });
 
 export const nvidiaClient = new OpenAI({
@@ -638,8 +633,9 @@ export async function createChatCompletion({
   intent = null,
   model: userModel = null,
 }) {
+  const startedAt = Date.now();
   const task = intent || getChatTask(imageUrls);
-  const model = normalizeChatModel(userModel) || (imageUrls.length > 0 ? "google/diffusiongemma-26b-a4b-it" : "openai/gpt-oss-20b");
+  const model = normalizeChatModel(userModel) || (imageUrls.length > 0 ? "google/diffusiongemma-26b-a4b-it" : "gemini-2.5-flash-lite");
 
   logInfo("ai_call", {
     ...logContext,
@@ -652,7 +648,7 @@ export async function createChatCompletion({
   const request = ({ requestModel }) => {
     const options = {
       model: requestModel,
-      temperature: 0.4,
+      temperature: 0.6,
       top_p: 0.95,
       max_completion_tokens: isGroqModel(requestModel) ? GROQ_MAX_COMPLETION_TOKENS : 4096,
       stream: false,
@@ -675,8 +671,11 @@ export async function createChatCompletion({
         };
 
   try {
-    return await request({ requestModel: model });
+    const response = await request({ requestModel: model });
+    recordAiRequest({ task, model, durationMs: Date.now() - startedAt, success: true });
+    return response;
   } catch (error) {
+    recordAiRequest({ task, model, durationMs: Date.now() - startedAt, success: false, error });
     logError("chat_completion_failed", logContext.guildId, error, {
       ...logContext,
       model,
@@ -721,7 +720,7 @@ export async function createChatCompletionStream({
     model: model,
     messages: messages,
     max_completion_tokens: isGroqModel(model) ? GROQ_MAX_COMPLETION_TOKENS : 4096,
-    temperature: 0.4,
+    temperature: 0.6,
     top_p: 0.95,
     stream: true,
   });

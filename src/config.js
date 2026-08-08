@@ -7,26 +7,23 @@ export const ADMIN_USER_ID = "1269575955626725390";
 
 export const MODELS = {
   INTENT: "meta/llama-3.1-8b-instruct",
-  CONVERSATION: "openai/gpt-oss-20b",
+  CONVERSATION: "gemini-2.5-flash-lite",
   IMAGE_ANALYSIS: "google/diffusiongemma-26b-a4b-it",
   IMAGE_GENERATION_RUNTIME: "gptimage",
   VIDEO_ANALYSIS: "google/diffusiongemma-26b-a4b-it",
   GEMINI_WEB_SEARCH_MODEL: "gemini-2.0-flash",
-  GEMINI_SEARCH_MODEL: "gemini-2.5-flash",
-  DEEPSEEK_FLASH: "deepseek-ai/deepseek-v4-flash",
-  DEEPSEEK_PRO: "deepseek-ai/deepseek-v4-pro",
+  GEMINI_SEARCH_MODEL: "tavily-search",
   LLAMA_33: "meta/llama-3.3-70b-instruct",
   INTENT_FALLBACK: "meta/llama-3.1-8b-instruct",
-  CHAT_TEXT: "openai/gpt-oss-20b",
+  CHAT_TEXT: "gemini-2.5-flash-lite",
   VIDEO_RUNTIME: "nvidia/nemotron-nano-12b-v2-vl",
   LOG_SUMMARY: "openai/gpt-oss-20b",
   WEB_SEARCH_CLASSIFIER: "meta/llama-3.1-8b-instruct",
   MEMBER_MATCHER: "meta/llama-3.1-8b-instruct",
-  GOOGLE_SEARCH: "gemini-2.5-flash",
+  GOOGLE_SEARCH: "gemini-2.5-flash-lite",
 };
 
 export const PREFIX = "!FLUX";
-export const DEEPSEEK_CHAT_MODEL = MODELS.DEEPSEEK_FLASH;
 export const GEMINI_SEARCH_MODEL = MODELS.GOOGLE_SEARCH;
 export const IMAGE_GENERATION_MODEL = MODELS.IMAGE_GENERATION_RUNTIME;
 export const DISCORD_MESSAGE_LIMIT = 2000;
@@ -37,6 +34,13 @@ export const MAX_HISTORY_CONTENT_LENGTH = 800;
 export const GROQ_TPM_BUDGET = 1500;
 export const GROQ_MAX_COMPLETION_TOKENS = 2048;
 export const LOADING_EMOJI = "⏳";
+
+export const TIER_ROLE_CONFIG = {
+  "1525458537139146812": {
+    basic: "1525464471579922533",
+    premium: "1525464472360063096",
+  },
+};
 
 export const CLIENT_INTENTS = [
   GatewayIntentBits.Guilds,
@@ -54,6 +58,10 @@ export const SYSTEM_PROMPT = `
 
 1. 페르소나와 말투
 - 이름은 'FLUX'이며, 말투는 매우 친근하고 다정하며 자연스러운 존댓말을 사용해.
+- 친구와 편하게 대화하는 느낌으로 답해. 단, 분위기만 편하게 하고 반말은 절대 사용하지 마. 모든 문장의 종결은 반드시 존댓말로 해.
+- 짧고 자연스러운 대화에는 짧게 답하고, 매번 결론·요약·추가 안내를 붙이지 마. 사용자가 말한 감정이나 분위기를 먼저 받아줘.
+- 같은 인사나 감사 표현을 반복하지 말고, 필요한 말만 자연스럽게 이어가. 상황에 따라 "아 그렇군요", "맞아요", "그럴 수 있죠", "ㅋㅋ"처럼 가벼운 표현도 존댓말을 유지하며 적절히 사용할 수 있어.
+- 답변을 시작할 때 "안녕하세요, 사용자님", "무엇을 도와드릴까요?" 같은 정형적인 문구를 습관적으로 사용하지 마. 사용자의 말에 바로 반응해.
 - 질문에 꼭 필요한 경우에만 이모지를 사용하고 과도하게 사용하지 않아.
 - 디스코드 마크다운(### 제목, **굵게** 등)을 사용하여 가독성 있게 작성하고, 질문의 핵심 내용을 잘 정리해줘.
 - 절대로 \`\`\` 코드블록 문법을 사용하지 마. 코드블록을 사용하지 말고 일반 마크다운 문법만 사용해.
@@ -74,11 +82,10 @@ export const SYSTEM_PROMPT = `
   - 일반 대화: \`!FLUX [할말]\` - 자유로운 대화
   - 이미지 생성: \`!FLUX 이미지 생성 [설명]\`
   - 이미지 분석: 사진 첨부 후 \`!FLUX [질문]\`
-  - 등급/토큰: \`!FLUX 등급\`, \`!FLUX 등급 구매\`
+  - 등급/토큰: \`!FLUX 등급\`, \`!FLUX 후원\` (후원 금액에 따라 등급 지급)
   - 이름변경: \`!FLUX 이름변경 [새이름]\`
   - 서버 관리: \`!FLUX 관리 도움말\`
   - 예약메시지: \`!FLUX 예약\`
-  - 모델변경 (프리미엄): \`!FLUX 모델변경 <모델명>\`
   - 발음 변환: \`!FLUX 발음 [문장]\`
   - !음식, !namechange, !도움말 등은 존재하지 않는 명령어야. 절대 추천하지 마.
 
@@ -101,7 +108,7 @@ export const SYSTEM_PROMPT = `
 `.trim();
 
 export function validateEnv() {
-  const requiredEnv = ["DISCORD_TOKEN", "HF_TOKEN", "GROQ_API_KEY", "GEMINI_API_KEY", "NVIDIA_API_KEY", "POLLINATIONS_API_KEY", "DATABASE_URL"];
+  const requiredEnv = ["DISCORD_TOKEN", "HF_TOKEN", "GROQ_API_KEY", "GEMINI_API_KEY", "TAVILY_API_KEY", "NVIDIA_API_KEY", "POLLINATIONS_API_KEY", "DATABASE_URL"];
   const missingEnv = requiredEnv.filter((key) => !process.env[key]);
 
   if (missingEnv.length > 0) {

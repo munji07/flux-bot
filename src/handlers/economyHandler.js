@@ -7,7 +7,6 @@ import { getUserSubscriptionTier } from "../services/subscription.js";
 import { ADMIN_USER_ID } from "../config.js";
 import { logError, logInfo } from "../logger.js";
 import { db } from "../services/database.js";
-import { ensureRaidRole, addRaidRoleToMember, getRaidRoleId, mentionRaidRole } from "../services/raidRoleService.js";
 
 function getWebGameUrl() {
   return (process.env.WEB_APP_URL || process.env.BASE_URL || "http://localhost:3000").replace(/\/$/, "");
@@ -203,12 +202,6 @@ export async function handleEconomyCommand(interaction) {
       case "랭킹":      return await handleRanking(interaction);
       case "업적":      return await handleAchievements(interaction, userId);
       case "퀘스트":    return await handleQuests(interaction, userId);
-      case "레이드설정":
-      case "레이드_활성화": return await handleRaidConfig(interaction);
-      case "레이드_비활성화": return await handleRaidDeactivate(interaction);
-      case "레이드_상태": return await handleRaidStatus(interaction);
-      case "레이드_테스트": return await handleRaidTest(interaction);
-      case "레이드_참여": return await handleRaidJoin(interaction);
       case "농장알림": return await handleCropNotification(interaction, userId);
     }
   } catch (error) {
@@ -268,21 +261,6 @@ async function handleStatus(interaction, userId) {
     return `약 ${formatTime(diff)} 후`;
   };
 
-  let raidStatus = "확인 불가";
-  try {
-    const webUrl = getWebGameUrl();
-    const raidRes = await fetch(`${webUrl}/api/raid/state`);
-    if (raidRes.ok) {
-      const raidData = await raidRes.json();
-      if (raidData.raid) {
-        const hpPct = Math.max(0, Math.round(raidData.raid.current_hp / raidData.raid.max_hp * 100));
-        raidStatus = `⚔️ **${raidData.raid.boss_name}** HP ${hpPct}%`;
-      } else {
-        raidStatus = "휴면 상태";
-      }
-    }
-  } catch (e) {}
-
   const embed = new EmbedBuilder()
     .setColor(0x4CC9F0)
     .setTitle(`📊 ${interaction.user.displayName}님의 상황`)
@@ -295,7 +273,6 @@ async function handleStatus(interaction, userId) {
       { name: "아이템 수", value: `**${inventory.length}**종`, inline: true },
       { name: "채굴 가능", value: formatReady(miningReadyAt), inline: true },
       { name: "농사 가능", value: formatReady(farmingReadyAt), inline: true },
-      { name: "⚔️ 레이드 현황", value: raidStatus, inline: false },
       { name: "웹 플레이", value: `[웹사이트에서 플레이하기](${getWebGameUrl()})`, inline: false },
     )
     .setFooter({ text: "채굴/농사 실행은 웹사이트에서 진행됩니다." })
@@ -1599,7 +1576,7 @@ async function handleCropNotification(interaction, userId) {
 
   if (tier !== "premium") {
     await interaction.reply({
-      content: "❌ 작물 수확 알림은 **Premium** 등급 이상만 사용할 수 있습니다.\n`!FLUX 등급 구매` 명령어로 업그레이드하세요!",
+      content: "❌ 작물 수확 알림은 **Premium** 등급 이상만 사용할 수 있습니다.\n`!FLUX 후원` 명령어로 업그레이드하세요!",
       flags: MessageFlags.Ephemeral,
     });
     return;

@@ -86,6 +86,8 @@ export class EconomyService {
         ...ECONOMY_CONFIG.mining.rewards,
         ...ECONOMY_CONFIG.farming.rewards,
         ...ECONOMY_CONFIG.shop,
+        { id: "wordchain_hint_ticket", name: "힌트권", description: "끝말잇기에서 단어 힌트를 확인합니다." },
+        { id: "wordchain_pass_ticket", name: "패스권", description: "끝말잇기에서 봇의 차례로 넘깁니다." },
       ];
 
       return items

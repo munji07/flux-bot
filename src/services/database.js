@@ -22,12 +22,9 @@ const pool = new pg.Pool({
   max: Number(process.env.PG_POOL_MAX || 15),
   idleTimeoutMillis: Number(process.env.PG_IDLE_TIMEOUT_MS || 25000),
   connectionTimeoutMillis: 5000,
+  statement_timeout: 15000,
   keepAlive: true,
   maxUses: 7500,
-});
-
-pool.on("connect", (client) => {
-  client.query("SET statement_timeout = 15000").catch(() => {});
 });
 
 pool.on("error", (err) => {
@@ -189,7 +186,6 @@ async function ensureSchema() {
     CREATE TABLE IF NOT EXISTS user_settings (
       user_id TEXT PRIMARY KEY,
       display_name TEXT,
-      chat_model TEXT DEFAULT 'openai/gpt-oss-20b',
       updated_at TEXT NOT NULL DEFAULT TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS')
     );
 

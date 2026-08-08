@@ -1,4 +1,6 @@
 import { db } from "./database.js";
+import { TIER_ROLE_CONFIG } from "../config.js";
+import { logError } from "../logger.js";
 
 export const TIER_BENEFITS = {
   free: { miningMult: 1, growthMult: 1 },
@@ -83,6 +85,31 @@ export async function getUserSubscriptionTier(userId) {
 export async function updateUserSubscription(userId, tier, days = 30) {
   const kstNow = getKstDateTimeString();
   const expiresAt = tier === "free" ? null : getExpiryKstDateTimeString(days);
+
+  await db.run(
+    `INSERT INTO user_subscriptions (user_id, tier, expires_at, reminder_sent, created_at, updated_at)
+     VALUES ($1, $2, $3, 0, $4, $5)
+     ON CONFLICT(user_id) DO UPDATE SET
+       tier = EXCLUDED.tier,
+       expires_at = EXCLUDED.expires_at,
+       reminder_sent = 0,
+       updated_at = EXCLUDED.updated_at`,
+    [userId, tier, expiresAt, kstNow, kstNow],
+  );
+
+  return { tier, expiresAt };
+}
+
+export async function extendUserSubscription(userId, tier, days = 30) {
+  const kstNow = getKstDateTimeString();
+  const sub = await getUserSubscription(userId);
+  const baseStr = sub.expires_at && sub.expires_at > kstNow ? sub.expires_at : kstNow;
+  const kstOffset = 9 * 60 * 60 * 1000;
+  const baseUtc = new Date(baseStr.replace(" ", "T") + "+09:00").getTime();
+  const expiresAt = new Date(baseUtc + days * 24 * 60 * 60 * 1000 + kstOffset)
+    .toISOString()
+    .replace("T", " ")
+    .substring(0, 19);
 
   await db.run(
     `INSERT INTO user_subscriptions (user_id, tier, expires_at, reminder_sent, created_at, updated_at)
@@ -347,4 +374,28 @@ export async function updateServerSubscription(guildId, tier, days = 30) {
   );
 
   return { tier, expiresAt };
+}
+
+export async function syncTierRole(client, userId, tier) {
+  for (const [guildId, roleMap] of Object.entries(TIER_ROLE_CONFIG)) {
+    try {
+      const guild = await client.guilds.fetch(guildId).catch(() => null);
+      if (!guild) continue;
+      const member = await guild.members.fetch(userId).catch(() => null);
+      if (!member) continue;
+
+      for (const roleId of Object.values(roleMap)) {
+        if (member.roles.cache.has(roleId)) {
+          await member.roles.remove(roleId, "FLUX 등급 변경").catch(() => {});
+        }
+      }
+
+      const newRoleId = roleMap[tier];
+      if (newRoleId && tier !== "free") {
+        await member.roles.add(newRoleId, "FLUX 등급 부여").catch(() => {});
+      }
+    } catch (e) {
+      logError("sync_tier_role", guildId, e, { userId, tier });
+    }
+  }
 }

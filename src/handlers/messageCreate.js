@@ -1,11 +1,12 @@
-﻿import { ADMIN_USER_ID, PREFIX, SAFE_MESSAGE_LIMIT, HISTORY_BATCH_SIZE, GEMINI_SEARCH_MODEL, DEEPSEEK_CHAT_MODEL, LOADING_EMOJI } from "../config.js";
+﻿import { ADMIN_USER_ID, PREFIX, HISTORY_BATCH_SIZE, LOADING_EMOJI } from "../config.js";
+import { MessageFlags } from "discord.js";
 import { UserFacingError } from "../logger.js";
-import { handleManagementToolCall, getManagementHelpText } from "../commands/management.js";
+import { handleManagementToolCall } from "../commands/management.js";
 import { handleScheduleFromIntent } from "../commands/scheduler.js";
 import { handleSubscriptionToolCall, handleSubscriptionCommand } from "../commands/subscription.js";
 import { handleImageGenerationRequest } from "./imageGeneration.js";
 import { handleUserSettingsCommand } from "../commands/userSettings.js";
-import { handleBotFeatureInfoRequest } from "../services/botFeatureInfo.js";
+import { handleBotFeatureInfoRequest, getGeneralHelpText } from "../services/botFeatureInfo.js";
 import { handleDeveloperDiagnosticsRequest } from "../services/developerDiagnostics.js";
 import { handleLogSearchRequest, isPayloadTooLargeError } from "../services/logSearch.js";
 import { addServerImageToken, checkAndIncrementUsage, decrementUsage, TIER_LIMITS } from "../services/subscription.js";
@@ -20,7 +21,6 @@ import {
   createApiUserMessage,
   createChatCompletion,
   fetchChannelContext,
-  isGroqModel,
   isGroqRateLimitError,
   stripReasoningTags,
   stripCodeBlocks,
@@ -41,16 +41,22 @@ import {
   stripFancyUnicode,
 } from "../utils.js";
 import { getPronunciationReply } from "../utils.js";
+import { handleWordChainMessage, handleWordChainPurchaseCommand } from "../services/gameManager.js";
+import { getRuntimeStatus, notifyApiFailure } from "../services/runtimeMetrics.js";
 
 function createLimitExceededMessage(username, tierName, usageTypeName, limit, prefix) {
   const limitText = limit === Infinity ? "무제한" : `${limit}회`;
   return `❌ **${usageTypeName} 한도 초과**\n` +
     `현재 ${username}님의 등급은 \`${tierName}\`이며, 하루 ${usageTypeName} 제한량은 **${limitText}**입니다.\n` +
-    `오늘 제한량을 모두 소모하셨습니다. 내일 다시 시도하시거나, \`${prefix} 등급 구매\`를 통해 한도를 늘려보세요!`;
+    `오늘 제한량을 모두 소모하셨습니다. 내일 다시 시도하시거나, \`${prefix} 후원\`을 통해 한도를 늘려보세요!`;
 }
 
 const activeUsers = new Map();
 const ACTIVE_USER_TIMEOUT_MS = 5 * 60 * 1000;
+
+function getActiveUserKey(message) {
+  return `${message.guildId}:${message.author.id}`;
+}
 
 setInterval(() => {
   const now = Date.now();
@@ -63,6 +69,9 @@ setInterval(() => {
 
 export async function handleMessageCreate(client, message) {
   if (message.author.bot || !message.inGuild()) return;
+
+  if (await handleWordChainPurchaseCommand(message)) return;
+  if (await handleWordChainMessage(message)) return;
 
   if (message.content && message.content.trim().startsWith('&')) return;
 
@@ -122,18 +131,31 @@ export async function handleMessageCreate(client, message) {
   }
 
   const now = Date.now();
-  if (activeUsers.has(message.author.id)) {
+  if (activeUsers.has(getActiveUserKey(message))) {
     await message.reply("FLUX가 이미 답변을 작성하고 있어요. 답변이 완료된 후 다시 질문해주세요!");
     return;
   }
 
   // 도움말은 AI 분류 없이 바로 응답
   if (userPrompt === "도움말") {
-    await message.reply(getManagementHelpText());
+    await message.reply(getGeneralHelpText(PREFIX));
     return;
   }
 
-  activeUsers.set(message.author.id, now);
+  if (userPrompt === "상태" && message.author.id === ADMIN_USER_ID) {
+    const status = getRuntimeStatus();
+    await message.reply([
+      "📊 FLUX 상태",
+      `샤드: ${client.shard?.ids?.join(", ") ?? "단일"}`,
+      `최근 AI 요청: ${status.recentRequestCount}회`,
+      `최근 실패: ${status.failedRequestCount}회`,
+      `평균 응답 시간: ${status.averageDurationMs}ms`,
+      `연속 API 실패: ${status.consecutiveApiFailures}회`,
+    ].join("\n"));
+    return;
+  }
+
+  activeUsers.set(getActiveUserKey(message), now);
   try {
     let usageCheck = null;
     let usageType = null;
@@ -336,6 +358,7 @@ export async function handleMessageCreate(client, message) {
         userTag: message.author.tag,
         commandText: userPrompt,
       });
+      await decrementUsage(message.author.id, "ai_calls");
       await loadingMessage.edit("채널 요약 중 문제가 발생했어요. 잠시 뒤 다시 시도해주세요.");
     }
     return;
@@ -425,13 +448,13 @@ export async function handleMessageCreate(client, message) {
         userTag: message.author.tag,
         commandText: userPrompt,
         task: "google_search",
-        model: GEMINI_SEARCH_MODEL,
+        model: "tavily-search",
       });
 
       const searchResult = await handleGoogleSearch(query);
       if (searchResult) {
-        const answerWithFooter = `${stripModelFooter(searchResult)}\n\n-# 🤖 모델: ${GEMINI_SEARCH_MODEL}`;
-        await sendChunkedAnswer(message, loadingMessage, answerWithFooter);
+        const answerWithFooter = `${stripModelFooter(searchResult)}\n\n-# 🔎 검색: Tavily`;
+        await sendChunkedAnswer(message, loadingMessage, answerWithFooter, { flags: MessageFlags.SuppressEmbeds });
 
         // 결과 전송 로그 기록
         logInfo("answer_sent", {
@@ -453,6 +476,7 @@ export async function handleMessageCreate(client, message) {
         userTag: message.author.tag,
         commandText: userPrompt,
       });
+      await decrementUsage(message.author.id, "ai_calls");
       await loadingMessage.edit("검색 중 문제가 생겼어요.");
   }
     return;
@@ -590,7 +614,7 @@ export async function handleMessageCreate(client, message) {
   let typingInterval;
   let currentStep = "command_detected";
 
-  const usedModel = attachedImageUrls.length > 0 ? "google/diffusiongemma-26b-a4b-it" : "openai/gpt-oss-20b";
+  const usedModel = attachedImageUrls.length > 0 ? "google/diffusiongemma-26b-a4b-it" : "gemini-2.5-flash-lite";
 
   try {
     const historyKey = getHistoryKey(message); // 로깅 및 DB 저장을 위해 유지
@@ -647,6 +671,7 @@ export async function handleMessageCreate(client, message) {
 
     currentStep = "request_ai_completion";
     let answer;
+    let responseModel = usedModel;
 
     if (imageUrls.length === 0) {
       try {
@@ -679,7 +704,7 @@ export async function handleMessageCreate(client, message) {
           errorDetail: primaryError.message
         });
 
-        if (isPayloadTooLargeError(primaryError) || isGroqRateLimitError(primaryError)) {
+        if (isPayloadTooLargeError(primaryError) || isGroqRateLimitError(primaryError) || primaryError.message === "Primary model returned empty content") {
           currentStep = "request_nvidia_fallback";
           await loadingMessage.edit(`-# ${LOADING_EMOJI} FLUX봇이 다른 모델로 답변을 이어서 준비하고 있어요...`);
 
@@ -695,13 +720,14 @@ export async function handleMessageCreate(client, message) {
               logContext: {
                 ...logContext,
                 fallbackFrom: usedModel,
-                fallbackTo: DEEPSEEK_CHAT_MODEL,
+                fallbackTo: "openai/gpt-oss-20b",
               },
               intent: intent.type,
-              model: DEEPSEEK_CHAT_MODEL,
+              model: "openai/gpt-oss-20b",
             });
 
             currentStep = "parse_nvidia_fallback_answer";
+            responseModel = "openai/gpt-oss-20b";
             answer = stripCodeBlocks(stripReasoningTags(fallbackCompletion.choices?.[0]?.message?.content ?? ""));
             answer = stripFancyUnicode(stripModelFooter(answer));
             if (!answer || answer.trim().length === 0) {
@@ -753,7 +779,7 @@ export async function handleMessageCreate(client, message) {
     }
 
     currentStep = "send_ai_answer";
-    const modelFooter = `\n\n-# 🤖 모델: ${getModelDisplayName(usedModel)}`;
+    const modelFooter = `\n\n-# 🤖 모델: ${getModelDisplayName(responseModel)}`;
     const firstTalkFooter = isFirstConversation 
       ? `\n\n-# 👋 처음 대화하시는 것이라 **${displayName}**님이라고 부를게요. 이름을 바꾸고 싶으시다면 \`${PREFIX} 이름변경 [새이름]\`을 입력해주세요!`
       : "";
@@ -781,6 +807,8 @@ export async function handleMessageCreate(client, message) {
       channelId: message.channelId,
       userId: message.author.id,
       userName,
+      model: responseModel,
+      modelDisplayName: getModelDisplayName(responseModel),
       answerLength: answer.length,
       storedHistoryMessageCount: await getStoredHistoryLength(historyKey),
     });
@@ -799,6 +827,7 @@ export async function handleMessageCreate(client, message) {
       userId: message.author.id,
       userTag: message.author.tag,
     });
+    await notifyApiFailure(client, error, { task: currentStep });
 
     const errorMessage =
       error instanceof UserFacingError
@@ -816,7 +845,7 @@ export async function handleMessageCreate(client, message) {
           userTag: message.author.tag,
         });
 
-        return message.reply(errorMessage).catch((replyError) => {
+        return message.channel.send(errorMessage).catch((replyError) => {
           logError("reply_error_message", message.guildId, replyError, {
             guildName: message.guild.name,
             channelId: message.channelId,
@@ -826,7 +855,7 @@ export async function handleMessageCreate(client, message) {
         });
       });
     } else {
-      await message.reply(errorMessage).catch((replyError) => {
+      await message.channel.send(errorMessage).catch((replyError) => {
         logError("reply_error_message", message.guildId, replyError, {
           guildName: message.guild.name,
           channelId: message.channelId,
@@ -839,21 +868,21 @@ export async function handleMessageCreate(client, message) {
     if (typingInterval) clearInterval(typingInterval);
   }
   } finally {
-    activeUsers.delete(message.author.id);
+    activeUsers.delete(getActiveUserKey(message));
   }
 }
 
 function stripModelFooter(text) {
-  return text.replace(/\n\n-? ?#? ?🤖 모델: .*$/gm, "").trim();
+  return text.replace(/\n\s*-#\s*🤖\s*(?:모델|요약 모델):[^\n]*\s*$/gim, "").trim();
 }
 
 function getModelDisplayName(model) {
   const map = {
     "openai/gpt-oss-20b": "GPT-OSS 20B",
+    "gemini-2.5-flash-lite": "Gemini 2.5 Flash-Lite",
     "google/diffusiongemma-26b-a4b-it": "DiffusionGemma 26B",
-    "deepseek-ai/deepseek-v4-flash": "DeepSeek V4 Flash",
   };
-  return map[model] || "Qwen3 32B";
+  return map[model] || model || "알 수 없는 모델";
 }
 
 

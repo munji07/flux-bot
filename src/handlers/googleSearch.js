@@ -1,74 +1,72 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
-import { GEMINI_SEARCH_MODEL } from "../config.js";
 import { logError } from "../logger.js";
+import { MODELS } from "../config.js";
+import { groqClient } from "../services/ai.js";
 
-/**
- * Google Search Grounding을 사용하여 웹 검색 결과를 바탕으로 응답을 생성합니다.
- * @param {string} query - 사용자로부터 받은 검색 질문
- * @returns {Promise<string>} - 검색 결과가 반영된 생성 텍스트
- */
 export async function handleGoogleSearch(query) {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error("GEMINI_API_KEY가 설정되어 있지 않습니다.");
-  }
-
-  const genAI = new GoogleGenerativeAI(apiKey);
+  const apiKey = process.env.TAVILY_API_KEY;
+  if (!apiKey) throw new Error("TAVILY_API_KEY가 설정되어 있지 않습니다.");
 
   try {
-    const model = genAI.getGenerativeModel({
-      model: GEMINI_SEARCH_MODEL,
-      tools: [
-        {
-          googleSearch: {},
-        },
-      ],
+    const response = await fetch("https://api.tavily.com/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        api_key: apiKey,
+        query,
+        search_depth: "fast",
+        topic: "general",
+        max_results: 5,
+        include_answer: true,
+        include_raw_content: false,
+      }),
     });
+    if (!response.ok) throw new Error(`Tavily API ${response.status}`);
 
-    // 한국어 응답 및 디스코드 마크다운 형식을 강제하는 프롬프트 구성
-    const prompt = `다음 질문에 대해 실시간 검색 결과를 바탕으로 한국어로 답변해줘. 
-디스코드 마크다운(### 제목, **굵게** 등)을 사용하여 가독성 있게 작성하고, 질문의 핵심 내용을 잘 정리해줘.
+    const data = await response.json();
+    const results = data.results ?? [];
+    if (!data.answer && results.length === 0) throw new Error("Tavily 검색 결과가 비어 있습니다.");
 
-질문: ${query}`;
-
-    const result = await model.generateContent(prompt);
-    const response = result?.response;
-    let text = response?.text?.();
-
-    if (!text) {
-      throw new Error("Google 검색에서 응답 텍스트를 받지 못했습니다.");
-    }
-
-    // 검색 출처(Grounding Metadata) 추출 및 하단 추가
-    const metadata = response?.candidates?.[0]?.groundingMetadata;
-    if (metadata?.groundingChunks) {
-      const uniqueDomains = new Map();
-      metadata.groundingChunks.forEach((chunk) => {
-        if (chunk.web?.uri) {
-          try {
-            const domain = new URL(chunk.web.uri).hostname.replace(/^www\./, "");
-            // 동일한 도메인이 여러 번 나와도 한 번만 추가되도록 설정
-            if (!uniqueDomains.has(domain)) {
-              uniqueDomains.set(domain, chunk.web.uri);
-            }
-          } catch {
-            // 잘못된 URL 형식인 경우 무시
-          }
-        }
-      });
-
-      if (uniqueDomains.size > 0) {
-        const footer = Array.from(uniqueDomains.entries())
-          .slice(0, 5) // 최대 5개의 고유 도메인만 표시
-          .map(([domain, uri]) => `${domain}`)
-          .join(" | ");
-        text = `${text.trim()}\n\n-# 🔗 출처: ${footer}`;
+    const sourceText = results
+      .map((item, index) => `[${index + 1}] ${item.title}\n${item.content || ""}`)
+      .join("\n\n")
+      .slice(0, 18000);
+    const summaryResponse = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${MODELS.GEMINI_WEB_SEARCH_MODEL}:generateContent?key=${encodeURIComponent(process.env.GEMINI_API_KEY)}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: "검색 결과를 근거로 한국어로만 답변하는 도우미입니다. 검색 결과 원문이나 메타데이터를 그대로 복사하지 말고 질문에 직접 답하세요. 확인되지 않은 내용은 추측하지 마세요." }] },
+          contents: [{ role: "user", parts: [{ text: `질문: ${query}\n\n검색 결과:\n${sourceText || data.answer}` }] }],
+          generationConfig: { temperature: 0.2, maxOutputTokens: 1200 },
+        }),
+      },
+    );
+    if (!summaryResponse.ok) {
+      if (summaryResponse.status === 429) {
+        const fallbackCompletion = await groqClient.chat.completions.create({
+          model: MODELS.LOG_SUMMARY,
+          messages: [
+            { role: "system", content: "검색 결과를 근거로 한국어로만 답변하세요. 검색 결과의 표, 참고 문구, 출처 목록을 그대로 복사하지 말고 자연스러운 제목과 짧은 문단 또는 항목 목록으로 다시 정리하세요. 확인되지 않은 내용은 '확인되지 않음'으로 표시하고 추측하지 마세요. 핵심 정보만 간결하게 작성하세요." },
+            { role: "user", content: `질문: ${query}\n\n검색 결과:\n${sourceText || data.answer}` },
+          ],
+          temperature: 0.2,
+          max_completion_tokens: 1200,
+        });
+        const fallbackAnswer = fallbackCompletion.choices?.[0]?.message?.content?.trim();
+        if (!fallbackAnswer) throw new Error("GPT OSS search summary가 비어 있습니다.");
+        const sources = results.slice(0, 5).map((item, index) => `${index + 1}. [${item.title}](${item.url})`).join("\n");
+        return `${fallbackAnswer}\n\n### 출처\n${sources}`.trim();
       }
+      throw new Error(`Gemini search summary API ${summaryResponse.status}`);
     }
-
-    return text.trim();
+    const summaryData = await summaryResponse.json();
+    const answer = summaryData.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("").trim();
+    if (!answer) throw new Error("검색 결과 요약이 비어 있습니다.");
+    const sources = results.slice(0, 5).map((item, index) => `${index + 1}. [${item.title}](${item.url})`).join("\n");
+    return `${answer}\n\n### 출처\n${sources}`.trim();
   } catch (error) {
-    logError("google_search_handler_error", null, error, { query });
-    throw new Error("웹 검색 정보를 가져오는 중 오류가 발생했습니다.");
+    logError("tavily_search_handler_error", null, error, { query });
+    throw new Error("웹 검색 중 오류가 발생했습니다.");
   }
 }

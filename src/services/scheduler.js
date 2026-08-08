@@ -36,15 +36,6 @@ export function startScheduler(client) {
     checkExpiringSubscriptions(client).catch((error) => {
       logError("scheduler_expiry_check_failed", null, error);
     });
-    checkRaidPreWarning(client).catch((error) => {
-      logError("raid_prewarning_failed", null, error);
-    });
-    checkDailyRaidSpawn(client).catch((error) => {
-      logError("raid_daily_spawn_check_failed", null, error);
-    });
-    checkRaidDefeated(client).catch((error) => {
-      logError("raid_defeated_check_failed", null, error);
-    });
     checkCropNotifications(client).catch((error) => {
       logError("crop_notification_check_failed", null, error);
     });

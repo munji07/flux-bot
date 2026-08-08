@@ -24,7 +24,7 @@ export async function handleVideoAnalysis(message, userPrompt, loadingMessage) {
     // 사용량 체크
     usageCheck = await checkAndIncrementUsage(message.author.id, "video_analysis", message.guildId);
     if (!usageCheck.allowed) {
-      await loadingMessage.edit("죄송해요! 영상 분석은 프리미엄 등급에게 하루 3회까지만 제공돼요. `!FLUX 등급 구매`를 통해 프리미엄 등급을 이용해보세요!");
+      await loadingMessage.edit("죄송해요! 영상 분석은 프리미엄 등급에게 하루 3회까지만 제공돼요. `!FLUX 후원`을 통해 프리미엄 등급을 이용해보세요!");
       return true;
     }
 

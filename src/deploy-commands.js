@@ -16,7 +16,7 @@ const commands = [
     .setDescription("자신의 잔액을 조회합니다."),
   new SlashCommandBuilder()
     .setName("상황")
-    .setDescription("현재 잔액과 웹 채굴/농사/레이드 가능 상태를 조회합니다."),
+    .setDescription("현재 잔액과 웹 채굴/농사 가능 상태를 조회합니다."),
   new SlashCommandBuilder()
     .setName("룰렛")
     .setDescription("룰렛을 돌려 도박을 즐깁니다. 숫자 맞추면 x36!")
@@ -121,45 +121,6 @@ const commands = [
     .setName("퀘스트")
     .setDescription("일일 퀘스트 현황을 확인하고 보상을 수령합니다."),
   new SlashCommandBuilder()
-    .setName("레이드설정")
-    .setDescription("보스 레이드 출현 알림을 받을 채널을 지정합니다.")
-    .addChannelOption(option =>
-      option.setName("채널")
-        .setDescription("알림을 보낼 채널을 선택하세요")
-        .setRequired(true)),
-  new SlashCommandBuilder()
-    .setName("레이드_활성화")
-    .setDescription("레이드를 활성화하고 공지 채널을 지정합니다.")
-    .addChannelOption(option =>
-      option.setName("채널")
-        .setDescription("매일 22시 레이드 공지를 보낼 채널을 선택하세요")
-        .setRequired(true))
-    .addStringOption(option =>
-      option.setName("역할이름")
-        .setDescription("레이드 참여자에게 부여할 역할 이름 (기본: 레이드 참여자)")
-        .setRequired(false)
-        .setMaxLength(100)),
-  new SlashCommandBuilder()
-    .setName("레이드_비활성화")
-    .setDescription("이 서버의 레이드를 비활성화합니다."),
-  new SlashCommandBuilder()
-    .setName("레이드_상태")
-    .setDescription("현재 서버의 레이드 설정 상태를 확인합니다."),
-  new SlashCommandBuilder()
-    .setName("레이드_테스트")
-    .setDescription("[개발자 전용] 테스트 레이드 보스를 소환합니다.")
-    .addIntegerOption(option =>
-      option.setName("hp")
-        .setDescription("보스 HP (기본: 10000)")
-        .setRequired(false))
-    .addStringOption(option =>
-      option.setName("이름")
-        .setDescription("보스 이름 (기본: 테스트 보스)")
-        .setRequired(false)),
-  new SlashCommandBuilder()
-    .setName("레이드_참여")
-    .setDescription("레이드 참여 역할을 받고 레이드 알림 멘션 대상이 됩니다."),
-  new SlashCommandBuilder()
     .setName("농장알림")
     .setDescription("작물 수확 알림을 관리합니다. (Premium 전용)")
     .addSubcommand(sub => sub
@@ -185,6 +146,58 @@ const commands = [
     .addSubcommand(sub => sub
       .setName("전체비활성화")
       .setDescription("모든 작물에 대해 수확 알림을 끕니다.")),
+  new SlashCommandBuilder()
+    .setName("끝말잇기")
+    .setDescription("봇과 1:1 또는 유저와 대전하는 끝말잇기를 시작합니다! (스레드에서 진행)")
+    .addStringOption(opt => opt
+      .setName("난이도")
+      .setDescription("게임 난이도 (기본: 보통, 봇 대전 전용)")
+      .setRequired(false)
+      .addChoices(
+        { name: "쉬움", value: "easy" },
+        { name: "보통", value: "normal" },
+        { name: "어려움", value: "hard" },
+        { name: "불가능", value: "impossible" },
+      ))
+    .addUserOption(opt => opt
+      .setName("상대")
+      .setDescription("대결할 상대 유저 (입력하면 유저 간 대전)")
+      .setRequired(false))
+    .addBooleanOption(opt => opt
+      .setName("유저부터")
+      .setDescription("봇보다 먼저 단어를 입력합니다")
+      .setRequired(false)),
+  new SlashCommandBuilder()
+    .setName("단어추가")
+    .setDescription("끝말잇기 사전에 단어를 추가합니다. (관리자 전용)")
+    .addStringOption(option => option
+      .setName("단어")
+      .setDescription("추가할 한글 단어")
+      .setRequired(true)),
+  new SlashCommandBuilder()
+    .setName("단어조회")
+    .setDescription("끝말잇기 사전에서 단어 정보를 조회합니다.")
+    .addStringOption(option => option
+      .setName("단어")
+      .setDescription("조회할 한글 단어")
+      .setRequired(true)),
+  new SlashCommandBuilder()
+    .setName("단어제거")
+    .setDescription("끝말잇기 사전에서 단어를 제거합니다. (관리자 전용)")
+    .addStringOption(option => option
+      .setName("단어")
+      .setDescription("제거할 한글 단어")
+      .setRequired(true)),
+  new SlashCommandBuilder()
+    .setName("이름변경")
+    .setDescription("봇이 나를 부를 이름을 설정합니다.")
+    .addStringOption(option => option
+      .setName("이름")
+      .setDescription("변경할 새 이름 (최대 40자)")
+      .setRequired(true)),
+  new SlashCommandBuilder()
+    .setName("이름초기화")
+    .setDescription("저장된 이름을 초기화하고 디스코드 닉네임으로 다시 설정합니다."),
 ].map((command) => command.toJSON());
 
 const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);

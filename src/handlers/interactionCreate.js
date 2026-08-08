@@ -10,13 +10,15 @@ import {
   TextInputStyle,
 } from "discord.js";
 import { ADMIN_USER_ID } from "../config.js";
-import { addServerImageToken, updateUserSubscription, getServerSubscriptionTier } from "../services/subscription.js";
+import { addServerImageToken, extendUserSubscription, getKstNow, getServerSubscriptionTier, syncTierRole } from "../services/subscription.js";
 import { createScheduledMessage } from "../services/scheduler.js";
 import { parseScheduleTime, scheduleChannelMap } from "../commands/scheduler.js";
 import { db } from "../services/database.js";
 import { logError } from "../logger.js";
 import { handleEconomyCommand, handleFishingCatch } from "./economyHandler.js";
+import { handleAddWordCommand, handleLookupWordCommand, handleRemoveWordCommand, handleWordChainCommand } from "../services/gameManager.js";
 import { EconomyQuestService } from "../services/economyQuestService.js";
+import { handleNameChangeSlashCommand, handleNameResetSlashCommand } from "../commands/userSettings.js";
 
 const SERVER_TOKEN_LABELS = {
   image_readings: "서버 이미지 검토 토큰",
@@ -38,7 +40,24 @@ export async function handleInteractionCreate(client, interaction) {
   // ── 슬래시 명령어 처리 ────────────────────────────────────────────────────
   if (interaction.isChatInputCommand()) {
     try {
-      await handleEconomyCommand(interaction);
+      if (interaction.commandName === "단어추가") {
+        await handleAddWordCommand(interaction);
+      } else if (interaction.commandName === "단어조회") {
+        await handleLookupWordCommand(interaction);
+      } else if (interaction.commandName === "단어제거") {
+        await handleRemoveWordCommand(interaction);
+      } else if (interaction.commandName === "끝말잇기") {
+        const difficulty = interaction.options.getString("난이도") || "normal";
+        const opponent = interaction.options.getUser("상대")?.id ?? null;
+        const userStarts = interaction.options.getBoolean("유저부터") ?? false;
+        await handleWordChainCommand(interaction, difficulty, opponent, userStarts);
+      } else if (interaction.commandName === "이름변경") {
+        await handleNameChangeSlashCommand(interaction);
+      } else if (interaction.commandName === "이름초기화") {
+        await handleNameResetSlashCommand(interaction);
+      } else {
+        await handleEconomyCommand(interaction);
+      }
     } catch (err) {
       logError("slash_command_execution_failed", interaction.guildId, err, {
         commandName: interaction.commandName,
@@ -203,6 +222,79 @@ export async function handleInteractionCreate(client, interaction) {
     return;
   }
 
+  // ── 후원 금액 입력 모달 제출 ─────────────────────────────────────────────
+  if (interaction.isModalSubmit() && interaction.customId.startsWith("donation_submit:")) {
+    const userId = interaction.customId.split(":")[1];
+    if (interaction.user.id !== userId) {
+      await interaction.reply({ content: "본인의 후원만 접수할 수 있어요.", flags: MessageFlags.Ephemeral });
+      return;
+    }
+
+    const amountText = interaction.fields.getTextInputValue("donation_amount").replace(/[^\d]/g, "");
+    const amount = parseInt(amountText, 10);
+
+    if (!Number.isInteger(amount) || amount <= 0) {
+      await interaction.reply({
+        content: "❌ 후원 금액을 올바른 숫자(원)로 입력해 주세요. 예: 5000",
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    const tier = amount >= 5000 ? "premium" : amount >= 3000 ? "basic" : null;
+    const tierLabel = tier === "premium" ? "Premium" : tier === "basic" ? "Basic" : "등급 미해당 (3,000원 미만)";
+
+    const now = getKstNow();
+    const timeStr = `${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}`;
+    const depositName = `${timeStr}-${userId}`;
+
+    try {
+      const developer = await client.users.fetch(ADMIN_USER_ID);
+      if (developer) {
+        let adminNotifyMsg = `🔔 **[후원 알림]**\n\n`;
+        adminNotifyMsg += `- **후원자**: <@${userId}> (ID: \`${userId}\`)\n`;
+        adminNotifyMsg += `- **후원 금액**: \`${amount.toLocaleString("ko-KR")}원\`\n`;
+        adminNotifyMsg += `- **산정 등급**: \`${tierLabel}\`\n`;
+        adminNotifyMsg += `- **입금자명**: \`${depositName}\`\n`;
+        adminNotifyMsg += `- **신청 시간**: \`${timeStr}\`\n\n`;
+
+        if (tier) {
+          adminNotifyMsg += `*아래 버튼을 눌러 후원 등급 부여 또는 반려 처리를 진행하세요.*`;
+          const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`admin_approve:${tier}:${userId}`)
+              .setLabel(`${tier.toUpperCase()} 부여`)
+              .setStyle(ButtonStyle.Success),
+            new ButtonBuilder()
+              .setCustomId(`admin_reject:${userId}`)
+              .setLabel("반려 (거절)")
+              .setStyle(ButtonStyle.Danger),
+          );
+          await developer.send({ content: adminNotifyMsg, components: [row] });
+        } else {
+          adminNotifyMsg += `*3,000원 미만 후원으로 등급 지급 대상이 아닙니다. (등급 기준: 3,000원 이상 Basic, 5,000원 이상 Premium)*`;
+          await developer.send({ content: adminNotifyMsg });
+        }
+      }
+
+      const tierLine = tier
+        ? `- **지급 등급**: \`${tierLabel}\` (30일)`
+        : `- **지급 등급**: 없음 (3,000원 이상부터 Basic, 5,000원 이상부터 Premium 등급이 지급됩니다)`;
+
+      await interaction.reply({
+        content: `✅ **후원 접수가 완료되었습니다.**\n\n- **후원 금액**: \`${amount.toLocaleString("ko-KR")}원\`\n- **입금자명**: \`${depositName}\`\n${tierLine}\n\n개발자가 입금을 확인한 뒤 등급을 부여해 드려요. 잠시만 기다려주세요! ✨`,
+        flags: MessageFlags.Ephemeral,
+      });
+    } catch (error) {
+      console.error("Error processing donation submit:", error);
+      await interaction.reply({
+        content: "❌ 후원 접수 처리 중 오류가 발생했습니다. 개발자에게 직접 문의해주세요.",
+        flags: MessageFlags.Ephemeral,
+      }).catch(() => {});
+    }
+    return;
+  }
+
   // ── 이 이하는 버튼 전용 ───────────────────────────────────────────────────
   if (!interaction.isButton()) return;
 
@@ -258,6 +350,29 @@ export async function handleInteractionCreate(client, interaction) {
       new ActionRowBuilder().addComponents(contentInput),
       new ActionRowBuilder().addComponents(channelInput),
     );
+
+    await interaction.showModal(modal);
+    return;
+  }
+
+  // 후원 금액 입력 모달 열기 버튼
+  if (customId.startsWith("donation_open_modal:")) {
+    const userId = customId.split(":")[1];
+    if (interaction.user.id !== userId) {
+      await interaction.reply({ content: "본인의 후원만 진행할 수 있어요.", flags: MessageFlags.Ephemeral });
+      return;
+    }
+
+    const modal = new ModalBuilder().setCustomId(`donation_submit:${userId}`).setTitle("FLUX봇 후원 완료");
+
+    const amountInput = new TextInputBuilder()
+      .setCustomId("donation_amount")
+      .setLabel("후원 금액 (원)")
+      .setPlaceholder("예: 5000")
+      .setStyle(TextInputStyle.Short)
+      .setRequired(true);
+
+    modal.addComponents(new ActionRowBuilder().addComponents(amountInput));
 
     await interaction.showModal(modal);
     return;
@@ -552,22 +667,24 @@ export async function handleInteractionCreate(client, interaction) {
     const [, tier, userId] = parts;
 
     try {
-      const { tier: updatedTier, expiresAt } = await updateUserSubscription(userId, tier, 30);
+      const { tier: updatedTier, expiresAt } = await extendUserSubscription(userId, tier, 30);
       const displayExpiry = expiresAt ? `${expiresAt} (KST)` : "무제한";
 
+      await syncTierRole(client, userId, tier);
+
       await interaction.update({
-        content: `✅ <@${userId}> (ID: \`${userId}\`)님의 \`${updatedTier.toUpperCase()}\` 등급 구매 신청을 **승인**했습니다.\n- 만료일: \`${displayExpiry}\``,
+        content: `✅ <@${userId}> (ID: \`${userId}\`)님의 후원에 따른 \`${updatedTier.toUpperCase()}\` 등급 부여를 **승인**했습니다.\n- 만료일: \`${displayExpiry}\``,
         components: [],
       });
 
       const targetUser = await client.users.fetch(userId).catch(() => null);
       if (targetUser) {
         await targetUser.send(
-          `🎉 **FLUX봇 등급 승인 완료**\n\n` +
-          `안녕하세요, **${targetUser.username}**님! 개발자가 송금 확인을 완료하여 등급을 승인했습니다.\n` +
+          `🎉 **FLUX봇 후원 등급 승인 완료**\n\n` +
+          `안녕하세요, **${targetUser.username}**님! 개발자가 후원 확인을 완료하여 등급을 승인했습니다.\n` +
           `- **부여 등급**: \`${updatedTier.toUpperCase()}\`\n` +
           `- **만료 일자**: \`${displayExpiry}\`\n\n` +
-          `지금부터 혜택이 정상적으로 적용됩니다. FLUX봇을 애용해 주셔서 감사합니다! 💛`
+          `지금부터 혜택이 정상적으로 적용됩니다. FLUX봇을 후원해 주셔서 감사합니다! 💛`
         ).catch(() => {});
       }
     } catch (dbError) {

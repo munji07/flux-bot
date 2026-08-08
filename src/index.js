@@ -46,7 +46,10 @@ manager.on("shardCreate", (shard) => {
   });
 });
 
-manager.spawn();
+manager.spawn().catch((error) => {
+  logError("shard_spawn_failed", "unknown", error);
+  process.exitCode = 1;
+});
 
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));

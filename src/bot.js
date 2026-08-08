@@ -4,15 +4,15 @@ import { handleMessageCreate } from "./handlers/messageCreate.js";
 import { handleInteractionCreate } from "./handlers/interactionCreate.js";
 import { logError, logInfo } from "./logger.js";
 import { startScheduler } from "./services/scheduler.js";
+import { preloadWordCache } from "./services/wordCache.js";
 
 validateEnv();
+preloadWordCache();
 
 const discordClient = new Client({
   intents: CLIENT_INTENTS,
   partials: [Partials.Channel, Partials.Message],
 });
-
-let schedulerCleanup = null;
 
 discordClient.once(Events.ClientReady, (client) => {
   logInfo("bot_ready", {
@@ -31,7 +31,7 @@ discordClient.once(Events.ClientReady, (client) => {
     ],
   });
 
-  schedulerCleanup = startScheduler(client);
+  startScheduler(client);
 });
 
 discordClient.on(Events.MessageCreate, (message) => {
@@ -57,14 +57,13 @@ discordClient.on(Events.InteractionCreate, (interaction) => {
 
 discordClient.on(Events.ShardDisconnect, (event, shardId) => {
   logInfo("shard_disconnect", { shardId, eventCode: event?.code });
-  if (schedulerCleanup) {
-    schedulerCleanup();
-    schedulerCleanup = null;
-  }
 });
 
 discordClient.on(Events.ShardReconnecting, (shardId) => {
   logInfo("shard_reconnecting", { shardId });
 });
 
-discordClient.login(process.env.DISCORD_TOKEN);
+discordClient.login(process.env.DISCORD_TOKEN).catch((error) => {
+  logError("bot_login_failed", "unknown", error);
+  process.exitCode = 1;
+});
