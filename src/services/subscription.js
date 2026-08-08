@@ -125,6 +125,18 @@ export async function extendUserSubscription(userId, tier, days = 30) {
   return { tier, expiresAt };
 }
 
+export async function updateDonationAmount(userId, amount) {
+  const kstNow = getKstDateTimeString();
+  const result = await db.get(
+    `INSERT INTO user_subscriptions (user_id, tier, donation_amount, created_at, updated_at)
+     VALUES ($1, 'free', GREATEST($2, 0), $3, $3)
+     ON CONFLICT(user_id) DO UPDATE SET donation_amount = GREATEST(user_subscriptions.donation_amount + $2, 0), updated_at = EXCLUDED.updated_at
+     RETURNING donation_amount`,
+    [userId, amount, kstNow],
+  );
+  return Number(result.donation_amount);
+}
+
 export async function getDailyUsage(userId) {
   const todayStr = getKstDateString();
 

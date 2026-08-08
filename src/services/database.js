@@ -286,6 +286,7 @@ async function ensureSchema() {
   try { await db.exec("ALTER TABLE eco_users ADD COLUMN fishing_streak INTEGER DEFAULT 0"); } catch (e) { /* already exists */ }
   try { await db.exec("ALTER TABLE eco_users ADD COLUMN game_streak INTEGER DEFAULT 0"); } catch (e) { /* already exists */ }
   try { await db.exec("ALTER TABLE eco_users ADD COLUMN highest_roulette_win INTEGER DEFAULT 0"); } catch (e) { /* already exists */ }
+  try { await db.exec("ALTER TABLE user_subscriptions ADD COLUMN donation_amount INTEGER NOT NULL DEFAULT 0"); } catch (e) { /* already exists */ }
 }
 
 await ensureSchema();

@@ -10,7 +10,7 @@ import {
   TextInputStyle,
 } from "discord.js";
 import { ADMIN_USER_ID } from "../config.js";
-import { addServerImageToken, extendUserSubscription, getKstNow, getServerSubscriptionTier, syncTierRole } from "../services/subscription.js";
+import { addServerImageToken, extendUserSubscription, getKstNow, getServerSubscriptionTier, syncTierRole, updateDonationAmount } from "../services/subscription.js";
 import { createScheduledMessage } from "../services/scheduler.js";
 import { parseScheduleTime, scheduleChannelMap } from "../commands/scheduler.js";
 import { db } from "../services/database.js";
@@ -262,7 +262,7 @@ export async function handleInteractionCreate(client, interaction) {
           adminNotifyMsg += `*아래 버튼을 눌러 후원 등급 부여 또는 반려 처리를 진행하세요.*`;
           const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
-              .setCustomId(`admin_approve:${tier}:${userId}`)
+              .setCustomId(`admin_approve:${tier}:${userId}:${amount}`)
               .setLabel(`${tier.toUpperCase()} 부여`)
               .setStyle(ButtonStyle.Success),
             new ButtonBuilder()
@@ -664,10 +664,14 @@ export async function handleInteractionCreate(client, interaction) {
 
     const parts = customId.split(":");
     if (parts.length < 3) return;
-    const [, tier, userId] = parts;
+    const [, tier, userId, amountText] = parts;
+    const donationAmount = Number.parseInt(amountText, 10);
 
     try {
       const { tier: updatedTier, expiresAt } = await extendUserSubscription(userId, tier, 30);
+      const totalDonation = Number.isInteger(donationAmount) && donationAmount > 0
+        ? await updateDonationAmount(userId, donationAmount)
+        : null;
       const displayExpiry = expiresAt ? `${expiresAt} (KST)` : "무제한";
 
       await syncTierRole(client, userId, tier);
