@@ -4,10 +4,7 @@ import { handleMessageCreate } from "./handlers/messageCreate.js";
 import { handleInteractionCreate } from "./handlers/interactionCreate.js";
 import { logError, logInfo } from "./logger.js";
 import { startScheduler } from "./services/scheduler.js";
-import { preloadWordCache } from "./services/wordCache.js";
-
 validateEnv();
-preloadWordCache();
 
 const discordClient = new Client({
   intents: CLIENT_INTENTS,

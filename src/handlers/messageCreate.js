@@ -1,4 +1,4 @@
-﻿import { ADMIN_USER_ID, PREFIX, HISTORY_BATCH_SIZE, LOADING_EMOJI } from "../config.js";
+import { ADMIN_USER_ID, PREFIX, HISTORY_BATCH_SIZE, LOADING_EMOJI } from "../config.js";
 import { MessageFlags } from "discord.js";
 import { UserFacingError } from "../logger.js";
 import { handleManagementToolCall } from "../commands/management.js";
@@ -42,7 +42,7 @@ import {
 } from "../utils.js";
 import { getPronunciationReply } from "../utils.js";
 import { handleWordChainMessage, handleWordChainPurchaseCommand } from "../services/gameManager.js";
-import { getWordsByFirstChar } from "../services/wordCache.js";
+import { fetchWordsStartingWith } from "../services/openDictService.js";
 import { getRuntimeStatus, notifyApiFailure } from "../services/runtimeMetrics.js";
 
 function createLimitExceededMessage(username, tierName, usageTypeName, limit, prefix) {
@@ -164,15 +164,14 @@ if (userPrompt === "상태" && message.author.id === ADMIN_USER_ID) {
         await message.reply("한글 단어를 입력해주세요. 예: `!FLUX 시작단어 기차`");
         return;
       }
-      const words = getWordsByFirstChar(query[0])
-        .filter((w) => w.word.startsWith(query))
-        .map((w) => w.word);
+      const rawWords = await fetchWordsStartingWith(query[0]);
+      const words = rawWords.filter((w) => w.word.startsWith(query)).map((w) => w.word);
       if (words.length === 0) {
-        await message.reply(`**${query}**(으)로 시작하는 단어가 사전에 없어요.`);
+        await message.reply(`**${query}**(으)로 시작하는 단어가 우리말샘 사전에 없어요.`);
       } else {
         const limited = words.slice(0, 50);
         const text = [
-          `## 🔍 **${query}**(으)로 시작하는 단어 ${words.length}개`,
+          `## 🔍 **${query}**(으)로 시작하는 단어 ${words.length}개 (우리말샘 API)`,
           "",
           limited.map((w, i) => `${i + 1}. ${w}`).join("\n"),
           words.length > limited.length ? `\n... 외 ${words.length - limited.length}개` : "",
