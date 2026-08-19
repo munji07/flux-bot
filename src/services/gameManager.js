@@ -252,8 +252,9 @@ export async function handleAddWordCommand(interaction) {
 
 export async function handleLookupWordCommand(interaction) {
   const word = interaction.options.getString("단어", true).trim();
+  await interaction.deferReply();
   const exists = await checkWordExists(word);
-  await interaction.reply(exists ? `🔍 **${word}**은(는) 우리말샘 사전에 존재합니다.` : `🔍 **${word}**은(는) 우리말샘 사전에 없어요.`);
+  await interaction.editReply(exists ? `🔍 **${word}**은(는) 우리말샘 사전에 존재합니다.` : `🔍 **${word}**은(는) 우리말샘 사전에 없어요.`);
 }
 
 export async function handleRemoveWordCommand(interaction) {
