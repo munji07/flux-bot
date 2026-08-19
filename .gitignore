@@ -13,11 +13,6 @@ npm-debug.log*
 pnpm-debug.log*
 
 # Data / caches
-data/*
-!data/kkutu.json
-*.sqlite
-*.sqlite-shm
-*.sqlite-wal
 
 # Editor / OS
 .vscode/

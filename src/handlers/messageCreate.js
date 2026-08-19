@@ -42,6 +42,7 @@ import {
 } from "../utils.js";
 import { getPronunciationReply } from "../utils.js";
 import { handleWordChainMessage, handleWordChainPurchaseCommand } from "../services/gameManager.js";
+import { getWordsByFirstChar } from "../services/wordCache.js";
 import { getRuntimeStatus, notifyApiFailure } from "../services/runtimeMetrics.js";
 
 function createLimitExceededMessage(username, tierName, usageTypeName, limit, prefix) {
@@ -142,7 +143,7 @@ export async function handleMessageCreate(client, message) {
     return;
   }
 
-  if (userPrompt === "상태" && message.author.id === ADMIN_USER_ID) {
+if (userPrompt === "상태" && message.author.id === ADMIN_USER_ID) {
     const status = getRuntimeStatus();
     await message.reply([
       "📊 FLUX 상태",
@@ -153,6 +154,33 @@ export async function handleMessageCreate(client, message) {
       `연속 API 실패: ${status.consecutiveApiFailures}회`,
     ].join("\n"));
     return;
+  }
+
+  if (message.author.id === ADMIN_USER_ID) {
+    const startWordMatch = userPrompt.match(/^시작단어\s+(.+)$/i);
+    if (startWordMatch) {
+      const query = startWordMatch[1].trim();
+      if (!/^[가-힣]+$/.test(query)) {
+        await message.reply("한글 단어를 입력해주세요. 예: `!FLUX 시작단어 기차`");
+        return;
+      }
+      const words = getWordsByFirstChar(query[0])
+        .filter((w) => w.word.startsWith(query))
+        .map((w) => w.word);
+      if (words.length === 0) {
+        await message.reply(`**${query}**(으)로 시작하는 단어가 사전에 없어요.`);
+      } else {
+        const limited = words.slice(0, 50);
+        const text = [
+          `## 🔍 **${query}**(으)로 시작하는 단어 ${words.length}개`,
+          "",
+          limited.map((w, i) => `${i + 1}. ${w}`).join("\n"),
+          words.length > limited.length ? `\n... 외 ${words.length - limited.length}개` : "",
+        ].join("\n");
+        await message.reply(text);
+      }
+      return;
+    }
   }
 
   activeUsers.set(getActiveUserKey(message), now);
