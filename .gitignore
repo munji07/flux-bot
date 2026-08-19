@@ -1,9 +1,38 @@
+# Dependencies
 node_modules/
+
+# Environment
 .env
+.env.*
+!.env.example
+
+# Logs
 logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Data / caches
 data/
-.vscode 
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Docs
 docs/
+
+# Agent guide (local only)
 AGENTS.md
-.gitignore
+
+# Build artifacts
 *.zip
+
+# Temp
+tmp/
+.tmp/
