@@ -4,6 +4,7 @@ import { GatewayIntentBits } from "discord.js";
 export const NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1";
 export const GROQ_BASE_URL = "https://api.groq.com/openai/v1";
 export const ADMIN_USER_ID = "1269575955626725390";
+export const KOREAN_DICT_API_KEY = process.env.KOREAN_DICT_API_KEY || "9392C70EE604BF0C6A9D90D7B122B36A";
 
 export const MODELS = {
   INTENT: "meta/llama-3.1-8b-instruct",
