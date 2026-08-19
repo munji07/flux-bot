@@ -1670,7 +1670,7 @@ export function getManagementHelpText() {
     `- \`${PREFIX} 도움말\` — 모든 기능(대화, 이미지, 후원, 예약 등) 안내`,
     "",
     "**💬 도움 및 문의**",
-    `- 궁금한 점이 있다면 [서포트 서버](https://discord.gg/9bbXkkfcZv)에 방문해주세요!`,
+    `- 궁금한 점이 있다면 [서포트 서버](https://discord.gg/CtRHksyJCU)에 방문해주세요!`,
   ].join("\n");
 }
 

@@ -25,7 +25,7 @@ discordClient.once(Events.ClientReady, (client) => {
     status: "online",
     activities: [
       {
-        name: "'!FLUX 도움말' 로 기능을 안내해드려요! | 서포트: discord.gg/9bbXkkfcZv",
+        name: "'!FLUX 도움말' 로 기능을 안내해드려요! | 서포트: discord.gg/CtRHksyJCU",
         type: ActivityType.Listening,
       },
     ],

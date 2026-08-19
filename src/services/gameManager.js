@@ -103,7 +103,7 @@ export async function handleWordChainCommand(interaction, difficulty, opponentId
       await thread.send(
         `🎮 **끝말잇기 시작!** <@${interaction.user.id}>\n` +
           `난이도: **${label}**\n` +
-          opening ? `제가 먼저 할게요: **${opening.word}**` : "유저가 먼저 단어를 입력해 주세요!",
+          (opening ? `제가 먼저 할게요: **${opening.word}**` : "유저가 먼저 단어를 입력해 주세요!"),
       );
       if (opening) {
         await sendTurnPrompt(thread, game.currentWord);

@@ -153,7 +153,7 @@ export function getGeneralHelpText(prefix) {
     "*※ 모든 명령어는 접두사(\`!FLUX\` 또는 \`!FL\`) 뒤에 한 칸을 띄우고 입력해주세요!*",
     "",
     "**💬 도움 및 문의**",
-    `- 궁금한 점이 있다면 [서포트 서버](https://discord.gg/9bbXkkfcZv)에 방문해주세요!`,
+    `- 궁금한 점이 있다면 [서포트 서버](https://discord.gg/CtRHksyJCU)에 방문해주세요!`,
   ].join("\n");
 }
 
