@@ -13,7 +13,8 @@ npm-debug.log*
 pnpm-debug.log*
 
 # Data / caches
-data/
+data/*
+!data/kkutu.json
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
