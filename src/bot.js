@@ -4,6 +4,7 @@ import { handleMessageCreate } from "./handlers/messageCreate.js";
 import { handleInteractionCreate } from "./handlers/interactionCreate.js";
 import { logError, logInfo } from "./logger.js";
 import { startScheduler } from "./services/scheduler.js";
+import { preloadDictionary } from "./services/localDictService.js";
 validateEnv();
 
 const discordClient = new Client({
@@ -60,7 +61,9 @@ discordClient.on(Events.ShardReconnecting, (shardId) => {
   logInfo("shard_reconnecting", { shardId });
 });
 
-discordClient.login(process.env.DISCORD_TOKEN).catch((error) => {
-  logError("bot_login_failed", "unknown", error);
-  process.exitCode = 1;
+preloadDictionary().then(() => {
+  discordClient.login(process.env.DISCORD_TOKEN).catch((error) => {
+    logError("bot_login_failed", "unknown", error);
+    process.exitCode = 1;
+  });
 });

@@ -9,10 +9,17 @@ let allWords = null;
 let wordsByFirstChar = null;
 let wordsByLastChar = null;
 let continuationsCache = null;
+let loadingPromise = null;
 
-async function loadDictionary() {
+function loadDictionarySync() {
   if (allWords) return;
+  if (loadingPromise) return loadingPromise;
+  loadingPromise = doLoad();
+  return loadingPromise;
+}
 
+async function doLoad() {
+  const t0 = Date.now();
   const files = await readdir(DATA_DIR);
   const wordSet = new Set();
   const byFirst = new Map();
@@ -40,13 +47,21 @@ async function loadDictionary() {
   allWords = wordSet;
   wordsByFirstChar = byFirst;
   wordsByLastChar = byLast;
+  console.log(`[Dict] Loaded ${wordSet.size.toLocaleString()} words from ${files.length} files in ${Date.now() - t0}ms`);
+}
+
+/**
+ * 봇 시작 시 미리 사전을 로드한다. blocking.
+ */
+export async function preloadDictionary() {
+  await loadDictionarySyncSync();
 }
 
 /**
  * 특정 글자로 끝나는 단어 목록을 반환한다.
  */
 export async function fetchWordsEndingWith(char) {
-  await loadDictionary();
+  await loadDictionarySyncSync();
   return [...(wordsByLastChar.get(char) || [])];
 }
 
@@ -54,7 +69,7 @@ export async function fetchWordsEndingWith(char) {
  * 특정 글자로 끝나는 단어의 개수를 반환한다.
  */
 export async function countEndingWith(char) {
-  await loadDictionary();
+  await loadDictionarySync();
   return (wordsByLastChar.get(char) || new Set()).size;
 }
 
@@ -62,7 +77,7 @@ export async function countEndingWith(char) {
  * 특정 글자 뒤에 이어갈 수 있는 단어 수를 센다 (두음법칙 포함).
  */
 export async function countContinuationsForChar(char) {
-  await loadDictionary();
+  await loadDictionarySync();
   const sub = getSubCharLocal(char);
   const targets = sub && sub !== char ? [char, sub] : [char];
   let total = 0;
@@ -107,7 +122,7 @@ function getSubCharLocal(char) {
  * 사전 전체 분석: 각 글자별 이어갈 수 있는 단어 수를 계산한다.
  */
 export async function getCharContinuations() {
-  await loadDictionary();
+  await loadDictionarySync();
   if (continuationsCache) return continuationsCache;
 
   const result = new Map();
@@ -126,7 +141,7 @@ export async function getCharContinuations() {
  * - 양보단어: 상대방에게 쉬운 선택지를 주는 단어 (긴 단어)
  */
 export async function classifyWord(word) {
-  await loadDictionary();
+  await loadDictionarySync();
   if (!allWords.has(word)) return null;
 
   const last = word[word.length - 1];
@@ -155,7 +170,7 @@ export async function classifyWord(word) {
  * 특정 글자의 끝말잇기 분석 정보를 반환한다.
  */
 export async function analyzeChar(char) {
-  await loadDictionary();
+  await loadDictionarySync();
   const starting = wordsByFirstChar.get(char) || [];
   const ending = [...(wordsByLastChar.get(char) || [])];
   const conts = await countContinuationsForChar(char);
@@ -207,7 +222,7 @@ export async function analyzeChar(char) {
  * 해당 단어가 로컬 사전에 존재하는지 검사한다.
  */
 export async function checkWordExists(word) {
-  await loadDictionary();
+  await loadDictionarySync();
   return allWords.has(word);
 }
 
@@ -215,7 +230,7 @@ export async function checkWordExists(word) {
  * 특정 글자로 시작하는 단어 목록을 로컬 사전에서 가져온다.
  */
 export async function fetchWordsStartingWith(startChar) {
-  await loadDictionary();
+  await loadDictionarySync();
   return wordsByFirstChar.get(startChar) || [];
 }
 
@@ -223,7 +238,7 @@ export async function fetchWordsStartingWith(startChar) {
  * 특정 글자로 시작하는 단어의 개수를 반환한다.
  */
 export async function countStartingWith(startChar) {
-  await loadDictionary();
+  await loadDictionarySync();
   return (wordsByFirstChar.get(startChar) || []).length;
 }
 
@@ -231,7 +246,7 @@ export async function countStartingWith(startChar) {
  * 로컬 사전 통계 정보
  */
 export async function getDictStats() {
-  await loadDictionary();
+  await loadDictionarySync();
   return {
     totalWords: allWords.size,
     firstChars: wordsByFirstChar.size,
