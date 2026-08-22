@@ -166,18 +166,18 @@ const commands = [
     .addBooleanOption(opt => opt
       .setName("유저부터")
       .setDescription("봇보다 먼저 단어를 입력합니다")
+      .setRequired(false)),
+  new SlashCommandBuilder()
+    .setName("끝말분석")
+    .setDescription("끝말잇기 사전을 분석하여 전략 정보를 제공합니다.")
+    .addStringOption(opt => opt
+      .setName("글자")
+      .setDescription("분석할 글자 (선택사항)")
       .setRequired(false))
-    .addSubcommand(sub => sub
-      .setName("분석")
-      .setDescription("끝말잇기 사전을 분석하여 전략 정보를 제공합니다.")
-      .addStringOption(opt => opt
-        .setName("글자")
-        .setDescription("분석할 글자 (선택사항)")
-        .setRequired(false))
-      .addStringOption(opt => opt
-        .setName("단어")
-        .setDescription("분석할 단어 (선택사항)")
-        .setRequired(false))),
+    .addStringOption(opt => opt
+      .setName("단어")
+      .setDescription("분석할 단어 (선택사항)")
+      .setRequired(false)),
   new SlashCommandBuilder()
     .setName("단어추가")
     .setDescription("끝말잇기 사전에 단어를 추가합니다. (관리자 전용)")

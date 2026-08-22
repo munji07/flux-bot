@@ -47,15 +47,12 @@ export async function handleInteractionCreate(client, interaction) {
       } else if (interaction.commandName === "단어제거") {
         await handleRemoveWordCommand(interaction);
       } else if (interaction.commandName === "끝말잇기") {
-        const subcommand = interaction.options.getSubcommand();
-        if (subcommand === "분석") {
-          await handleAnalyzeCommand(interaction);
-        } else {
-          const difficulty = interaction.options.getString("난이도") || "normal";
-          const opponent = interaction.options.getUser("상대")?.id ?? null;
-          const userStarts = interaction.options.getBoolean("유저부터") ?? false;
-          await handleWordChainCommand(interaction, difficulty, opponent, userStarts);
-        }
+        const difficulty = interaction.options.getString("난이도") || "normal";
+        const opponent = interaction.options.getUser("상대")?.id ?? null;
+        const userStarts = interaction.options.getBoolean("유저부터") ?? false;
+        await handleWordChainCommand(interaction, difficulty, opponent, userStarts);
+      } else if (interaction.commandName === "끝말분석") {
+        await handleAnalyzeCommand(interaction);
       } else if (interaction.commandName === "이름변경") {
         await handleNameChangeSlashCommand(interaction);
       } else if (interaction.commandName === "이름초기화") {
