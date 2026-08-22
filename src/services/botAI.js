@@ -1,6 +1,5 @@
-import { getCandidates } from "./wordEngine.js";
+import { getCandidates, getAcceptableStarts } from "./wordEngine.js";
 import { countStartingWith } from "./localDictService.js";
-import { getAcceptableStarts } from "./wordEngine.js";
 
 export const DIFFICULTIES = ["easy", "normal", "hard", "impossible"];
 export const DIFFICULTY_LABELS = {
@@ -10,17 +9,18 @@ export const DIFFICULTY_LABELS = {
   impossible: "불가능",
 };
 
+const IMPOSSIBLE_SAMPLE = 40;
+
 /**
- * 후보 단어의 마지막 글자로 이어갈 수 있는 단어 수를 센다.
- * 두음법칙 변환 글자도 함께 고려한다.
+ * 특정 글자 뒤에 이어갈 수 있는 단어 수 (동기, 즉시 계산).
  */
-async function countContinuations(lastChar) {
-  const starts = getAcceptableStarts(lastChar);
-  let total = 0;
-  for (const s of starts) {
-    total += await countStartingWith(s);
+function contCount(char) {
+  let n = countStartingWith(char);
+  const subs = getAcceptableStarts(char);
+  for (const s of subs) {
+    if (s !== char) n += countStartingWith(s);
   }
-  return total;
+  return n;
 }
 
 /**
@@ -44,16 +44,18 @@ export async function pickWord(lastChar, used, difficulty) {
       return candidates[0];
 
     case "impossible": {
-      // 각 후보의 마지막 글자로 이어갈 수 있는 단어 수를 계산
-      // 유저의 선택지가 가장 적은 단어를 골라 궁지에 몰아넣는다
+      const evalCount = Math.min(candidates.length, IMPOSSIBLE_SAMPLE);
       let bestWord = candidates[0];
       let bestScore = Infinity;
+      const cache = new Map();
 
-      for (const c of candidates) {
-        const continuations = await countContinuations(c.last);
-        // 점수 = 이어갈 수 있는 단어 수 * 1000 + 단어 길이
-        // 단어 수가 적을수록, 길이가 짧을수록 유저에게 불리
-        const score = continuations * 1000 + c.length;
+      for (let i = 0; i < evalCount; i++) {
+        const c = candidates[i];
+        if (!cache.has(c.last)) {
+          cache.set(c.last, contCount(c.last));
+        }
+        const conts = cache.get(c.last);
+        const score = conts * 1000 + c.length;
         if (score < bestScore) {
           bestScore = score;
           bestWord = c;
