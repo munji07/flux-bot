@@ -42,7 +42,7 @@ import {
 } from "../utils.js";
 import { getPronunciationReply } from "../utils.js";
 import { handleWordChainMessage, handleWordChainPurchaseCommand } from "../services/gameManager.js";
-import { fetchWordsStartingWith } from "../services/openDictService.js";
+import { fetchWordsStartingWith } from "../services/localDictService.js";
 import { getRuntimeStatus, notifyApiFailure } from "../services/runtimeMetrics.js";
 
 function createLimitExceededMessage(username, tierName, usageTypeName, limit, prefix) {
@@ -167,11 +167,11 @@ if (userPrompt === "상태" && message.author.id === ADMIN_USER_ID) {
       const rawWords = await fetchWordsStartingWith(query[0]);
       const words = rawWords.filter((w) => w.word.startsWith(query)).map((w) => w.word);
       if (words.length === 0) {
-        await message.reply(`**${query}**(으)로 시작하는 단어가 우리말샘 사전에 없어요.`);
+        await message.reply(`**${query}**(으)로 시작하는 단어가 로컬 사전에 없어요.`);
       } else {
         const limited = words.slice(0, 50);
         const text = [
-          `## 🔍 **${query}**(으)로 시작하는 단어 ${words.length}개 (우리말샘 API)`,
+          `## 🔍 **${query}**(으)로 시작하는 단어 ${words.length}개 (로컬 사전)`,
           "",
           limited.map((w, i) => `${i + 1}. ${w}`).join("\n"),
           words.length > limited.length ? `\n... 외 ${words.length - limited.length}개` : "",

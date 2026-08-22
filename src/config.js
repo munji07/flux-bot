@@ -4,7 +4,7 @@ import { GatewayIntentBits } from "discord.js";
 export const NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1";
 export const GROQ_BASE_URL = "https://api.groq.com/openai/v1";
 export const ADMIN_USER_ID = "1269575955626725390";
-export const KOREAN_DICT_API_KEY = process.env.KOREAN_DICT_API_KEY;
+// KOREAN_DICT_API_KEY 제거 - 로컬 사전(data/) 사용
 
 export const MODELS = {
   INTENT: "meta/llama-3.1-8b-instruct",
@@ -109,7 +109,7 @@ export const SYSTEM_PROMPT = `
 `.trim();
 
 export function validateEnv() {
-  const requiredEnv = ["DISCORD_TOKEN", "HF_TOKEN", "GROQ_API_KEY", "GEMINI_API_KEY", "TAVILY_API_KEY", "NVIDIA_API_KEY", "POLLINATIONS_API_KEY", "DATABASE_URL", "KOREAN_DICT_API_KEY"];
+  const requiredEnv = ["DISCORD_TOKEN", "HF_TOKEN", "GROQ_API_KEY", "GEMINI_API_KEY", "TAVILY_API_KEY", "NVIDIA_API_KEY", "POLLINATIONS_API_KEY", "DATABASE_URL"];
   const missingEnv = requiredEnv.filter((key) => !process.env[key]);
 
   if (missingEnv.length > 0) {

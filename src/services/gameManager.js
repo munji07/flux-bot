@@ -2,7 +2,7 @@ import { ChannelType } from "discord.js";
 import { logError, logInfo } from "../logger.js";
 import { validateWord, getSubChar, getCandidates } from "./wordEngine.js";
 import { pickWord, DIFFICULTY_LABELS } from "./botAI.js";
-import { checkWordExists } from "./openDictService.js";
+import { checkWordExists } from "./localDictService.js";
 import { EconomyService } from "./economyService.js";
 
 const HINT_TICKET = "wordchain_hint_ticket";
@@ -247,18 +247,18 @@ async function useTicket(userId, itemId) {
 }
 
 export async function handleAddWordCommand(interaction) {
-  await interaction.reply({ content: "ℹ️ 현재 우리말샘 API 실시간 검증 모드로 동작 중입니다.", ephemeral: true });
+  await interaction.reply({ content: "ℹ️ 현재 로컬 사전(data/) 기반 검증 모드로 동작 중입니다. 단어 추가/제거는 data/ 폴더의 파일을 직접 수정해주세요.", ephemeral: true });
 }
 
 export async function handleLookupWordCommand(interaction) {
   const word = interaction.options.getString("단어", true).trim();
   await interaction.deferReply();
   const exists = await checkWordExists(word);
-  await interaction.editReply(exists ? `🔍 **${word}**은(는) 우리말샘 사전에 존재합니다.` : `🔍 **${word}**은(는) 우리말샘 사전에 없어요.`);
+  await interaction.editReply(exists ? `🔍 **${word}**은(는) 로컬 사전에 존재합니다.` : `🔍 **${word}**은(는) 로컬 사전에 없어요.`);
 }
 
 export async function handleRemoveWordCommand(interaction) {
-  await interaction.reply({ content: "ℹ️ 현재 우리말샘 API 실시간 검증 모드로 동작 중입니다.", ephemeral: true });
+  await interaction.reply({ content: "ℹ️ 현재 로컬 사전(data/) 기반 검증 모드로 동작 중입니다. 단어 추가/제거는 data/ 폴더의 파일을 직접 수정해주세요.", ephemeral: true });
 }
 
 function sendTurnPrompt(thread, currentWord) {

@@ -1,9 +1,9 @@
-import { checkWordExists, fetchWordsStartingWith } from "./openDictService.js";
+import { checkWordExists, fetchWordsStartingWith } from "./localDictService.js";
 
 /**
  * WordEngine
  *
- * 우리말샘 OpenAPI 실시간 검색 기반 끝말잇기 로직.
+ * 로컬 사전(data/) 기반 끝말잇기 로직.
  */
 
 // ── 두음법칙 변환 테이블 ─────────────────────────────────────────────
@@ -47,7 +47,7 @@ export function getAcceptableStarts(char) {
 }
 
 /**
- * 시작 글자에 맞게 API에서 후보 단어들을 실시간 조회한다.
+ * 시작 글자에 맞게 로컬 사전에서 후보 단어들을 조회한다.
  * @param {string} lastChar
  * @param {Set<string>} used
  * @returns {Promise<Array<{word: string, first: string, last: string, length: number}>>}
@@ -60,7 +60,7 @@ export async function getCandidates(lastChar, used) {
 }
 
 /**
- * 실시간 API 기반 단어 검증
+ * 로컬 사전 기반 단어 검증
  */
 export async function validateWord(text, lastChar, used) {
   if (!/^[가-힣]+$/.test(text)) {
@@ -82,10 +82,10 @@ export async function validateWord(text, lastChar, used) {
     }
   }
 
-  // 실시간 우리말샘 API로 단어 존재 여부 확인
+  // 로컬 사전으로 단어 존재 여부 확인
   const exists = await checkWordExists(text);
   if (!exists) {
-    return { ok: false, reason: `**${text}**은(는) 우리말샘 사전에 없는 단어예요!` };
+    return { ok: false, reason: `**${text}**은(는) 사전에 없는 단어예요!` };
   }
 
   return { ok: true };
