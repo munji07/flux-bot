@@ -2,7 +2,7 @@ import { ChannelType } from "discord.js";
 import { logError, logInfo } from "../logger.js";
 import { validateWord, getSubChar, getCandidates } from "./wordEngine.js";
 import { pickWord, DIFFICULTY_LABELS } from "./botAI.js";
-import { checkWordExists } from "./localDictService.js";
+import { checkWordExists, classifyWord, analyzeChar, getDictStats, countStartingWith, fetchWordsStartingWith, countContinuationsForChar } from "./localDictService.js";
 import { EconomyService } from "./economyService.js";
 
 const HINT_TICKET = "wordchain_hint_ticket";
@@ -254,7 +254,194 @@ export async function handleLookupWordCommand(interaction) {
   const word = interaction.options.getString("단어", true).trim();
   await interaction.deferReply();
   const exists = await checkWordExists(word);
-  await interaction.editReply(exists ? `🔍 **${word}**은(는) 로컬 사전에 존재합니다.` : `🔍 **${word}**은(는) 로컬 사전에 없어요.`);
+  if (!exists) {
+    await interaction.editReply(`🔍 **${word}**은(는) 로컬 사전에 없어요.`);
+    return;
+  }
+
+  const analysis = await classifyWord(word);
+  const last = word[word.length - 1];
+  const conts = await countStartingWith(last);
+
+  const typeLabel = {
+    attack: "⚔️ 공격단어",
+    defense: "🛡️ 방어단어",
+    balanced: "⚖️ 균형단어",
+    deadend: "💀 돌림당어 (끝장단어)",
+  };
+
+  const lines = [
+    `🔍 **${word}** 분석 결과`,
+    "",
+    `**분류**: ${typeLabel[analysis.type] || analysis.type}`,
+    `**길이**: ${analysis.length}글자`,
+    `**마지막 글자**: ${last}${analysis.sub ? ` (→ ${analysis.sub} 두음법칙)` : ""}`,
+    `**이어갈 수 있는 단어**: ${analysis.continuations}개`,
+    "",
+    analysis.type === "attack"
+      ? "→ 상대방이 이어가기 매우 어려운 단어입니다!"
+      : analysis.type === "defense"
+        ? "→ 상대방이 이어가기 쉬운 단어입니다. 주의하세요!"
+        : analysis.type === "deadend"
+          ? "→ 이 단어 뒤에는 이을 단어가 없습니다! 게임 종료 가능!"
+          : "→ 보통 난이도의 단어입니다.",
+  ];
+
+  await interaction.editReply(lines.join("\n"));
+}
+
+export async function handleAnalyzeCommand(interaction) {
+  await interaction.deferReply();
+
+  const charOption = interaction.options.getString("글자");
+  const wordOption = interaction.options.getString("단어");
+
+  // 단어 분석
+  if (wordOption) {
+    const word = wordOption.trim();
+    const exists = await checkWordExists(word);
+    if (!exists) {
+      await interaction.editReply(`🔍 **${word}**은(는) 사전에 없어요.`);
+      return;
+    }
+
+    const analysis = await classifyWord(word);
+    const last = word[word.length - 1];
+    const conts = await countStartingWith(last);
+    const words = await fetchWordsStartingWith(last);
+    const nextWords = words.slice(0, 8).map((w) => w.word);
+
+    const typeLabel = {
+      attack: "⚔️ 공격단어",
+      defense: "🛡️ 방어단어",
+      balanced: "⚖️ 균형단어",
+      deadend: "💀 돌림당어",
+    };
+
+    const lines = [
+      `## 🔍 **${word}** 단어 분석`,
+      "",
+      `| 항목 | 값 |`,
+      `|------|-----|`,
+      `| 분류 | ${typeLabel[analysis.type] || analysis.type} |`,
+      `| 길이 | ${analysis.length}글자 |`,
+      `| 마지막 글자 | ${last}${analysis.sub ? ` (→ ${analysis.sub})` : ""} |`,
+      `| 이어갈 수 있는 단어 | ${analysis.continuations}개 |`,
+      "",
+      analysis.type === "attack"
+        ? "⚔️ **공격단어**: 상대방이 이어가기 매우 어려운 단어입니다!"
+        : analysis.type === "defense"
+          ? "🛡️ **방어단어**: 상대방이 쉽게 이어갈 수 있습니다. 위험합니다!"
+          : analysis.type === "deadend"
+            ? "💀 **돌림당어**: 이 단어 뒤에는 이을 단어가 없습니다!"
+            : "⚖️ **균형단어**: 적당한 난이도의 단어입니다.",
+    ];
+
+    if (nextWords.length > 0 && analysis.type !== "deadend") {
+      lines.push("", `**${last}로 시작하는 단어 예시**: ${nextWords.join(", ")}${words.length > 8 ? ` 외 ${words.length - 8}개` : ""}`);
+    }
+
+    await interaction.editReply(lines.join("\n"));
+    return;
+  }
+
+  // 글자 분석 (기본: 사전 전체 통계)
+  if (charOption) {
+    const char = charOption.trim();
+    if (char.length !== 1 || !/^[가-힣]$/.test(char)) {
+      await interaction.editReply("❌ 한 글자만 입력해주세요. (예: `가`, `나`, `다`)");
+      return;
+    }
+
+    const info = await analyzeChar(char);
+
+    const lines = [
+      `## 🔤 **${char}** 글자 분석`,
+      "",
+      `| 항목 | 값 |`,
+      `|------|-----|`,
+      `| 시작 단어 수 | ${info.totalStarting}개 |`,
+      `| 끝나는 단어 수 | ${info.totalEnding}개 |`,
+      `| 이어갈 수 있는 단어 | ${info.continuations}개 |`,
+      info.sub ? `| ${char}→${info.sub} 두음법칙 | ${info.subContinuations}개 |` : null,
+    ].filter(Boolean);
+
+    if (info.shortest) {
+      lines.push("", `**가장 짧은 단어**: ${info.shortest.word} (${info.shortest.length}글자)`);
+    }
+    if (info.longest) {
+      lines.push(`**가장 긴 단어**: ${info.longest.word} (${info.longest.length}글자)`);
+    }
+
+    if (info.deadEnds.length > 0) {
+      lines.push("", `### 💀 돌림당어 (${info.deadEnds.length}개) — 뒤에 이을 단어 없음`);
+      lines.push(info.deadEnds.map((w) => `- ${w}`).join("\n"));
+    }
+
+    if (info.attackWords.length > 0) {
+      lines.push("", `### ⚔️ 공격단어 TOP ${info.attackWords.length} — 이어갈 단어 적음`);
+      lines.push(info.attackWords.map((w) => `- ${w.word} (이어갈 단어: ${w.continuations}개)`).join("\n"));
+    }
+
+    if (info.defenseWords.length > 0) {
+      lines.push("", `### 🛡️ 방어단어 TOP ${info.defenseWords.length} — 이어갈 단어 많음`);
+      lines.push(info.defenseWords.slice(0, 5).map((w) => `- ${w.word} (이어갈 단어: ${w.continuations}개)`).join("\n"));
+    }
+
+    await interaction.editReply(lines.join("\n"));
+    return;
+  }
+
+  // 기본: 사전 전체 통계
+  const stats = await getDictStats();
+
+  // 가장 공격적인 글자 (이어갈 단어가 적은)
+  const charConts = new Map();
+  const allChars = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ가나다라마바사아자차카타파하";
+  for (const c of allChars) {
+    const count = await countStartingWith(c);
+    if (count > 0) {
+      const conts = await countContinuationsForChar(c);
+      charConts.set(c, { starting: count, continuations: conts });
+    }
+  }
+
+  // 공격 글자: 이어갈 단어가 가장 적은
+  const attackChars = [...charConts.entries()]
+    .filter(([, v]) => v.continuations > 0 && v.continuations <= 10)
+    .sort((a, b) => a[1].continuations - b[1].continuations)
+    .slice(0, 5);
+
+  // 방어 글자: 이어갈 단어가 가장 많은
+  const defenseChars = [...charConts.entries()]
+    .sort((a, b) => b[1].continuations - a[1].continuations)
+    .slice(0, 5);
+
+  // 돌림 당 글자: 이어갈 단어가 0개
+  const deadendChars = [...charConts.entries()]
+    .filter(([, v]) => v.continuations === 0 && v.starting > 0)
+    .map(([c, v]) => `${c} (${v.starting}개 단어)`);
+
+  const lines = [
+    "## 📊 끝말잇기 사전 분석",
+    "",
+    `**전체 단어 수**: ${stats.totalWords.toLocaleString()}개`,
+    `**시작 글자 수**: ${stats.firstChars}개`,
+    `**끝 글자 수**: ${stats.lastChars}개`,
+    "",
+    "### 💀 돌림당 글자 (이어갈 단어 없음)",
+    deadendChars.length > 0 ? deadendChars.join(", ") : "없음 (모든 글자에 이어갈 단어가 있음)",
+    "",
+    "### ⚔️ 공격 글자 (이어갈 단어 적음)",
+    ...attackChars.map(([c, v]) => `- **${c}**: 시작 ${v.starting}개, 이어갈 단어 ${v.continuations}개`),
+    "",
+    "### 🛡️ 방어 글자 (이어갈 단어 많음)",
+    ...defenseChars.map(([c, v]) => `- **${c}**: 시작 ${v.starting}개, 이어갈 단어 ${v.continuations}개`),
+    "",
+    "💡 **사용법**: `/끝말잇기 분석 글자:[한글]` 또는 `/끝말잇기 분석 단어:[단어]`로 상세 분석 가능",
+  ];
+
+  await interaction.editReply(lines.join("\n"));
 }
 
 export async function handleRemoveWordCommand(interaction) {
