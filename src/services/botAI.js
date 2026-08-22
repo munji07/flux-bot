@@ -11,9 +11,6 @@ export const DIFFICULTY_LABELS = {
 
 const IMPOSSIBLE_SAMPLE = 40;
 
-/**
- * 특정 글자 뒤에 이어갈 수 있는 단어 수 (동기, 즉시 계산).
- */
 function contCount(char) {
   let n = countStartingWith(char);
   const subs = getAcceptableStarts(char);
@@ -23,25 +20,32 @@ function contCount(char) {
   return n;
 }
 
-/**
- * 후보 단어 목록에서 난이도에 맞는 한 단어를 선택한다.
- * @param {string} lastChar 이어야 하는 마지막 글자
- * @param {Set<string>} used 이미 사용된 단어 집합
- * @param {string} difficulty 난이도
- * @returns {Promise<object|null>} 선택된 단어 객체
- */
+function pickLongest(arr) {
+  let best = arr[0];
+  for (let i = 1; i < arr.length; i++) {
+    if (arr[i].length > best.length) best = arr[i];
+  }
+  return best;
+}
+
+function pickShortest(arr) {
+  let best = arr[0];
+  for (let i = 1; i < arr.length; i++) {
+    if (arr[i].length < best.length) best = arr[i];
+  }
+  return best;
+}
+
 export async function pickWord(lastChar, used, difficulty) {
   const candidates = await getCandidates(lastChar, used);
   if (!candidates.length) return null;
 
   switch (difficulty) {
     case "easy":
-      candidates.sort((a, b) => b.length - a.length);
-      return candidates[0];
+      return pickLongest(candidates);
 
     case "hard":
-      candidates.sort((a, b) => a.length - b.length);
-      return candidates[0];
+      return pickShortest(candidates);
 
     case "impossible": {
       const evalCount = Math.min(candidates.length, IMPOSSIBLE_SAMPLE);
