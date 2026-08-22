@@ -54,14 +54,14 @@ async function doLoad() {
  * 봇 시작 시 미리 사전을 로드한다. blocking.
  */
 export async function preloadDictionary() {
-  await loadDictionarySyncSync();
+  await loadDictionarySync();
 }
 
 /**
  * 특정 글자로 끝나는 단어 목록을 반환한다.
  */
 export async function fetchWordsEndingWith(char) {
-  await loadDictionarySyncSync();
+  await loadDictionarySync();
   return [...(wordsByLastChar.get(char) || [])];
 }
 
