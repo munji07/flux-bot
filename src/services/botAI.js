@@ -1,5 +1,5 @@
-import { getCandidates, getAcceptableStarts } from "./wordEngine.js";
-import { countStartingWith } from "./localDictService.js";
+import { getCandidates } from "./wordEngine.js";
+import { countContinuationsForChar } from "./localDictService.js";
 
 export const DIFFICULTIES = ["easy", "normal", "hard", "impossible"];
 export const DIFFICULTY_LABELS = {
@@ -9,15 +9,8 @@ export const DIFFICULTY_LABELS = {
   impossible: "불가능",
 };
 
-const IMPOSSIBLE_SAMPLE = 40;
-
-function contCount(char) {
-  let n = countStartingWith(char);
-  const subs = getAcceptableStarts(char);
-  for (const s of subs) {
-    if (s !== char) n += countStartingWith(s);
-  }
-  return n;
+async function contCount(char) {
+  return countContinuationsForChar(char);
 }
 
 function pickLongest(arr) {
@@ -48,24 +41,29 @@ export async function pickWord(lastChar, used, difficulty) {
       return pickShortest(candidates);
 
     case "impossible": {
-      const evalCount = Math.min(candidates.length, IMPOSSIBLE_SAMPLE);
-      let bestWord = candidates[0];
+      let bestWord = null;
       let bestScore = Infinity;
+      let fallbackWord = null;
       const cache = new Map();
 
-      for (let i = 0; i < evalCount; i++) {
-        const c = candidates[i];
+      for (const c of candidates) {
         if (!cache.has(c.last)) {
-          cache.set(c.last, contCount(c.last));
+          cache.set(c.last, await contCount(c.last));
         }
         const conts = cache.get(c.last);
-        const score = conts * 1000 + c.length;
+        // 상대가 선택할 수 있는 단어가 적을수록 강한 수입니다.
+        // 단, 이어갈 수 없는 단어는 봇의 즉시 패배이므로 다른 선택지가 있으면 제외합니다.
+        if (conts === 0) {
+          fallbackWord ??= c;
+          continue;
+        }
+        const score = conts * 1000 - c.length;
         if (score < bestScore) {
           bestScore = score;
           bestWord = c;
         }
       }
-      return bestWord;
+      return bestWord ?? fallbackWord;
     }
 
     case "normal":
