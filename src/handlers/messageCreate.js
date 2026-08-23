@@ -2,7 +2,7 @@ import { ADMIN_USER_ID, PREFIX, HISTORY_BATCH_SIZE, LOADING_EMOJI } from "../con
 import { MessageFlags } from "discord.js";
 import { UserFacingError } from "../logger.js";
 import { handleManagementToolCall } from "../commands/management.js";
-import { handleScheduleFromIntent } from "../commands/scheduler.js";
+import { handleScheduleCommand, handleScheduleFromIntent } from "../commands/scheduler.js";
 import { handleSubscriptionToolCall, handleSubscriptionCommand } from "../commands/subscription.js";
 import { handleImageGenerationRequest } from "./imageGeneration.js";
 import { handleUserSettingsCommand } from "../commands/userSettings.js";
@@ -209,6 +209,27 @@ if (userPrompt === "상태" && message.author.id === ADMIN_USER_ID) {
     const userName = displayName;
     let intent;
 
+    const directFeedbackMatch = userPrompt.match(/^(?:건의|제안|피드백|의견|버그(?:\s*신고)?)\s*[:：]?\s*(.*)$/i);
+    if (directFeedbackMatch) {
+      const feedbackText = directFeedbackMatch[1].trim();
+      if (!feedbackText || feedbackText.length < 2) {
+        await loadingMessage.edit(`건의 내용을 입력해주세요. 예: \`${PREFIX} 건의: 여기에 내용을 적어주세요\``);
+      } else {
+        const sent = await handleFeedback(client, message, feedbackText);
+        await loadingMessage.edit(
+          sent
+            ? "✅ 소중한 의견 감사합니다! 개발자에게 전달했어요."
+            : "❌ 건의 전송 중 문제가 발생했어요. 개발자에게 직접 문의해주세요.",
+        );
+      }
+      return;
+    }
+
+    if (/^예약(?:메시지)?(?:\s|$)/i.test(userPrompt)) {
+      const handled = await handleScheduleCommand(message, userPrompt, loadingMessage);
+      if (handled) return;
+    }
+
     // 이름변경은 AI 분류 없이 바로 처리
     if (userPrompt.startsWith("이름변경") || /^이름(?:초기화|삭제|리셋)$/i.test(userPrompt)) {
       const handled = await handleUserSettingsCommand(message, userPrompt, loadingMessage);
@@ -309,6 +330,22 @@ if (userPrompt === "상태" && message.author.id === ADMIN_USER_ID) {
   }
 
   // 사용량 타입 결정
+  if (intent.tool === "schedule") {
+    try {
+      await handleScheduleFromIntent(message, intent.arguments, loadingMessage);
+    } catch (error) {
+      logError("schedule_tool", message.guildId, error, {
+        guildName: message.guild.name,
+        channelId: message.channelId,
+        userId: message.author.id,
+        userTag: message.author.tag,
+        commandText: userPrompt,
+      });
+      await loadingMessage.edit("예약 메시지 처리 중 문제가 발생했어요. 잠시 뒤 다시 시도해주세요.").catch(() => {});
+    }
+    return;
+  }
+
   const isImageRead = intent.type === "image_read" || attachedImageUrls.length > 0;
 
   if (intent.type === "image_generation") {

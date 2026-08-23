@@ -251,6 +251,7 @@ export async function handleInteractionCreate(client, interaction) {
     const depositName = `${timeStr}-${userId}`;
 
     try {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const developer = await client.users.fetch(ADMIN_USER_ID);
       if (developer) {
         let adminNotifyMsg = `🔔 **[후원 알림]**\n\n`;
@@ -283,15 +284,14 @@ export async function handleInteractionCreate(client, interaction) {
         ? `- **지급 등급**: \`${tierLabel}\` (30일)`
         : `- **지급 등급**: 없음 (3,000원 이상부터 Basic, 5,000원 이상부터 Premium 등급이 지급됩니다)`;
 
-      await interaction.reply({
+      await interaction.editReply({
         content: `✅ **후원 접수가 완료되었습니다.**\n\n- **후원 금액**: \`${amount.toLocaleString("ko-KR")}원\`\n- **입금자명**: \`${depositName}\`\n${tierLine}\n\n개발자가 입금을 확인한 뒤 등급을 부여해 드려요. 잠시만 기다려주세요! ✨`,
         flags: MessageFlags.Ephemeral,
       });
     } catch (error) {
       console.error("Error processing donation submit:", error);
-      await interaction.reply({
+      await interaction.editReply({
         content: "❌ 후원 접수 처리 중 오류가 발생했습니다. 개발자에게 직접 문의해주세요.",
-        flags: MessageFlags.Ephemeral,
       }).catch(() => {});
     }
     return;
@@ -394,6 +394,7 @@ export async function handleInteractionCreate(client, interaction) {
     const uppercaseTier = tier.toUpperCase();
 
     try {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const developer = await client.users.fetch(ADMIN_USER_ID);
       if (developer) {
         let adminNotifyMsg = `🔔 **[${isPlatinum ? "플래티넘 서버" : "등급"} 구매 신청 알림]**\n\n`;
@@ -418,7 +419,7 @@ export async function handleInteractionCreate(client, interaction) {
         await developer.send({ content: adminNotifyMsg, components: [row] });
       }
 
-      await interaction.reply({
+      await interaction.editReply({
         content:
           `✅ **송금 완료 알림이 전송되었습니다.**\n\n` +
           `- **입금자명**: \`${depositName}\`\n` +
@@ -429,9 +430,8 @@ export async function handleInteractionCreate(client, interaction) {
       });
     } catch (error) {
       console.error("Error processing sub_complete interaction:", error);
-      await interaction.reply({
+      await interaction.editReply({
         content: "❌ 송금 완료 처리 중 오류가 발생했습니다. 개발자에게 직접 문의해주세요.",
-        flags: MessageFlags.Ephemeral,
       }).catch(() => {});
     }
     return;
@@ -455,6 +455,7 @@ export async function handleInteractionCreate(client, interaction) {
     const guild = await client.guilds.fetch(guildId).catch(() => null);
 
     try {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const developer = await client.users.fetch(ADMIN_USER_ID);
       if (developer) {
         const row = new ActionRowBuilder().addComponents(
@@ -484,7 +485,7 @@ export async function handleInteractionCreate(client, interaction) {
         });
       }
 
-      await interaction.reply({
+      await interaction.editReply({
         content: [
           "**입금 완료 알림을 전송했어요.**",
           "",
@@ -498,9 +499,8 @@ export async function handleInteractionCreate(client, interaction) {
       });
     } catch (error) {
       console.error("Error processing server token interaction:", error);
-      await interaction.reply({
+      await interaction.editReply({
         content: "서버 토큰 구매 신청 처리 중 오류가 발생했어요. 개발자에게 직접 문의해 주세요.",
-        flags: MessageFlags.Ephemeral,
       }).catch(() => {});
     }
     return;
@@ -523,8 +523,9 @@ export async function handleInteractionCreate(client, interaction) {
     const count = parseInt(parts[5] || 1, 10);
 
     try {
+      await interaction.deferUpdate();
       const tokens = await addServerImageToken(guildId, type, count);
-      await interaction.update({
+      await interaction.editReply({
         content: [
           `**${label} 구매 신청을 승인했습니다.**`,
           `- 서버 ID: \`${guildId}\``,
@@ -549,7 +550,7 @@ export async function handleInteractionCreate(client, interaction) {
       }
     } catch (error) {
       console.error("Database error during server token approval:", error);
-      await interaction.reply({ content: "서버 토큰 승인 처리 중 DB 오류가 발생했어요.", flags: MessageFlags.Ephemeral }).catch(() => {});
+      await interaction.editReply({ content: "서버 토큰 승인 처리 중 DB 오류가 발생했어요." }).catch(() => {});
     }
     return;
   }

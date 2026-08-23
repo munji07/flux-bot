@@ -3,16 +3,20 @@ import { ECONOMY_CONFIG } from "../config.js";
 import { EconomyService } from "./economyService.js";
 import { logError } from "../logger.js";
 
+function getKstDateString() {
+  return new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
 export class EconomyQuestService {
   static async getDailyQuests(userId) {
     try {
-      const todayStr = new Date().toLocaleDateString("en-CA");
+      const todayStr = getKstDateString();
       const stored = await db.all("SELECT * FROM eco_quests WHERE user_id = $1 AND quest_date = $2", [userId, todayStr]);
 
       if (stored.length === 0) {
         for (const quest of ECONOMY_CONFIG.dailyQuests) {
           await db.run(
-            "INSERT INTO eco_quests (user_id, quest_id, progress, completed, quest_date) VALUES ($1, $2, 0, 0, $3)",
+            "INSERT INTO eco_quests (user_id, quest_id, progress, completed, quest_date) VALUES ($1, $2, 0, 0, $3) ON CONFLICT(user_id, quest_id, quest_date) DO NOTHING",
             [userId, quest.id, todayStr],
           );
         }
@@ -49,23 +53,23 @@ export class EconomyQuestService {
   static async incrementProgress(userId, actionType) {
     const newlyCompletedQuestNames = [];
     try {
-      const todayStr = new Date().toLocaleDateString("en-CA");
-      const quests = await this.getDailyQuests(userId);
-
+      const todayStr = getKstDateString();
       const matchedQuests = ECONOMY_CONFIG.dailyQuests.filter(q => q.type === actionType);
 
       for (const matched of matchedQuests) {
-        const userProgress = quests.find(uq => uq.quest_id === matched.id);
-        if (!userProgress || userProgress.completed) continue;
-
-        const newProgress = userProgress.progress + 1;
-
-        await db.run(
-          "UPDATE eco_quests SET progress = $1 WHERE user_id = $2 AND quest_id = $3 AND quest_date = $4",
-          [newProgress, userId, matched.id, todayStr],
+        const updated = await db.get(
+          `UPDATE eco_quests
+           SET progress = LEAST(progress + 1, $1)
+           WHERE user_id = $2
+             AND quest_id = $3
+             AND quest_date = $4
+             AND completed = 0
+             AND progress < $1
+           RETURNING progress`,
+          [matched.target, userId, matched.id, todayStr],
         );
 
-        if (newProgress >= matched.target) {
+        if (updated?.progress >= matched.target) {
           newlyCompletedQuestNames.push(matched.name);
         }
       }
@@ -76,7 +80,7 @@ export class EconomyQuestService {
   }
 
   static async claimQuestReward(userId, questId) {
-    const todayStr = new Date().toLocaleDateString("en-CA");
+    const todayStr = getKstDateString();
     const definition = ECONOMY_CONFIG.dailyQuests.find(q => q.id === questId);
 
     if (!definition) {
@@ -85,25 +89,27 @@ export class EconomyQuestService {
 
     try {
       return await db.transact(async (tx) => {
-        const quest = await tx.get(
-          "SELECT * FROM eco_quests WHERE user_id = $1 AND quest_id = $2 AND quest_date = $3",
-          [userId, questId, todayStr],
+        const claimed = await tx.get(
+          `UPDATE eco_quests
+           SET completed = 1
+           WHERE user_id = $1
+             AND quest_id = $2
+             AND quest_date = $3
+             AND completed = 0
+             AND progress >= $4
+           RETURNING quest_id`,
+          [userId, questId, todayStr, definition.target],
         );
 
-        if (!quest) {
-          return { success: false, reward: 0, message: "오늘 생성된 퀘스트 기록이 없습니다." };
-        }
-        if (quest.completed) {
-          return { success: false, reward: 0, message: "이미 보상을 수령한 퀘스트입니다." };
-        }
-        if (quest.progress < definition.target) {
+        if (!claimed) {
+          const quest = await tx.get(
+            "SELECT completed, progress FROM eco_quests WHERE user_id = $1 AND quest_id = $2 AND quest_date = $3",
+            [userId, questId, todayStr],
+          );
+          if (!quest) return { success: false, reward: 0, message: "오늘 생성된 퀘스트 기록이 없습니다." };
+          if (quest.completed) return { success: false, reward: 0, message: "이미 보상을 수령한 퀘스트입니다." };
           return { success: false, reward: 0, message: "아직 퀘스트 목표를 달성하지 못했습니다." };
         }
-
-        await tx.run(
-          "UPDATE eco_quests SET completed = 1 WHERE user_id = $1 AND quest_id = $2 AND quest_date = $3",
-          [userId, questId, todayStr],
-        );
 
         const rewardResult = await EconomyService.updateCoins(userId, definition.reward, tx);
         if (!rewardResult.success) throw new Error("QUEST_REWARD_FAILED");

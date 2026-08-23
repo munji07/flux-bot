@@ -8,6 +8,7 @@ if (!process.env.WEB_APP_URL && !process.env.BASE_URL) {
 }
 
 let schedulerTimer = null;
+let schedulerTickRunning = false;
 
 let lastRaidSpawnDate = "";
 let lastRaidWarningDate = "";
@@ -29,16 +30,21 @@ export function startScheduler(client) {
     logError("scheduler_expiry_check_initial_failed", null, error);
   });
 
-  schedulerTimer = setInterval(() => {
-    runDueScheduledTasks(client).catch((error) => {
+  schedulerTimer = setInterval(async () => {
+    if (schedulerTickRunning) return;
+    schedulerTickRunning = true;
+
+    try {
+      await Promise.allSettled([
+        runDueScheduledTasks(client),
+        checkExpiringSubscriptions(client),
+        checkCropNotifications(client),
+      ]);
+    } catch (error) {
       logError("scheduler_tick_failed", null, error);
-    });
-    checkExpiringSubscriptions(client).catch((error) => {
-      logError("scheduler_expiry_check_failed", null, error);
-    });
-    checkCropNotifications(client).catch((error) => {
-      logError("crop_notification_check_failed", null, error);
-    });
+    } finally {
+      schedulerTickRunning = false;
+    }
   }, SCHEDULER_INTERVAL_MS);
 
   return () => {
@@ -600,14 +606,26 @@ async function runDueScheduledTasks(client) {
   );
 
   for (const task of tasks) {
-    await db.run(
-      "UPDATE scheduled_tasks SET is_executed = 1, updated_at = TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS') WHERE id = $1 AND is_executed = 0",
+    const claimed = await db.get(
+      "UPDATE scheduled_tasks SET is_executed = 1, updated_at = TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS') WHERE id = $1 AND is_executed = 0 RETURNING id",
       [task.id],
     );
+
+    // 여러 샤드/스케줄러가 동시에 조회해도 한 작업은 한 번만 실행한다.
+    if (!claimed) continue;
 
     try {
       await executeScheduledTask(client, task);
     } catch (error) {
+      // Discord 전송 실패 시 다음 스케줄러 주기에 재시도한다.
+      await db.run(
+        "UPDATE scheduled_tasks SET is_executed = 0, updated_at = TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS') WHERE id = $1",
+        [task.id],
+      ).catch((resetError) => {
+        logError("scheduler_task_reset_failed", task.guild_id, resetError, {
+          taskId: task.id,
+        });
+      });
       logError("scheduler_task_execution_failed", task.guild_id, error, {
         taskId: task.id,
         channelId: task.channel_id,

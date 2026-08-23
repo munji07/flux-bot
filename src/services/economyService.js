@@ -128,25 +128,41 @@ export class EconomyService {
   }
 
   static async checkAndSetCooldown(userId, actionType) {
+    const cooldownColumns = {
+      fishing: "last_fishing",
+      mining: "last_mining",
+      farming: "last_farming",
+      daily: "last_daily",
+    };
+    const column = cooldownColumns[actionType];
     const cooldownDuration = ECONOMY_CONFIG.cooldowns[actionType];
     if (!cooldownDuration) return { isCooldown: false, remaining: 0 };
+    if (!column) return { isCooldown: true, remaining: 0 };
 
     try {
       return await db.transact(async (tx) => {
-        const user = await this.getOrCreateUser(userId);
-        const lastActionTime = user[`last_${actionType}`] ? new Date(user[`last_${actionType}`]).getTime() : 0;
-        const now = Date.now();
-
-        if (now - lastActionTime < cooldownDuration) {
-          return { isCooldown: true, remaining: cooldownDuration - (now - lastActionTime) };
-        }
-
-        await tx.run(
-          `UPDATE eco_users SET last_${actionType} = TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS') WHERE user_id = $1`,
-          [userId],
+        await this.getOrCreateUser(userId, tx);
+        const updated = await tx.get(
+          `UPDATE eco_users
+           SET ${column} = TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS'),
+               updated_at = TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS')
+           WHERE user_id = $1
+             AND (
+               ${column} IS NULL
+               OR EXTRACT(EPOCH FROM (NOW() - TO_TIMESTAMP(${column}, 'YYYY-MM-DD HH24:MI:SS'))) * 1000 >= $2
+             )
+           RETURNING ${column}`,
+          [userId, cooldownDuration],
         );
 
-        return { isCooldown: false, remaining: 0 };
+        if (updated) return { isCooldown: false, remaining: 0 };
+
+        const user = await tx.get(`SELECT ${column} FROM eco_users WHERE user_id = $1`, [userId]);
+        const lastActionTime = user?.[column]
+          ? Date.parse(`${user[column].replace(" ", "T")}Z`)
+          : Date.now();
+        const remaining = Math.max(0, cooldownDuration - (Date.now() - lastActionTime));
+        return { isCooldown: true, remaining };
       });
     } catch (error) {
       logError("economy_check_cooldown", null, error, { userId, actionType });
