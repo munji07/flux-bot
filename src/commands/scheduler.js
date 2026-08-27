@@ -170,13 +170,27 @@ export function parseScheduleTime(input) {
 
   const absolute = trimmed.match(/^(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{2})/);
   if (absolute) {
+    const year = Number.parseInt(absolute[1], 10);
+    const month = Number.parseInt(absolute[2], 10);
+    const day = Number.parseInt(absolute[3], 10);
+    const hour = Number.parseInt(absolute[4], 10);
+    const minute = Number.parseInt(absolute[5], 10);
+    const check = new Date(Date.UTC(year, month - 1, day, hour, minute));
+    if (
+      check.getUTCFullYear() !== year ||
+      check.getUTCMonth() !== month - 1 ||
+      check.getUTCDate() !== day ||
+      check.getUTCHours() !== hour ||
+      check.getUTCMinutes() !== minute
+    ) return null;
+
     return {
       executeAt: toKstString({
-        year: Number.parseInt(absolute[1], 10),
-        month: Number.parseInt(absolute[2], 10),
-        day: Number.parseInt(absolute[3], 10),
-        hour: Number.parseInt(absolute[4], 10),
-        minute: Number.parseInt(absolute[5], 10),
+        year,
+        month,
+        day,
+        hour,
+        minute,
       }),
       consumed: absolute[0].length,
     };

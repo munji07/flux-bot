@@ -8,18 +8,22 @@ function getKstDateString() {
 }
 
 export class EconomyQuestService {
+  static async ensureDailyQuests(userId, questDate = getKstDateString()) {
+    for (const quest of ECONOMY_CONFIG.dailyQuests) {
+      await db.run(
+        "INSERT INTO eco_quests (user_id, quest_id, progress, completed, quest_date) VALUES ($1, $2, 0, 0, $3) ON CONFLICT(user_id, quest_id, quest_date) DO NOTHING",
+        [userId, quest.id, questDate],
+      );
+    }
+  }
+
   static async getDailyQuests(userId) {
     try {
       const todayStr = getKstDateString();
       const stored = await db.all("SELECT * FROM eco_quests WHERE user_id = $1 AND quest_date = $2", [userId, todayStr]);
 
       if (stored.length === 0) {
-        for (const quest of ECONOMY_CONFIG.dailyQuests) {
-          await db.run(
-            "INSERT INTO eco_quests (user_id, quest_id, progress, completed, quest_date) VALUES ($1, $2, 0, 0, $3) ON CONFLICT(user_id, quest_id, quest_date) DO NOTHING",
-            [userId, quest.id, todayStr],
-          );
-        }
+        await this.ensureDailyQuests(userId, todayStr);
 
         return ECONOMY_CONFIG.dailyQuests.map(q => ({
           quest_id: q.id,
@@ -55,6 +59,7 @@ export class EconomyQuestService {
     try {
       const todayStr = getKstDateString();
       const matchedQuests = ECONOMY_CONFIG.dailyQuests.filter(q => q.type === actionType);
+      await this.ensureDailyQuests(userId, todayStr);
 
       for (const matched of matchedQuests) {
         const updated = await db.get(

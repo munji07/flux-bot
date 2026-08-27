@@ -2,6 +2,8 @@ import { createVideoAnalysis } from "../services/ai.js";
 import { addServerImageToken, checkAndIncrementUsage, decrementUsage } from "../services/subscription.js";
 import { logError, logInfo } from "../logger.js";
 import { getDisplayName } from "../utils.js";
+import { sendChunkedAnswer, stripFancyUnicode } from "../utils.js";
+import { stripCodeBlocks, stripReasoningTags } from "../services/ai.js";
 import { LOADING_EMOJI } from "../config.js";
 
 export async function handleVideoAnalysis(message, userPrompt, loadingMessage) {
@@ -43,7 +45,11 @@ export async function handleVideoAnalysis(message, userPrompt, loadingMessage) {
       guildName: message.guild.name,
     });
 
-    await loadingMessage.edit(response.choices[0].message.content);
+    const answer = stripFancyUnicode(
+      stripCodeBlocks(stripReasoningTags(response.choices?.[0]?.message?.content ?? "")),
+    );
+    if (!answer) throw new Error("Video analysis returned empty content");
+    await sendChunkedAnswer(message, loadingMessage, answer);
 
     logInfo("answer_sent", {
       guildId: message.guildId,

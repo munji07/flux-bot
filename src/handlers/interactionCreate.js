@@ -29,6 +29,7 @@ const SERVER_TOKEN_LABELS = {
 const SERVER_TOKEN_PRICES = {
   image_readings: 100,
   image_generations: 500,
+  video_analysis: 1000,
 };
 
 /**

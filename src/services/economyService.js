@@ -127,6 +127,57 @@ export class EconomyService {
     }
   }
 
+  static async purchaseItem(userId, itemId, price) {
+    try {
+      return await db.transact(async (tx) => {
+        await this.getOrCreateUser(userId, tx);
+        const updated = await tx.get(
+          "UPDATE eco_users SET coins = coins - $1, updated_at = TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS') WHERE user_id = $2 AND coins >= $1 RETURNING coins",
+          [price, userId],
+        );
+        if (!updated) return { success: false, balance: 0 };
+
+        await tx.run(
+          `INSERT INTO eco_inventory (user_id, item_id, quantity)
+           VALUES ($1, $2, 1)
+           ON CONFLICT(user_id, item_id) DO UPDATE SET quantity = eco_inventory.quantity + 1`,
+          [userId, itemId],
+        );
+        return { success: true, balance: updated.coins };
+      });
+    } catch (error) {
+      logError("economy_purchase_item", null, error, { userId, itemId, price });
+      return { success: false, balance: 0 };
+    }
+  }
+
+  static async sellItems(userId, items) {
+    try {
+      return await db.transact(async (tx) => {
+        let total = 0;
+        for (const item of items) {
+          const quantity = Number(item.quantity);
+          const updated = await tx.get(
+            "UPDATE eco_inventory SET quantity = quantity - $1 WHERE user_id = $2 AND item_id = $3 AND quantity >= $1 RETURNING quantity",
+            [quantity, userId, item.item_id],
+          );
+          if (!updated) return { success: false, total: 0, balance: 0 };
+          total += Number(item.sellPrice) * quantity;
+        }
+
+        await tx.run("DELETE FROM eco_inventory WHERE user_id = $1 AND quantity <= 0", [userId]);
+        const balance = await tx.get(
+          "UPDATE eco_users SET coins = coins + $1, updated_at = TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS') WHERE user_id = $2 RETURNING coins",
+          [total, userId],
+        );
+        return { success: true, total, balance: Number(balance?.coins ?? 0) };
+      });
+    } catch (error) {
+      logError("economy_sell_items", null, error, { userId });
+      return { success: false, total: 0, balance: 0 };
+    }
+  }
+
   static async checkAndSetCooldown(userId, actionType) {
     const cooldownColumns = {
       fishing: "last_fishing",
@@ -149,7 +200,10 @@ export class EconomyService {
            WHERE user_id = $1
              AND (
                ${column} IS NULL
-               OR EXTRACT(EPOCH FROM (NOW() - TO_TIMESTAMP(${column}, 'YYYY-MM-DD HH24:MI:SS'))) * 1000 >= $2
+                OR EXTRACT(EPOCH FROM (
+                  (NOW() AT TIME ZONE 'Asia/Seoul') -
+                  (TO_TIMESTAMP(${column}, 'YYYY-MM-DD HH24:MI:SS') AT TIME ZONE 'Asia/Seoul')
+                )) * 1000 >= $2
              )
            RETURNING ${column}`,
           [userId, cooldownDuration],
@@ -159,7 +213,7 @@ export class EconomyService {
 
         const user = await tx.get(`SELECT ${column} FROM eco_users WHERE user_id = $1`, [userId]);
         const lastActionTime = user?.[column]
-          ? Date.parse(`${user[column].replace(" ", "T")}Z`)
+          ? Date.parse(`${user[column].replace(" ", "T")}+09:00`)
           : Date.now();
         const remaining = Math.max(0, cooldownDuration - (Date.now() - lastActionTime));
         return { isCooldown: true, remaining };

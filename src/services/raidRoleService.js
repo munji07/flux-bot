@@ -24,10 +24,12 @@ export async function ensureRaidRole(guild, roleName = DEFAULT_RAID_ROLE_NAME) {
     } else if (role.name !== roleName) {
       await role.edit({ name: roleName }, "FLUX 레이드 참여 역할 이름 변경").catch(() => {});
     }
-    await db.run(
-      "INSERT INTO raid_config (guild_id, channel_id, role_id, updated_at) VALUES ($1, $2, $3, TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS')) ON CONFLICT (guild_id) DO UPDATE SET role_id = $3, updated_at = TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS')",
-      [guild.id, "", role.id]
-    );
+    if (existing) {
+      await db.run(
+        "UPDATE raid_config SET role_id = $1, updated_at = TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS') WHERE guild_id = $2",
+        [role.id, guild.id],
+      );
+    }
     return role;
   } catch (e) {
     logError("raid_role_ensure_failed", guild?.id, e);

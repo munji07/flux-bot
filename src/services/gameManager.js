@@ -224,14 +224,17 @@ export async function handleWordChainPurchaseCommand(message) {
   else if (text === ".패스권 구매" || text === ".패스구매") product = { name: "패스권", itemId: PASS_TICKET, price: 500 };
   if (!product) return false;
 
-  const balance = await EconomyService.getBalance(message.author.id);
+  const balance = Number((await EconomyService.getOrCreateUser(message.author.id)).coins ?? 0);
   if (balance < product.price) {
     await message.reply(`❌ 코인이 부족해요! (${product.name}: ${product.price} 코인 필요, 보유 코인: ${balance.toLocaleString()} 코인)`).catch(() => {});
     return true;
   }
 
-  const charged = await EconomyService.addBalance(message.author.id, -product.price);
-  await EconomyService.updateInventory(message.author.id, product.itemId, 1);
+  const charged = await EconomyService.purchaseItem(message.author.id, product.itemId, product.price);
+  if (!charged.success) {
+    await message.reply("❌ 티켓 구매 처리 중 문제가 발생했습니다. 코인은 차감되지 않았어요.").catch(() => {});
+    return true;
+  }
   await message.reply(`✅ ${product.name} 1개를 구매했어요. 남은 잔액: **${charged.balance.toLocaleString()} 코인**`).catch(() => {});
   return true;
 }

@@ -1098,10 +1098,13 @@ async function handleShop(interaction, userId) {
     return;
   }
 
-  await EconomyService.updateCoins(userId, -targetItem.price);
-  await EconomyService.updateInventory(userId, targetItem.id, 1);
+  const purchase = await EconomyService.purchaseItem(userId, targetItem.id, targetItem.price);
+  if (!purchase.success) {
+    await interaction.reply({ content: "❌ 구매 처리 중 문제가 발생했습니다. 코인은 차감되지 않았어요.", flags: MessageFlags.Ephemeral });
+    return;
+  }
 
-  const newBalance = (await EconomyService.getOrCreateUser(userId)).coins;
+  const newBalance = purchase.balance;
 
   const embed = new EmbedBuilder()
     .setColor(0x00FF7F)
@@ -1140,18 +1143,20 @@ async function handleSell(interaction, userId) {
     return;
   }
 
-  let totalEarned = 0;
   const lines = [];
+  const sale = await EconomyService.sellItems(userId, itemsToSell);
+  if (!sale.success) {
+    await interaction.reply({ content: "❌ 판매 처리 중 문제가 발생했습니다. 인벤토리를 다시 확인해주세요.", flags: MessageFlags.Ephemeral });
+    return;
+  }
 
   for (const item of itemsToSell) {
     const earned = item.sellPrice * item.quantity;
-    totalEarned += earned;
-    await EconomyService.updateInventory(userId, item.item_id, -item.quantity);
     lines.push(`• **${item.name}** ×${item.quantity} → **+${earned.toLocaleString()}** 코인`);
   }
 
-  await EconomyService.updateCoins(userId, totalEarned);
-  const newBalance = (await EconomyService.getOrCreateUser(userId)).coins;
+  const totalEarned = sale.total;
+  const newBalance = sale.balance;
 
   const notices = await progressAndCheck(userId, "work");
 
@@ -1314,9 +1319,9 @@ async function handleRaidConfig(interaction) {
       const { db } = await import("../services/database.js");
       await db.run(
         `INSERT INTO raid_config (guild_id, channel_id, updated_at)
-         VALUES ($1, $2, NOW())
-         ON CONFLICT (guild_id) DO UPDATE SET channel_id = $2, updated_at = NOW()`,
-        [guildId, channel.id]
+         VALUES ($1, $2, TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS'))
+         ON CONFLICT (guild_id) DO UPDATE SET channel_id = $2, updated_at = TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS')`,
+        [guildId, channel.id],
       );
       saved = true;
     } catch (e2) {
@@ -1342,6 +1347,19 @@ async function handleRaidConfig(interaction) {
     }
   } catch (e) {
     console.error("Raid role ensure failed:", e.message);
+  }
+
+  if (roleId) {
+    try {
+      await db.run(
+        `INSERT INTO raid_config (guild_id, channel_id, role_id, updated_at)
+         VALUES ($1, $2, $3, TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS'))
+         ON CONFLICT (guild_id) DO UPDATE SET channel_id = $2, role_id = $3, updated_at = TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS')`,
+        [guildId, channel.id, roleId],
+      );
+    } catch (e) {
+      console.error("Raid local config sync failed:", e.message);
+    }
   }
 
   const embed = new EmbedBuilder()
