@@ -35,11 +35,16 @@ export function startScheduler(client) {
     schedulerTickRunning = true;
 
     try {
-      await Promise.allSettled([
-        runDueScheduledTasks(client),
-        checkExpiringSubscriptions(client),
-        checkCropNotifications(client),
-      ]);
+      // 샤딩 환경에서 동시 커넥션 폭증 방지: 순차 실행 + 짧은 딜레이
+      const tasks = [() => runDueScheduledTasks(client), () => checkExpiringSubscriptions(client), () => checkCropNotifications(client)];
+      for (const task of tasks) {
+        try {
+          await task();
+        } catch (e) {
+          // 개별 실패는 내부에서 logError 처리됨, 전체 틱은 계속
+        }
+        await new Promise((r) => setTimeout(r, 300));
+      }
     } catch (error) {
       logError("scheduler_tick_failed", null, error);
     } finally {

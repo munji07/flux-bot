@@ -19,9 +19,9 @@ function getDatabaseUrl() {
 const pool = new pg.Pool({
   connectionString: getDatabaseUrl(),
   ssl: { rejectUnauthorized: false },
-  max: Number(process.env.PG_POOL_MAX || 15),
-  idleTimeoutMillis: Number(process.env.PG_IDLE_TIMEOUT_MS || 25000),
-  connectionTimeoutMillis: 5000,
+  max: Number(process.env.PG_POOL_MAX || 5),
+  idleTimeoutMillis: Number(process.env.PG_IDLE_TIMEOUT_MS || 30000),
+  connectionTimeoutMillis: 8000,
   statement_timeout: 15000,
   keepAlive: true,
   maxUses: 7500,
@@ -30,6 +30,45 @@ const pool = new pg.Pool({
 pool.on("error", (err) => {
   console.error("Unexpected PostgreSQL pool error:", err);
 });
+
+const TRANSIENT_DB_PATTERNS = [
+  "EMAXCONNSESSION",
+  "max clients reached",
+  "terminating connection due to administrator command",
+  "Connection terminated",
+  "Connection terminated unexpectedly",
+  "connection timeout",
+  "too many clients",
+];
+
+function isTransientDbError(error) {
+  const code = String(error?.code ?? "");
+  if (code === "57P01" || code === "XX000" || code === "53300" || code === "08006" || code === "08001") return true;
+  const msg = String(error?.message ?? "");
+  return TRANSIENT_DB_PATTERNS.some((p) => msg.includes(p));
+}
+
+async function withDbRetry(fn, retries = 1) {
+  let lastError;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      if (attempt < retries && isTransientDbError(error)) {
+        const isMaxClients = String(error?.message ?? "").includes("max clients reached");
+        const base = isMaxClients ? 1200 : 300;
+        const delay = base * Math.pow(2, attempt) + Math.random() * 200;
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw lastError;
+}
+
+export { isTransientDbError };
 
 function toArray(params) {
   if (params == null) return [];
@@ -55,23 +94,27 @@ function prepare(sql, params) {
 }
 
 function makeQuery(clientOrPool) {
+  const isPool = clientOrPool === pool;
   return {
     async get(sql, ...params) {
       const flat = params.length === 1 && Array.isArray(params[0]) ? params[0] : params;
       const { text, values } = prepare(sql, flat);
-      const result = await clientOrPool.query(text, values);
+      const exec = () => clientOrPool.query(text, values);
+      const result = isPool ? await withDbRetry(exec, 1) : await exec();
       return result.rows[0] ?? null;
     },
     async all(sql, ...params) {
       const flat = params.length === 1 && Array.isArray(params[0]) ? params[0] : params;
       const { text, values } = prepare(sql, flat);
-      const result = await clientOrPool.query(text, values);
+      const exec = () => clientOrPool.query(text, values);
+      const result = isPool ? await withDbRetry(exec, 1) : await exec();
       return result.rows;
     },
     async run(sql, ...params) {
       const flat = params.length === 1 && Array.isArray(params[0]) ? params[0] : params;
       const { text, values } = prepare(sql, flat);
-      const result = await clientOrPool.query(text, values);
+      const exec = () => clientOrPool.query(text, values);
+      const result = isPool ? await withDbRetry(exec, 1) : await exec();
       return { changes: result.rowCount, lastInsertRowid: result.rows?.[0]?.id ?? null };
     },
   };

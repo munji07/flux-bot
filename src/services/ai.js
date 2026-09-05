@@ -7,6 +7,7 @@ import {
   GROQ_MAX_COMPLETION_TOKENS,
   HISTORY_BATCH_SIZE,
   IMAGE_GENERATION_MODEL,
+  MODELS,
 } from "../config.js";
 import { logError, logInfo } from "../logger.js";
 import { notifyApiFailure, recordAiRequest } from "./runtimeMetrics.js";
@@ -81,6 +82,13 @@ export function isGroqRateLimitError(error) {
   if (error?.status === 413) return true;
   const msg = String(error?.message ?? error?.error?.message ?? "");
   return /rate_limit|tokens per minute|\bTPM\b/i.test(msg);
+}
+
+function isModelGoneError(error) {
+  const status = error?.status ?? error?.statusCode;
+  if (status === 410 || status === 404) return true;
+  const msg = String(error?.message ?? "").toLowerCase();
+  return msg.includes("410") || msg.includes("model not found") || msg.includes("no longer supported") || msg.includes("deprecated");
 }
 
 function estimateTokens(content) {
@@ -566,10 +574,13 @@ const INTENT_ROUTER_PROMPT = [
 ].join("\n");
 
 export async function classifyRequestIntent({ userPrompt, hasImageAttachment, hasVideoAttachment, logContext = {} }) {
+  const primaryModel = MODELS.INTENT;
+  const fallbackModel = MODELS.INTENT_FALLBACK;
+
   logInfo("ai_call", {
     ...logContext,
     task: "Intent Classification",
-    model: "meta/llama-3.1-8b-instruct",
+    model: primaryModel,
     hasImageAttachment,
     hasVideoAttachment,
     promptLength: userPrompt.length,
@@ -603,19 +614,40 @@ export async function classifyRequestIntent({ userPrompt, hasImageAttachment, ha
     return completion.choices?.[0]?.message?.content?.trim() ?? "";
         };
 
-  try {
-    const content = await requestClassification("meta/llama-3.1-8b-instruct");
+  const tryClassify = async (modelName) => {
+    const content = await requestClassification(modelName);
     const result = normalizeIntentResult(content, userPrompt);
-    
-    // 의도 파악 결과를 로그에 기록
     logInfo("intent_classified", {
       ...logContext,
       intent: result.type,
       tool: result.tool,
+      model: modelName,
     });
-    
     return result;
+  };
+
+  try {
+    return await tryClassify(primaryModel);
   } catch (error) {
+    // 410 Gone / deprecated 모델이면 폴백 모델로 재시도
+    if (isModelGoneError(error) && fallbackModel && fallbackModel !== primaryModel) {
+      try {
+        logInfo("intent_classification_fallback", { ...logContext, from: primaryModel, to: fallbackModel });
+        return await tryClassify(fallbackModel);
+      } catch (fallbackError) {
+        // 폴백도 410이면 heuristic 폴백
+        if (isModelGoneError(fallbackError)) {
+          logInfo("intent_classification_heuristic_fallback", logContext);
+          return normalizeIntentResult('{"tool":"chat","arguments":{}}', userPrompt);
+        }
+        logError("intent_classification_failed", logContext.guildId, fallbackError, logContext);
+        throw fallbackError;
+      }
+    }
+    if (isModelGoneError(error)) {
+      logInfo("intent_classification_heuristic_fallback", logContext);
+      return normalizeIntentResult('{"tool":"chat","arguments":{}}', userPrompt);
+    }
     logError("intent_classification_failed", logContext.guildId, error, logContext);
     throw error;
   }
@@ -654,12 +686,17 @@ export async function createChatCompletion({
       stream: false,
     };
 
+    // Groq TPM 8000 제한 대응: 히스토리를 예산 내로 트리밍
+    const historyForModel = isGroqModel(requestModel)
+      ? trimHistoryToBudget(historyMessages, Math.max(400, GROQ_TPM_BUDGET - 600))
+      : historyMessages;
+
     const messages = buildChatMessages({
       userName,
       guildName,
       guildId,
       serverContext,
-      historyMessages,
+      historyMessages: historyForModel,
       currentApiUserMessage,
     });
 
@@ -703,12 +740,16 @@ export async function createChatCompletionStream({
     historyMessageCount: historyMessages.length,
   });
 
+  const historyForStream = isGroqModel(model)
+    ? trimHistoryToBudget(historyMessages, Math.max(400, GROQ_TPM_BUDGET - 600))
+    : historyMessages;
+
   const messages = buildChatMessages({
     userName,
     guildName,
     guildId,
     serverContext,
-    historyMessages,
+    historyMessages: historyForStream,
     currentApiUserMessage: {
       role: currentApiUserMessage.role,
       content: String(currentApiUserMessage.content),
@@ -730,16 +771,17 @@ export async function shouldUseWebSearch({ userPrompt, logContext = {} }) {
   const prompt = userPrompt.trim();
   if (!prompt) return false;
 
+  const model = MODELS.WEB_SEARCH_CLASSIFIER;
   logInfo("ai_call", {
     ...logContext,
     task: "web_search_classification",
-    model: "meta/llama-3.1-8b-instruct",
+    model,
     promptLength: prompt.length,
   });
 
-  try {
+  const run = async (m) => {
     const completion = await nvidiaClient.chat.completions.create({
-      model: "meta/llama-3.1-8b-instruct",
+      model: m,
       messages: [
         {
           role: "system",
@@ -758,12 +800,17 @@ export async function shouldUseWebSearch({ userPrompt, logContext = {} }) {
       temperature: 0,
       max_completion_tokens: 1024,
     });
-
-
     const content = completion.choices?.[0]?.message?.content?.trim() ?? "";
     const parsed = parseJsonObject(content);
     return parsed?.webSearch === true;
+  };
+
+  try {
+    return await run(model);
   } catch (error) {
+    if (isModelGoneError(error) && model !== MODELS.LLAMA_33) {
+      try { return await run(MODELS.LLAMA_33); } catch (_) { /* fall through */ }
+    }
     logError("web_search_classification_failed", logContext.guildId, error, logContext);
     return false;
   }
@@ -972,10 +1019,11 @@ function normalizeIntentResult(content, userPrompt) {
 }
 
 export async function matchServerMember({ guildName, targetText, candidates, logContext = {} }) {
+  const model = MODELS.MEMBER_MATCHER;
   logInfo("ai_call", {
     ...logContext,
     task: "member_matching",
-    model: "meta/llama-3.1-8b-instruct",
+    model,
     targetText,
     candidateCount: candidates.length,
   });
@@ -987,8 +1035,8 @@ export async function matchServerMember({ guildName, targetText, candidates, log
     tag: member.user.tag,
   }));
 
-  const completion = await nvidiaClient.chat.completions.create({
-    model: "meta/llama-3.1-8b-instruct",
+  const run = (m) => nvidiaClient.chat.completions.create({
+    model: m,
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
       {
@@ -1018,15 +1066,28 @@ export async function matchServerMember({ guildName, targetText, candidates, log
     ],
   });
 
-  const content = completion.choices?.[0]?.message?.content?.trim() ?? "";
-  return parseMemberMatchResult(content);
+  try {
+    const completion = await run(model);
+    const content = completion.choices?.[0]?.message?.content?.trim() ?? "";
+    return parseMemberMatchResult(content);
+  } catch (error) {
+    if (isModelGoneError(error) && model !== MODELS.LLAMA_33) {
+      try {
+        const completion = await run(MODELS.LLAMA_33);
+        const content = completion.choices?.[0]?.message?.content?.trim() ?? "";
+        return parseMemberMatchResult(content);
+      } catch (_) { /* fall through */ }
+    }
+    throw error;
+  }
 }
 
 export async function matchServerChannel({ guildName, targetText, candidates, logContext = {} }) {
+  const model = MODELS.MEMBER_MATCHER;
   logInfo("ai_call", {
     ...logContext,
     task: "channel_matching",
-    model: "meta/llama-3.1-8b-instruct",
+    model,
     targetText,
     candidateCount: candidates.length,
   });
@@ -1038,8 +1099,8 @@ export async function matchServerChannel({ guildName, targetText, candidates, lo
     topic: channel.topic?.slice(0, 200),
   }));
 
-  const completion = await nvidiaClient.chat.completions.create({
-    model: "meta/llama-3.1-8b-instruct",
+  const run = (m) => nvidiaClient.chat.completions.create({
+    model: m,
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
       {
@@ -1068,16 +1129,29 @@ export async function matchServerChannel({ guildName, targetText, candidates, lo
     ],
   });
 
-  const content = completion.choices?.[0]?.message?.content?.trim() ?? "";
-  const parsed = parseJsonObject(content);
-  return parsed && typeof parsed.channelId === "string" ? { channelId: parsed.channelId } : { channelId: null };
+  const exec = async (m) => {
+    const completion = await run(m);
+    const content = completion.choices?.[0]?.message?.content?.trim() ?? "";
+    const parsed = parseJsonObject(content);
+    return parsed && typeof parsed.channelId === "string" ? { channelId: parsed.channelId } : { channelId: null };
+  };
+
+  try {
+    return await exec(model);
+  } catch (error) {
+    if (isModelGoneError(error) && model !== MODELS.LLAMA_33) {
+      try { return await exec(MODELS.LLAMA_33); } catch (_) { /* fall through */ }
+    }
+    throw error;
+  }
 }
 
 export async function matchServerRole({ guildName, targetText, candidates, logContext = {} }) {
+  const model = MODELS.MEMBER_MATCHER;
   logInfo("ai_call", {
     ...logContext,
     task: "role_matching",
-    model: "meta/llama-3.1-8b-instruct",
+    model,
     targetText,
     candidateCount: candidates.length,
   });
@@ -1089,8 +1163,8 @@ export async function matchServerRole({ guildName, targetText, candidates, logCo
     memberCount: role.members?.size ?? 0,
   }));
 
-  const completion = await nvidiaClient.chat.completions.create({
-    model: "meta/llama-3.1-8b-instruct",
+  const run = (m) => nvidiaClient.chat.completions.create({
+    model: m,
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
       {
@@ -1119,9 +1193,21 @@ export async function matchServerRole({ guildName, targetText, candidates, logCo
     ],
   });
 
-  const content = completion.choices?.[0]?.message?.content?.trim() ?? "";
-  const parsed = parseJsonObject(content);
-  return parsed && typeof parsed.roleId === "string" ? { roleId: parsed.roleId } : { roleId: null };
+  const exec = async (m) => {
+    const completion = await run(m);
+    const content = completion.choices?.[0]?.message?.content?.trim() ?? "";
+    const parsed = parseJsonObject(content);
+    return parsed && typeof parsed.roleId === "string" ? { roleId: parsed.roleId } : { roleId: null };
+  };
+
+  try {
+    return await exec(model);
+  } catch (error) {
+    if (isModelGoneError(error) && model !== MODELS.LLAMA_33) {
+      try { return await exec(MODELS.LLAMA_33); } catch (_) { /* fall through */ }
+    }
+    throw error;
+  }
 }
 
 function parseMemberMatchResult(content) {

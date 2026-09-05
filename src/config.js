@@ -7,7 +7,7 @@ export const ADMIN_USER_ID = "1269575955626725390";
 // KOREAN_DICT_API_KEY 제거 - 로컬 사전(data/) 사용
 
 export const MODELS = {
-  INTENT: "meta/llama-3.1-8b-instruct",
+  INTENT: "meta/llama-3.3-70b-instruct",
   CONVERSATION: "gemini-2.5-flash-lite",
   IMAGE_ANALYSIS: "google/diffusiongemma-26b-a4b-it",
   IMAGE_GENERATION_RUNTIME: "gptimage",
@@ -15,12 +15,12 @@ export const MODELS = {
   GEMINI_WEB_SEARCH_MODEL: "gemini-2.0-flash",
   GEMINI_SEARCH_MODEL: "tavily-search",
   LLAMA_33: "meta/llama-3.3-70b-instruct",
-  INTENT_FALLBACK: "meta/llama-3.1-8b-instruct",
+  INTENT_FALLBACK: "meta/llama-3.3-70b-instruct",
   CHAT_TEXT: "gemini-2.5-flash-lite",
   VIDEO_RUNTIME: "nvidia/nemotron-nano-12b-v2-vl",
   LOG_SUMMARY: "openai/gpt-oss-20b",
-  WEB_SEARCH_CLASSIFIER: "meta/llama-3.1-8b-instruct",
-  MEMBER_MATCHER: "meta/llama-3.1-8b-instruct",
+  WEB_SEARCH_CLASSIFIER: "meta/llama-3.3-70b-instruct",
+  MEMBER_MATCHER: "meta/llama-3.3-70b-instruct",
   GOOGLE_SEARCH: "gemini-2.5-flash-lite",
 };
 
