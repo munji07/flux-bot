@@ -1,4 +1,4 @@
-import { ADMIN_USER_ID, PREFIX, HISTORY_BATCH_SIZE, LOADING_EMOJI } from "../config.js";
+import { ADMIN_USER_ID, PREFIX, HISTORY_BATCH_SIZE, LOADING_EMOJI, MODELS } from "../config.js";
 import { MessageFlags } from "discord.js";
 import { UserFacingError } from "../logger.js";
 import { handleManagementToolCall } from "../commands/management.js";
@@ -412,7 +412,7 @@ if (userPrompt === "상태" && message.author.id === ADMIN_USER_ID) {
         return;
       }
 
-      const footer = `\n\n-# 🤖 요약 모델: ${"meta/llama-3.1-8b-instruct"}`;
+      const footer = `\n\n-# 🤖 요약 모델: ${MODELS.LOG_SUMMARY}`;
       await sendChunkedAnswer(message, loadingMessage, summary + footer);
     } catch (error) {
       logError("summary_tool", message.guildId, error, {
@@ -678,7 +678,7 @@ if (userPrompt === "상태" && message.author.id === ADMIN_USER_ID) {
   let typingInterval;
   let currentStep = "command_detected";
 
-  const usedModel = attachedImageUrls.length > 0 ? "google/diffusiongemma-26b-a4b-it" : "gemini-2.5-flash-lite";
+  const usedModel = attachedImageUrls.length > 0 ? MODELS.IMAGE_ANALYSIS : MODELS.CHAT_TEXT;
 
   try {
     const historyKey = getHistoryKey(message); // 로깅 및 DB 저장을 위해 유지
@@ -943,6 +943,8 @@ function stripModelFooter(text) {
 function getModelDisplayName(model) {
   const map = {
     "openai/gpt-oss-20b": "GPT-OSS 20B",
+    "openai/gpt-oss-120b": "GPT-OSS 120B",
+    "gemini-2.5-flash": "Gemini 2.5 Flash",
     "gemini-2.5-flash-lite": "Gemini 2.5 Flash-Lite",
     "google/diffusiongemma-26b-a4b-it": "DiffusionGemma 26B",
   };

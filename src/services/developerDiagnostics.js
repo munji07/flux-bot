@@ -2,7 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { extname, relative, resolve, sep } from "node:path";
 import { ADMIN_USER_ID } from "../config.js";
-import { nvidiaClient, stripReasoningTags } from "./ai.js";
+import { getClientForModel, stripReasoningTags } from "./ai.js";
+import { MODELS } from "../config.js";
 
 const PROJECT_ROOT = resolve(fileURLToPath(new URL("../../", import.meta.url)));
 const LOG_FILES = [
@@ -129,8 +130,8 @@ function normalizeRelativePath(path) {
 }
 
 async function createDeveloperDiagnosticsAnswer({ query, logs, sourceFiles }) {
-  const completion = await nvidiaClient.chat.completions.create({
-    model: "meta/llama-3.1-8b-instruct",
+  const completion = await getClientForModel(MODELS.LOG_SUMMARY).chat.completions.create({
+    model: MODELS.LOG_SUMMARY,
     messages: [
       {
         role: "system",

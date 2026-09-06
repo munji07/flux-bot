@@ -1,9 +1,10 @@
 import { db } from "./database.js";
-import { nvidiaClient } from "./ai.js";
+import { getClientForModel } from "./ai.js";
+import { MODELS } from "../config.js";
 import { logError, logInfo } from "../logger.js";
 
 const DEFAULT_MESSAGE_LIMIT = 50;
-const SUMMARY_MODEL = "meta/llama-3.1-8b-instruct";
+const SUMMARY_MODEL = MODELS.LOG_SUMMARY;
 
 const SUMMARY_SYSTEM_PROMPT = [
   "You are a Korean Discord chat summarizer. Given a list of channel messages, produce a concise Korean summary.",
@@ -45,7 +46,7 @@ export async function generateChannelSummary(guildId, channelId, channelName, li
     .join("\n");
 
   try {
-    const completion = await nvidiaClient.chat.completions.create({
+    const completion = await getClientForModel(SUMMARY_MODEL).chat.completions.create({
       model: SUMMARY_MODEL,
       temperature: 0.3,
       max_tokens: 1024,

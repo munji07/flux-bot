@@ -30,7 +30,7 @@ export const geminiClient = new OpenAI({
 
 export async function createVideoAnalysis({ videoUrl, prompt, userName, guildName, logContext = {} }) {
   // 사용량 체크는 이미 호출부(handleVideoAnalysis)에서 수행함
-  const model = "nvidia/nemotron-nano-12b-v2-vl";
+  const model = MODELS.VIDEO_RUNTIME;
   
   logInfo("ai_call", {
     ...logContext,
@@ -56,7 +56,7 @@ export async function createVideoAnalysis({ videoUrl, prompt, userName, guildNam
     },
   ];
 
-  return await nvidiaClient.chat.completions.create({
+  return await getClientForModel(model).chat.completions.create({
     model: model,
     messages: messages,
     max_completion_tokens: 4096,
@@ -172,13 +172,17 @@ function buildChatMessages({
 }
 
 export function getChatModel(imageUrls) {
-  return imageUrls.length > 0 ? "google/diffusiongemma-26b-a4b-it" : "openai/gpt-oss-20b";
+  return imageUrls.length > 0 ? MODELS.IMAGE_ANALYSIS : MODELS.CHAT_TEXT;
 }
 
 function normalizeChatModel(model) {
   if (!model) return model;
+  if (model.startsWith("gemini-")) return model;
+  if (model.startsWith("openai/")) return model;
   if (model.includes("diffusiongemma")) return model;
-  return "openai/gpt-oss-20b";
+  // allow any nvidia-listed model through, otherwise fallback to CHAT_TEXT
+  if (model.includes("/")) return model;
+  return MODELS.CHAT_TEXT;
 }
 
 export function getChatTask(imageUrls) {
@@ -587,7 +591,7 @@ export async function classifyRequestIntent({ userPrompt, hasImageAttachment, ha
     });
 
   const requestClassification = async (modelName) => {
-    const client = nvidiaClient; // 항상 nvidiaClient 사용
+    const client = getClientForModel(modelName);
     const now = new Date();
     const kstTime = now.toLocaleString("en-CA", { timeZone: "Asia/Seoul", hour12: false }).replace(",", "") + ":" + String(now.getSeconds()).padStart(2, "0");
     const completion = await client.chat.completions.create({
@@ -667,7 +671,7 @@ export async function createChatCompletion({
 }) {
   const startedAt = Date.now();
   const task = intent || getChatTask(imageUrls);
-  const model = normalizeChatModel(userModel) || (imageUrls.length > 0 ? "google/diffusiongemma-26b-a4b-it" : "gemini-2.5-flash-lite");
+  const model = normalizeChatModel(userModel) || (imageUrls.length > 0 ? MODELS.IMAGE_ANALYSIS : MODELS.CHAT_TEXT);
 
   logInfo("ai_call", {
     ...logContext,
@@ -731,7 +735,7 @@ export async function createChatCompletionStream({
   logContext = {},
   model: userModel = null,
 }) {
-  const model = normalizeChatModel(userModel) || "openai/gpt-oss-20b";
+  const model = normalizeChatModel(userModel) || MODELS.CHAT_TEXT;
   logInfo("ai_call", {
     ...logContext,
     task: "chat_stream",
@@ -780,7 +784,7 @@ export async function shouldUseWebSearch({ userPrompt, logContext = {} }) {
   });
 
   const run = async (m) => {
-    const completion = await nvidiaClient.chat.completions.create({
+    const completion = await getClientForModel(m).chat.completions.create({
       model: m,
       messages: [
         {
@@ -1035,7 +1039,7 @@ export async function matchServerMember({ guildName, targetText, candidates, log
     tag: member.user.tag,
   }));
 
-  const run = (m) => nvidiaClient.chat.completions.create({
+  const run = (m) => getClientForModel(m).chat.completions.create({
     model: m,
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
@@ -1099,7 +1103,7 @@ export async function matchServerChannel({ guildName, targetText, candidates, lo
     topic: channel.topic?.slice(0, 200),
   }));
 
-  const run = (m) => nvidiaClient.chat.completions.create({
+  const run = (m) => getClientForModel(m).chat.completions.create({
     model: m,
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
@@ -1163,7 +1167,7 @@ export async function matchServerRole({ guildName, targetText, candidates, logCo
     memberCount: role.members?.size ?? 0,
   }));
 
-  const run = (m) => nvidiaClient.chat.completions.create({
+  const run = (m) => getClientForModel(m).chat.completions.create({
     model: m,
     messages: [
       { role: "system", content: SYSTEM_PROMPT },

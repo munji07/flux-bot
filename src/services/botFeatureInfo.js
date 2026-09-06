@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { relative, resolve, sep } from "node:path";
-import { nvidiaClient, stripReasoningTags } from "./ai.js";
-import { PREFIX } from "../config.js";
+import { getClientForModel, stripReasoningTags } from "./ai.js";
+import { MODELS, PREFIX } from "../config.js";
 
 const PROJECT_ROOT = resolve(fileURLToPath(new URL("../../", import.meta.url)));
 const MAX_DISCORD_EDIT_CHARS = 1900;
@@ -237,8 +237,8 @@ function isSafeProjectFile(resolvedPath) {
 }
 
 async function createBotFeatureAnswer({ query, requesterName, relevantFiles, sourceSnippets, prefix }) {
-  const completion = await nvidiaClient.chat.completions.create({
-    model: "meta/llama-3.1-8b-instruct",
+  const completion = await getClientForModel(MODELS.LOG_SUMMARY).chat.completions.create({
+    model: MODELS.LOG_SUMMARY,
     messages: [
       {
         role: "system",

@@ -7,21 +7,26 @@ export const ADMIN_USER_ID = "1269575955626725390";
 // KOREAN_DICT_API_KEY 제거 - 로컬 사전(data/) 사용
 
 export const MODELS = {
-  INTENT: "meta/llama-3.3-70b-instruct",
-  CONVERSATION: "gemini-2.5-flash-lite",
-  IMAGE_ANALYSIS: "google/diffusiongemma-26b-a4b-it",
-  IMAGE_GENERATION_RUNTIME: "gptimage",
-  VIDEO_ANALYSIS: "google/diffusiongemma-26b-a4b-it",
-  GEMINI_WEB_SEARCH_MODEL: "gemini-2.0-flash",
+  // Groq: fastest for JSON classification / tool routing
+  INTENT: "openai/gpt-oss-20b",
+  INTENT_FALLBACK: "gemini-2.5-flash",
+  // Gemini OpenAI-compat: only gemini-2.5-flash is verified working (lite/pro/2.0 all 404)
+  CONVERSATION: "gemini-2.5-flash",
+  CHAT_TEXT: "gemini-2.5-flash",
+  GOOGLE_SEARCH: "gemini-2.5-flash",
+  GEMINI_WEB_SEARCH_MODEL: "gemini-2.5-flash",
   GEMINI_SEARCH_MODEL: "tavily-search",
-  LLAMA_33: "meta/llama-3.3-70b-instruct",
-  INTENT_FALLBACK: "meta/llama-3.3-70b-instruct",
-  CHAT_TEXT: "gemini-2.5-flash-lite",
-  VIDEO_RUNTIME: "nvidia/nemotron-nano-12b-v2-vl",
+  // NVIDIA: verified working via integrate.api.nvidia.com/v1/models
+  IMAGE_ANALYSIS: "google/diffusiongemma-26b-a4b-it",
+  VIDEO_ANALYSIS: "google/diffusiongemma-26b-a4b-it",
+  VIDEO_RUNTIME: "google/diffusiongemma-26b-a4b-it",
+  // Groq models
+  LLAMA_33: "openai/gpt-oss-20b",
   LOG_SUMMARY: "openai/gpt-oss-20b",
-  WEB_SEARCH_CLASSIFIER: "meta/llama-3.3-70b-instruct",
-  MEMBER_MATCHER: "meta/llama-3.3-70b-instruct",
-  GOOGLE_SEARCH: "gemini-2.5-flash-lite",
+  // Classifier/matcher - use Groq for speed/cost, fallback to Gemini
+  WEB_SEARCH_CLASSIFIER: "openai/gpt-oss-20b",
+  MEMBER_MATCHER: "openai/gpt-oss-20b",
+  IMAGE_GENERATION_RUNTIME: "gptimage",
 };
 
 export const PREFIX = "!FLUX";
