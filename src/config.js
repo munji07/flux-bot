@@ -7,13 +7,12 @@ export const ADMIN_USER_ID = "1269575955626725390";
 // KOREAN_DICT_API_KEY 제거 - 로컬 사전(data/) 사용
 
 export const MODELS = {
-  // Groq: fastest for JSON classification / tool routing
+  // Groq: qwen for chat, gpt-oss for fast intent
   INTENT: "openai/gpt-oss-20b",
   INTENT_FALLBACK: "gemini-2.5-flash",
-  // Gemini OpenAI-compat: only gemini-2.5-flash is verified working (lite/pro/2.0 all 404)
-  CONVERSATION: "gemini-2.5-flash",
-  CHAT_TEXT: "gemini-2.5-flash",
-  GOOGLE_SEARCH: "gemini-2.5-flash",
+  CONVERSATION: "qwen/qwen3.6-27b",
+  CHAT_TEXT: "qwen/qwen3.6-27b",
+  GOOGLE_SEARCH: "qwen/qwen3.6-27b",
   GEMINI_WEB_SEARCH_MODEL: "gemini-2.5-flash",
   GEMINI_SEARCH_MODEL: "tavily-search",
   // NVIDIA: verified working via integrate.api.nvidia.com/v1/models

@@ -75,7 +75,8 @@ export function getClientForModel(model) {
 }
 
 export function isGroqModel(model) {
-  return Boolean(model && model.startsWith("openai/"));
+  if (!model) return false;
+  return model.startsWith("openai/") || model.startsWith("qwen/") || model.startsWith("groq/") || model.startsWith("allam-") || model.startsWith("meta-llama/");
 }
 
 export function isGroqRateLimitError(error) {
@@ -178,7 +179,7 @@ export function getChatModel(imageUrls) {
 function normalizeChatModel(model) {
   if (!model) return model;
   if (model.startsWith("gemini-")) return model;
-  if (model.startsWith("openai/")) return model;
+  if (model.startsWith("openai/") || model.startsWith("qwen/") || model.startsWith("groq/")) return model;
   if (model.includes("diffusiongemma")) return model;
   // allow any nvidia-listed model through, otherwise fallback to CHAT_TEXT
   if (model.includes("/")) return model;

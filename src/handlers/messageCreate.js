@@ -944,6 +944,8 @@ function getModelDisplayName(model) {
   const map = {
     "openai/gpt-oss-20b": "GPT-OSS 20B",
     "openai/gpt-oss-120b": "GPT-OSS 120B",
+    "qwen/qwen3.6-27b": "Qwen3 27B",
+    "qwen/qwen3.8-27b": "Qwen3 27B",
     "gemini-2.5-flash": "Gemini 2.5 Flash",
     "gemini-2.5-flash-lite": "Gemini 2.5 Flash-Lite",
     "google/diffusiongemma-26b-a4b-it": "DiffusionGemma 26B",
