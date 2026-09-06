@@ -63,7 +63,7 @@ export async function createVideoAnalysis({ videoUrl, prompt, userName, guildNam
   });
   }
 
-function getClientForModel(model) {
+export function getClientForModel(model) {
   if (model && model.startsWith("gemini-")) {
     return geminiClient;
   }
